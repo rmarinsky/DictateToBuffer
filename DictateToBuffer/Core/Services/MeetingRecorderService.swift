@@ -1,0 +1,123 @@
+import Foundation
+import AVFoundation
+import ScreenCaptureKit
+
+@available(macOS 13.0, *)
+final class MeetingRecorderService: NSObject {
+    private var systemAudioService: SystemAudioCaptureService?
+    private var audioEngine: AVAudioEngine?
+    private var mixerNode: AVAudioMixerNode?
+    private var audioFile: AVAudioFile?
+
+    private var outputURL: URL?
+    private var startTime: Date?
+
+    private(set) var isRecording = false
+
+    var audioSource: MeetingAudioSource = .systemOnly
+    var onError: ((Error) -> Void)?
+    var onRecordingStarted: (() -> Void)?
+    var onRecordingStopped: ((URL?) -> Void)?
+
+    var recordingDuration: TimeInterval {
+        guard let start = startTime else { return 0 }
+        return Date().timeIntervalSince(start)
+    }
+
+    // MARK: - Permission Check
+
+    static func checkPermission() async -> Bool {
+        return await SystemAudioCaptureService.checkPermission()
+    }
+
+    // MARK: - Start Recording
+
+    func startRecording() async throws {
+        guard !isRecording else {
+            NSLog("[MeetingRecorder] Already recording")
+            return
+        }
+
+        NSLog("[MeetingRecorder] Starting meeting recording, source: \(audioSource.displayName)")
+
+        // Create output file URL
+        let fileName = "meeting_\(Date().timeIntervalSince1970).wav"
+        let tempDir = FileManager.default.temporaryDirectory
+        outputURL = tempDir.appendingPathComponent(fileName)
+
+        guard let outputURL = outputURL else {
+            throw MeetingRecorderError.fileCreationFailed
+        }
+
+        // Start system audio capture
+        systemAudioService = SystemAudioCaptureService()
+        systemAudioService?.includeMicrophone = (audioSource == .systemPlusMicrophone)
+        systemAudioService?.onError = { [weak self] error in
+            self?.onError?(error)
+        }
+
+        try await systemAudioService?.startCapture(to: outputURL)
+
+        // If we need microphone too, we'll mix it
+        if audioSource == .systemPlusMicrophone {
+            // Note: For proper mixing, we'd need a more complex setup
+            // For now, ScreenCaptureKit captures system audio
+            // Microphone mixing would require AVAudioEngine
+            NSLog("[MeetingRecorder] Microphone mixing requested - using system audio capture with app audio included")
+        }
+
+        isRecording = true
+        startTime = Date()
+
+        NSLog("[MeetingRecorder] Recording started")
+        onRecordingStarted?()
+    }
+
+    // MARK: - Stop Recording
+
+    func stopRecording() async throws -> URL? {
+        guard isRecording else {
+            NSLog("[MeetingRecorder] Not recording")
+            return nil
+        }
+
+        NSLog("[MeetingRecorder] Stopping meeting recording...")
+
+        let savedURL = try await systemAudioService?.stopCapture()
+        systemAudioService = nil
+
+        isRecording = false
+        startTime = nil
+
+        NSLog("[MeetingRecorder] Recording stopped, duration: \(recordingDuration) seconds")
+        onRecordingStopped?(savedURL)
+
+        return savedURL
+    }
+
+    // MARK: - Get Recording Data
+
+    func getRecordingData() throws -> Data? {
+        guard let url = outputURL else { return nil }
+        return try Data(contentsOf: url)
+    }
+}
+
+// MARK: - Errors
+
+enum MeetingRecorderError: LocalizedError {
+    case fileCreationFailed
+    case permissionDenied
+    case recordingFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .fileCreationFailed:
+            return "Failed to create recording file"
+        case .permissionDenied:
+            return "Screen recording permission required for meeting capture"
+        case .recordingFailed:
+            return "Failed to start recording"
+        }
+    }
+}
