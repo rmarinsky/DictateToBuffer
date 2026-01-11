@@ -3,8 +3,6 @@ import SwiftUI
 struct RecordingIndicatorView: View {
     @EnvironmentObject var appState: AppState
     @State private var isPulsing = false
-    @State private var timerTick = 0
-    @State private var timer: Timer?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -12,10 +10,12 @@ struct RecordingIndicatorView: View {
             statusIcon
                 .font(.system(size: 12))
 
-            // Status text
-            statusText
-                .font(.system(size: 13, weight: .medium, design: .rounded))
-                .monospacedDigit()
+            // Status text using TimelineView for automatic updates
+            TimelineView(.periodic(from: .now, by: 1.0)) { _ in
+                statusText
+            }
+            .font(.system(size: 13, weight: .medium, design: .rounded))
+            .monospacedDigit()
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -26,34 +26,7 @@ struct RecordingIndicatorView: View {
             withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
                 isPulsing = true
             }
-            // Start timer if already recording when view appears
-            if appState.recordingState == .recording {
-                startTimer()
-            }
         }
-        .onChange(of: appState.recordingState) { _, newState in
-            if newState == .recording {
-                startTimer()
-            } else {
-                stopTimer()
-            }
-        }
-        .onDisappear {
-            stopTimer()
-        }
-    }
-
-    private func startTimer() {
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            timerTick += 1
-        }
-    }
-
-    private func stopTimer() {
-        timer?.invalidate()
-        timer = nil
-        timerTick = 0
     }
 
     @ViewBuilder
@@ -85,8 +58,6 @@ struct RecordingIndicatorView: View {
 
     @ViewBuilder
     private var statusText: some View {
-        // Reference timerTick to trigger re-render every second during recording
-        let _ = timerTick
         switch appState.recordingState {
         case .recording:
             Text(formattedDuration)

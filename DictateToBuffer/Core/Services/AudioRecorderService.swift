@@ -1,7 +1,9 @@
 import Foundation
 import AVFoundation
 import Combine
+import os
 
+@MainActor
 final class AudioRecorderService: ObservableObject {
     @Published private(set) var isRecording = false
     @Published private(set) var audioLevel: Float = 0
@@ -13,25 +15,25 @@ final class AudioRecorderService: ObservableObject {
     // MARK: - Public Methods
 
     func startRecording(device: AudioDevice?, quality: AudioQuality) async throws {
-        NSLog("[AudioRecorder] startRecording: BEGIN, isRecording=\(isRecording)")
+        Log.audio.info("startRecording: BEGIN, isRecording=\(self.isRecording)")
         guard !isRecording else {
-            NSLog("[AudioRecorder] startRecording: Already recording, returning")
+            Log.audio.info("startRecording: Already recording, returning")
             return
         }
 
         // Request microphone permission
         var permissionStatus = AVCaptureDevice.authorizationStatus(for: .audio)
-        NSLog("[AudioRecorder] startRecording: Permission status = \(permissionStatus.rawValue)")
+        Log.audio.info("startRecording: Permission status = \(permissionStatus.rawValue)")
 
         if permissionStatus == .notDetermined {
-            NSLog("[AudioRecorder] startRecording: Requesting permission")
+            Log.audio.info("startRecording: Requesting permission")
             let granted = await AVCaptureDevice.requestAccess(for: .audio)
-            NSLog("[AudioRecorder] startRecording: Permission request result = \(granted)")
+            Log.audio.info("startRecording: Permission request result = \(granted)")
             permissionStatus = AVCaptureDevice.authorizationStatus(for: .audio)
         }
 
         guard permissionStatus == .authorized else {
-            NSLog("[AudioRecorder] startRecording: Permission denied")
+            Log.audio.info("startRecording: Permission denied")
             throw AudioError.permissionDenied
         }
 
@@ -39,10 +41,10 @@ final class AudioRecorderService: ObservableObject {
         let tempDir = FileManager.default.temporaryDirectory
         let fileName = "dictate_\(UUID().uuidString).wav"
         recordingURL = tempDir.appendingPathComponent(fileName)
-        NSLog("[AudioRecorder] startRecording: Recording URL = \(recordingURL?.path ?? "nil")")
+        Log.audio.info("startRecording: Recording URL = \(self.recordingURL?.path ?? "nil")")
 
         guard let url = recordingURL else {
-            NSLog("[AudioRecorder] startRecording: Failed to create URL")
+            Log.audio.info("startRecording: Failed to create URL")
             throw AudioError.recordingFailed("Could not create recording file")
         }
 
@@ -56,55 +58,55 @@ final class AudioRecorderService: ObservableObject {
             AVLinearPCMIsBigEndianKey: false,
             AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
         ]
-        NSLog("[AudioRecorder] startRecording: Audio settings configured, sampleRate=\(quality.sampleRate)")
+        Log.audio.info("startRecording: Audio settings configured, sampleRate=\(quality.sampleRate)")
 
         // Set input device if specified
         if let device = device {
-            NSLog("[AudioRecorder] startRecording: Setting input device: \(device.name)")
+            Log.audio.info("startRecording: Setting input device: \(device.name)")
             setInputDevice(device.id)
         }
 
         // Create and start recorder
-        NSLog("[AudioRecorder] startRecording: Creating AVAudioRecorder")
+        Log.audio.info("startRecording: Creating AVAudioRecorder")
         audioRecorder = try AVAudioRecorder(url: url, settings: settings)
         audioRecorder?.isMeteringEnabled = true
         audioRecorder?.prepareToRecord()
 
-        NSLog("[AudioRecorder] startRecording: Calling record()")
+        Log.audio.info("startRecording: Calling record()")
         guard audioRecorder?.record() == true else {
-            NSLog("[AudioRecorder] startRecording: record() returned false")
+            Log.audio.info("startRecording: record() returned false")
             throw AudioError.recordingFailed("Failed to start recording")
         }
 
         isRecording = true
         startLevelMonitoring()
-        NSLog("[AudioRecorder] startRecording: END, isRecording=\(isRecording)")
+        Log.audio.info("startRecording: END, isRecording=\(self.isRecording)")
     }
 
     func stopRecording() async throws -> Data {
-        NSLog("[AudioRecorder] stopRecording: BEGIN, isRecording=\(isRecording)")
+        Log.audio.info("stopRecording: BEGIN, isRecording=\(self.isRecording)")
         guard isRecording, let recorder = audioRecorder, let url = recordingURL else {
-            NSLog("[AudioRecorder] stopRecording: No active recording! isRecording=\(isRecording), recorder=\(audioRecorder != nil), url=\(recordingURL?.path ?? "nil")")
+            Log.audio.info("stopRecording: No active recording! isRecording=\(self.isRecording), recorder=\(self.audioRecorder != nil), url=\(self.recordingURL?.path ?? "nil")")
             throw AudioError.recordingFailed("No active recording")
         }
 
-        NSLog("[AudioRecorder] stopRecording: Stopping level monitoring")
+        Log.audio.info("stopRecording: Stopping level monitoring")
         stopLevelMonitoring()
-        NSLog("[AudioRecorder] stopRecording: Stopping recorder")
+        Log.audio.info("stopRecording: Stopping recorder")
         recorder.stop()
         isRecording = false
 
         // Read audio data
-        NSLog("[AudioRecorder] stopRecording: Reading audio data from \(url.path)")
+        Log.audio.info("stopRecording: Reading audio data from \(url.path)")
         let audioData = try Data(contentsOf: url)
-        NSLog("[AudioRecorder] stopRecording: Read \(audioData.count) bytes")
+        Log.audio.info("stopRecording: Read \(audioData.count) bytes")
 
         // Cleanup
         try? FileManager.default.removeItem(at: url)
         audioRecorder = nil
         recordingURL = nil
 
-        NSLog("[AudioRecorder] stopRecording: END")
+        Log.audio.info("stopRecording: END")
         return audioData
     }
 
@@ -146,7 +148,9 @@ final class AudioRecorderService: ObservableObject {
 
     private func startLevelMonitoring() {
         levelTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            self?.updateAudioLevel()
+            Task { @MainActor in
+                self?.updateAudioLevel()
+            }
         }
     }
 

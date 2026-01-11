@@ -2,6 +2,7 @@ import Foundation
 import ScreenCaptureKit
 import AVFoundation
 import CoreMedia
+import os
 
 @available(macOS 13.0, *)
 final class SystemAudioCaptureService: NSObject {
@@ -9,6 +10,9 @@ final class SystemAudioCaptureService: NSObject {
     private var audioFile: AVAudioFile?
     private var outputURL: URL?
     private var isCapturing = false
+    private var outputFormat: AVAudioFormat?
+    private var audioConverter: AVAudioConverter?
+    private var sampleCount: Int = 0
 
     var includeMicrophone: Bool = false
     var onError: ((Error) -> Void)?
@@ -22,7 +26,7 @@ final class SystemAudioCaptureService: NSObject {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             return !content.displays.isEmpty
         } catch {
-            NSLog("[SystemAudio] Permission check failed: \(error)")
+            Log.audio.info("Permission check failed: \(error)")
             return false
         }
     }
@@ -36,13 +40,13 @@ final class SystemAudioCaptureService: NSObject {
 
     func startCapture(to outputURL: URL) async throws {
         guard !isCapturing else {
-            NSLog("[SystemAudio] Already capturing")
+            Log.audio.info("Already capturing")
             return
         }
 
         self.outputURL = outputURL
 
-        NSLog("[SystemAudio] Starting system audio capture...")
+        Log.audio.info("Starting system audio capture...")
 
         // Get shareable content
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
@@ -82,7 +86,7 @@ final class SystemAudioCaptureService: NSObject {
         try await stream.startCapture()
         isCapturing = true
 
-        NSLog("[SystemAudio] Capture started successfully")
+        Log.audio.info("Capture started successfully")
         onCaptureStarted?()
     }
 
@@ -90,20 +94,23 @@ final class SystemAudioCaptureService: NSObject {
 
     func stopCapture() async throws -> URL? {
         guard isCapturing, let stream = stream else {
-            NSLog("[SystemAudio] Not capturing")
+            Log.audio.info("Not capturing")
             return nil
         }
 
-        NSLog("[SystemAudio] Stopping capture...")
+        Log.audio.info("Stopping capture... Total samples processed: \(self.sampleCount)")
 
         try await stream.stopCapture()
         self.stream = nil
         isCapturing = false
 
-        // Close audio file
+        // Close audio file and cleanup
         audioFile = nil
+        audioConverter = nil
+        outputFormat = nil
+        sampleCount = 0
 
-        NSLog("[SystemAudio] Capture stopped, file saved to: \(outputURL?.path ?? "nil")")
+        Log.audio.info("Capture stopped, file saved to: \(self.outputURL?.path ?? "nil")")
 
         return outputURL
     }
@@ -111,20 +118,23 @@ final class SystemAudioCaptureService: NSObject {
     // MARK: - Audio File Setup
 
     private func setupAudioFile(at url: URL) throws {
+        // Use 32-bit float format to match ScreenCaptureKit output
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
             AVSampleRateKey: 48000.0,
             AVNumberOfChannelsKey: 2,
-            AVLinearPCMBitDepthKey: 16,
-            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
             AVLinearPCMIsBigEndianKey: false,
             AVLinearPCMIsNonInterleaved: false
         ]
 
-        let format = AVAudioFormat(settings: settings)!
+        // Create output format for conversion
+        outputFormat = AVAudioFormat(settings: settings)
+
         audioFile = try AVAudioFile(forWriting: url, settings: settings)
 
-        NSLog("[SystemAudio] Audio file created at: \(url.path)")
+        Log.audio.info("Audio file created at: \(url.path)")
     }
 }
 
@@ -133,7 +143,7 @@ final class SystemAudioCaptureService: NSObject {
 @available(macOS 13.0, *)
 extension SystemAudioCaptureService: SCStreamDelegate {
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        NSLog("[SystemAudio] Stream stopped with error: \(error)")
+        Log.audio.info("Stream stopped with error: \(error)")
         isCapturing = false
         onError?(error)
     }
@@ -147,40 +157,132 @@ extension SystemAudioCaptureService: SCStreamOutput {
         guard type == .audio else { return }
         guard let audioFile = audioFile else { return }
 
-        // Convert CMSampleBuffer to AVAudioPCMBuffer and write to file
+        // Get format description
         guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
               let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription) else {
-            return
-        }
-
-        guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else {
             return
         }
 
         let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
         guard numSamples > 0 else { return }
 
-        var length: Int = 0
-        var dataPointer: UnsafeMutablePointer<Int8>?
-        CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
+        // Log first few samples for debugging
+        sampleCount += 1
+        if sampleCount <= 3 {
+            let isFloat = (asbd.pointee.mFormatFlags & kAudioFormatFlagIsFloat) != 0
+            let isNonInterleaved = (asbd.pointee.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0
+            Log.audio.info("Audio sample \(self.sampleCount): frames=\(numSamples), sampleRate=\(asbd.pointee.mSampleRate), channels=\(asbd.pointee.mChannelsPerFrame), bitsPerChannel=\(asbd.pointee.mBitsPerChannel), isFloat=\(isFloat), isNonInterleaved=\(isNonInterleaved)")
+        }
 
-        guard let data = dataPointer else { return }
-
-        let format = AVAudioFormat(streamDescription: asbd)!
-        guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(numSamples)) else {
+        // Create AVAudioFormat from the stream description
+        guard let inputFormat = AVAudioFormat(streamDescription: asbd) else {
+            Log.audio.info("Failed to create input format")
             return
         }
 
+        // Create PCM buffer
+        guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: AVAudioFrameCount(numSamples)) else {
+            Log.audio.info("Failed to create PCM buffer")
+            return
+        }
         pcmBuffer.frameLength = AVAudioFrameCount(numSamples)
 
-        if let channelData = pcmBuffer.int16ChannelData {
-            memcpy(channelData[0], data, length)
+        // Get audio data from sample buffer
+        guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else {
+            Log.audio.info("Failed to get data buffer")
+            return
         }
 
+        var totalLength: Int = 0
+        var dataPointer: UnsafeMutablePointer<Int8>?
+        let status = CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &totalLength, dataPointerOut: &dataPointer)
+
+        guard status == kCMBlockBufferNoErr, let data = dataPointer else {
+            Log.audio.info("Failed to get data pointer, status: \(status)")
+            return
+        }
+
+        // Copy data to PCM buffer based on format
+        let isNonInterleaved = (asbd.pointee.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0
+
+        if isNonInterleaved {
+            // Non-interleaved: each channel's data is contiguous
+            let channelCount = Int(asbd.pointee.mChannelsPerFrame)
+            let bytesPerFrame = Int(asbd.pointee.mBytesPerFrame)
+            let framesPerBuffer = numSamples
+
+            if let floatChannelData = pcmBuffer.floatChannelData {
+                for channel in 0..<channelCount {
+                    let channelOffset = channel * framesPerBuffer * bytesPerFrame
+                    let srcPtr = data.advanced(by: channelOffset)
+                    let dstPtr = floatChannelData[channel]
+                    memcpy(dstPtr, srcPtr, framesPerBuffer * bytesPerFrame)
+                }
+            }
+        } else {
+            // Interleaved: samples are interleaved
+            if let floatChannelData = pcmBuffer.floatChannelData {
+                // For interleaved stereo float, data is [L0, R0, L1, R1, ...]
+                let srcPtr = UnsafeRawPointer(data)
+                let channelCount = Int(asbd.pointee.mChannelsPerFrame)
+                let bytesPerSample = Int(asbd.pointee.mBitsPerChannel / 8)
+
+                for frame in 0..<numSamples {
+                    for channel in 0..<channelCount {
+                        let srcOffset = (frame * channelCount + channel) * bytesPerSample
+                        let value = srcPtr.load(fromByteOffset: srcOffset, as: Float.self)
+                        floatChannelData[channel][frame] = value
+                    }
+                }
+            }
+        }
+
+        // Write to file - may need format conversion
         do {
-            try audioFile.write(from: pcmBuffer)
+            let fileFormat = audioFile.processingFormat
+
+            if inputFormat == fileFormat {
+                try audioFile.write(from: pcmBuffer)
+            } else {
+                // Need format conversion
+                if audioConverter == nil {
+                    audioConverter = AVAudioConverter(from: inputFormat, to: fileFormat)
+                }
+
+                guard let converter = audioConverter else {
+                    Log.audio.info("Failed to create converter")
+                    return
+                }
+
+                guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: fileFormat, frameCapacity: AVAudioFrameCount(numSamples)) else {
+                    Log.audio.info("Failed to create output buffer")
+                    return
+                }
+
+                var error: NSError?
+                var hasData = true
+                converter.convert(to: outputBuffer, error: &error) { _, outStatus in
+                    if hasData {
+                        hasData = false
+                        outStatus.pointee = .haveData
+                        return pcmBuffer
+                    } else {
+                        outStatus.pointee = .noDataNow
+                        return nil
+                    }
+                }
+
+                if let error = error {
+                    Log.audio.info("Conversion error: \(error)")
+                    return
+                }
+
+                if outputBuffer.frameLength > 0 {
+                    try audioFile.write(from: outputBuffer)
+                }
+            }
         } catch {
-            NSLog("[SystemAudio] Error writing audio: \(error)")
+            Log.audio.info("Error writing audio: \(error)")
         }
     }
 }

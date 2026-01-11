@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import ScreenCaptureKit
+import os
 
 @available(macOS 13.0, *)
 final class MeetingRecorderService: NSObject {
@@ -34,11 +35,11 @@ final class MeetingRecorderService: NSObject {
 
     func startRecording() async throws {
         guard !isRecording else {
-            NSLog("[MeetingRecorder] Already recording")
+            Log.recording.info("Already recording")
             return
         }
 
-        NSLog("[MeetingRecorder] Starting meeting recording, source: \(audioSource.displayName)")
+        Log.recording.info("Starting meeting recording, source: \(self.audioSource.displayName)")
 
         // Create output file URL
         let fileName = "meeting_\(Date().timeIntervalSince1970).wav"
@@ -63,13 +64,13 @@ final class MeetingRecorderService: NSObject {
             // Note: For proper mixing, we'd need a more complex setup
             // For now, ScreenCaptureKit captures system audio
             // Microphone mixing would require AVAudioEngine
-            NSLog("[MeetingRecorder] Microphone mixing requested - using system audio capture with app audio included")
+            Log.recording.info("Microphone mixing requested - using system audio capture with app audio included")
         }
 
         isRecording = true
         startTime = Date()
 
-        NSLog("[MeetingRecorder] Recording started")
+        Log.recording.info("Recording started")
         onRecordingStarted?()
     }
 
@@ -77,11 +78,11 @@ final class MeetingRecorderService: NSObject {
 
     func stopRecording() async throws -> URL? {
         guard isRecording else {
-            NSLog("[MeetingRecorder] Not recording")
+            Log.recording.info("Not recording")
             return nil
         }
 
-        NSLog("[MeetingRecorder] Stopping meeting recording...")
+        Log.recording.info("Stopping meeting recording...")
 
         let savedURL = try await systemAudioService?.stopCapture()
         systemAudioService = nil
@@ -89,7 +90,7 @@ final class MeetingRecorderService: NSObject {
         isRecording = false
         startTime = nil
 
-        NSLog("[MeetingRecorder] Recording stopped, duration: \(recordingDuration) seconds")
+        Log.recording.info("Recording stopped, duration: \(self.recordingDuration) seconds")
         onRecordingStopped?(savedURL)
 
         return savedURL

@@ -196,49 +196,43 @@ final class AudioDeviceManager: ObservableObject {
     }
 
     private func measureSignalLevel(deviceID: AudioDeviceID, duration: TimeInterval = 1.0) async -> Float {
-        await withCheckedContinuation { continuation in
-            var rmsValue: Float = 0
+        let audioEngine = AVAudioEngine()
+        let inputNode = audioEngine.inputNode
 
-            let audioEngine = AVAudioEngine()
-            let inputNode = audioEngine.inputNode
+        let format = inputNode.outputFormat(forBus: 0)
+        let sampleCount = Int(format.sampleRate * duration)
 
-            // Try to set the device
-            // Note: Setting specific device requires additional CoreAudio calls
+        var samples: [Float] = []
+        samples.reserveCapacity(sampleCount)
 
-            let format = inputNode.outputFormat(forBus: 0)
-            let sampleCount = Int(format.sampleRate * duration)
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+            let channelData = buffer.floatChannelData?[0]
+            let frameLength = Int(buffer.frameLength)
 
-            var samples: [Float] = []
-            samples.reserveCapacity(sampleCount)
-
-            inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-                let channelData = buffer.floatChannelData?[0]
-                let frameLength = Int(buffer.frameLength)
-
-                if let data = channelData {
-                    for i in 0..<frameLength {
-                        samples.append(data[i])
-                    }
+            if let data = channelData {
+                for i in 0..<frameLength {
+                    samples.append(data[i])
                 }
             }
+        }
 
-            do {
-                try audioEngine.start()
+        do {
+            try audioEngine.start()
 
-                DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
-                    audioEngine.stop()
-                    inputNode.removeTap(onBus: 0)
+            // Wait for the specified duration
+            try? await Task.sleep(for: .seconds(duration))
 
-                    if !samples.isEmpty {
-                        let sumOfSquares = samples.reduce(0) { $0 + $1 * $1 }
-                        rmsValue = sqrt(sumOfSquares / Float(samples.count))
-                    }
+            audioEngine.stop()
+            inputNode.removeTap(onBus: 0)
 
-                    continuation.resume(returning: rmsValue)
-                }
-            } catch {
-                continuation.resume(returning: 0)
+            if !samples.isEmpty {
+                let sumOfSquares = samples.reduce(0) { $0 + $1 * $1 }
+                return sqrt(sumOfSquares / Float(samples.count))
             }
+
+            return 0
+        } catch {
+            return 0
         }
     }
 
@@ -248,8 +242,6 @@ final class AudioDeviceManager: ObservableObject {
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-
-        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
 
         AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject),

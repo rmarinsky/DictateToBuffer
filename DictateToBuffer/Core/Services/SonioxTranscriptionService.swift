@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 final class SonioxTranscriptionService {
     var apiKey: String?
@@ -9,32 +10,32 @@ final class SonioxTranscriptionService {
     private let maxPollingAttempts = 60 // 60 seconds max wait
 
     func transcribe(audioData: Data, language: String? = nil) async throws -> String {
-        NSLog("[Transcription] transcribe: BEGIN, audioData size = \(audioData.count) bytes")
+        Log.transcription.info("transcribe: BEGIN, audioData size = \(audioData.count) bytes")
 
         guard let apiKey = apiKey, !apiKey.isEmpty else {
-            NSLog("[Transcription] transcribe: No API key!")
+            Log.transcription.info("transcribe: No API key!")
             throw TranscriptionError.noAPIKey
         }
 
         // Step 1: Upload the audio file
-        NSLog("[Transcription] Step 1: Uploading audio file...")
+        Log.transcription.info("Step 1: Uploading audio file...")
         let fileId = try await uploadFile(audioData: audioData, apiKey: apiKey)
-        NSLog("[Transcription] File uploaded, fileId = \(fileId)")
+        Log.transcription.info("File uploaded, fileId = \(fileId)")
 
         // Step 2: Create transcription job
-        NSLog("[Transcription] Step 2: Creating transcription job...")
+        Log.transcription.info("Step 2: Creating transcription job...")
         let transcriptionId = try await createTranscription(fileId: fileId, language: language, apiKey: apiKey)
-        NSLog("[Transcription] Transcription created, id = \(transcriptionId)")
+        Log.transcription.info("Transcription created, id = \(transcriptionId)")
 
         // Step 3: Poll for completion
-        NSLog("[Transcription] Step 3: Polling for completion...")
+        Log.transcription.info("Step 3: Polling for completion...")
         try await waitForCompletion(transcriptionId: transcriptionId, apiKey: apiKey)
-        NSLog("[Transcription] Transcription completed")
+        Log.transcription.info("Transcription completed")
 
         // Step 4: Get the transcript text
-        NSLog("[Transcription] Step 4: Retrieving transcript...")
+        Log.transcription.info("Step 4: Retrieving transcript...")
         let text = try await getTranscript(transcriptionId: transcriptionId, apiKey: apiKey)
-        NSLog("[Transcription] Transcript retrieved: \(text.prefix(50))...")
+        Log.transcription.info("Transcript retrieved: \(text.prefix(50))...")
 
         return text
     }
@@ -42,7 +43,9 @@ final class SonioxTranscriptionService {
     // MARK: - Step 1: Upload File
 
     private func uploadFile(audioData: Data, apiKey: String) async throws -> String {
-        let url = URL(string: "\(baseURL)/files")!
+        guard let url = URL(string: "\(baseURL)/files") else {
+            throw TranscriptionError.invalidURL
+        }
 
         let boundary = UUID().uuidString
         var request = URLRequest(url: url)
@@ -66,11 +69,11 @@ final class SonioxTranscriptionService {
             throw TranscriptionError.invalidResponse
         }
 
-        NSLog("[Transcription] uploadFile: HTTP status = \(httpResponse.statusCode)")
+        Log.transcription.info("uploadFile: HTTP status = \(httpResponse.statusCode)")
 
         guard httpResponse.statusCode == 201 || httpResponse.statusCode == 200 else {
             let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-            NSLog("[Transcription] uploadFile: Error - \(errorBody)")
+            Log.transcription.info("uploadFile: Error - \(errorBody)")
             throw TranscriptionError.apiError("Upload failed: \(errorBody)")
         }
 
@@ -81,7 +84,9 @@ final class SonioxTranscriptionService {
     // MARK: - Step 2: Create Transcription
 
     private func createTranscription(fileId: String, language: String?, apiKey: String) async throws -> String {
-        let url = URL(string: "\(baseURL)/transcriptions")!
+        guard let url = URL(string: "\(baseURL)/transcriptions") else {
+            throw TranscriptionError.invalidURL
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -105,11 +110,11 @@ final class SonioxTranscriptionService {
             throw TranscriptionError.invalidResponse
         }
 
-        NSLog("[Transcription] createTranscription: HTTP status = \(httpResponse.statusCode)")
+        Log.transcription.info("createTranscription: HTTP status = \(httpResponse.statusCode)")
 
         guard httpResponse.statusCode == 201 || httpResponse.statusCode == 200 else {
             let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-            NSLog("[Transcription] createTranscription: Error - \(errorBody)")
+            Log.transcription.info("createTranscription: Error - \(errorBody)")
             throw TranscriptionError.apiError("Create transcription failed: \(errorBody)")
         }
 
@@ -120,7 +125,9 @@ final class SonioxTranscriptionService {
     // MARK: - Step 3: Poll for Completion
 
     private func waitForCompletion(transcriptionId: String, apiKey: String) async throws {
-        let url = URL(string: "\(baseURL)/transcriptions/\(transcriptionId)")!
+        guard let url = URL(string: "\(baseURL)/transcriptions/\(transcriptionId)") else {
+            throw TranscriptionError.invalidURL
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -132,12 +139,12 @@ final class SonioxTranscriptionService {
             guard let httpResponse = response as? HTTPURLResponse,
                   httpResponse.statusCode == 200 else {
                 let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-                NSLog("[Transcription] Poll error: \(errorBody)")
+                Log.transcription.info("Poll error: \(errorBody)")
                 throw TranscriptionError.invalidResponse
             }
 
             let statusResponse = try JSONDecoder().decode(TranscriptionStatusResponse.self, from: data)
-            NSLog("[Transcription] Poll attempt \(attempt): status = \(statusResponse.status)")
+            Log.transcription.info("Poll attempt \(attempt): status = \(statusResponse.status)")
 
             switch statusResponse.status {
             case "completed":
@@ -145,7 +152,7 @@ final class SonioxTranscriptionService {
             case "error":
                 let errorMsg = statusResponse.error_message ?? "Unknown error"
                 let errorType = statusResponse.error_type ?? "unknown"
-                NSLog("[Transcription] Transcription failed: \(errorType) - \(errorMsg)")
+                Log.transcription.info("Transcription failed: \(errorType) - \(errorMsg)")
                 throw TranscriptionError.apiError("Transcription failed: \(errorMsg)")
             case "queued", "processing":
                 try await Task.sleep(nanoseconds: UInt64(pollingInterval * 1_000_000_000))
@@ -154,13 +161,15 @@ final class SonioxTranscriptionService {
             }
         }
 
-        throw TranscriptionError.apiError("Transcription timed out after \(maxPollingAttempts) seconds")
+        throw TranscriptionError.apiError("Transcription timed out after \(self.maxPollingAttempts) seconds")
     }
 
     // MARK: - Step 4: Get Transcript
 
     private func getTranscript(transcriptionId: String, apiKey: String) async throws -> String {
-        let url = URL(string: "\(baseURL)/transcriptions/\(transcriptionId)/transcript")!
+        guard let url = URL(string: "\(baseURL)/transcriptions/\(transcriptionId)/transcript") else {
+            throw TranscriptionError.invalidURL
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -172,11 +181,11 @@ final class SonioxTranscriptionService {
             throw TranscriptionError.invalidResponse
         }
 
-        NSLog("[Transcription] getTranscript: HTTP status = \(httpResponse.statusCode)")
+        Log.transcription.info("getTranscript: HTTP status = \(httpResponse.statusCode)")
 
         guard httpResponse.statusCode == 200 else {
             let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-            NSLog("[Transcription] getTranscript: Error - \(errorBody)")
+            Log.transcription.info("getTranscript: Error - \(errorBody)")
             throw TranscriptionError.apiError("Get transcript failed: \(errorBody)")
         }
 
@@ -197,7 +206,9 @@ final class SonioxTranscriptionService {
         }
 
         // Use the models endpoint to verify API key works
-        let url = URL(string: "\(baseURL)/models")!
+        guard let url = URL(string: "\(baseURL)/models") else {
+            throw TranscriptionError.invalidURL
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"

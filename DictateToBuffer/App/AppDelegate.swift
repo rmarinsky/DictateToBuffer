@@ -2,23 +2,21 @@ import AppKit
 import SwiftUI
 import Combine
 import AVFoundation
+import os
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Properties
 
-    private var statusItem: NSStatusItem?
-    private var statusMenu: NSMenu?
-    private var popover: NSPopover?
     private var recordingWindow: NSWindow?
-    private var settingsWindow: NSWindow?
 
     let appState = AppState()
 
     private var cancellables = Set<AnyCancellable>()
 
-    // MARK: - Services
+    // MARK: - Services (exposed for SwiftUI access)
 
-    private lazy var audioDeviceManager = AudioDeviceManager()
+    lazy var audioDeviceManager = AudioDeviceManager()
     private lazy var audioRecorder = AudioRecorderService()
     private lazy var transcriptionService = SonioxTranscriptionService()
     private lazy var clipboardService = ClipboardService()
@@ -31,7 +29,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        setupStatusItem()
         setupBindings()
 
         // Listen for push-to-talk key changes
@@ -50,98 +47,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
-        // Request all permissions at startup
-        requestAllPermissions()
-    }
-
-    // MARK: - Permissions
-
-    private func requestAllPermissions() {
-        NSLog("[DictateToBuffer] Requesting all permissions at startup...")
-        
-        PermissionManager.shared.requestAllPermissions { [weak self] status in
-            guard let self = self else { return }
-            
-            NSLog("[DictateToBuffer] Permissions granted: Mic=\(status.microphone), Accessibility=\(status.accessibility), Screen=\(status.screenRecording), Notifications=\(status.notifications)")
-            
-            // Update app state
-            self.appState.microphonePermissionGranted = status.microphone
-            
-            // Setup features that require permissions
-            if status.microphone {
-                self.setupHotkey()
-                self.setupPushToTalk()
-            }
-            
-            // Check for API key after permissions
-            if KeychainManager.shared.getSonioxAPIKey() == nil {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    self.openSettings()
-                }
-            }
-        }
-    }
-
-    private func checkMicrophonePermission() {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized:
-            NSLog("[DictateToBuffer] Microphone permission already granted")
-            onMicrophonePermissionGranted()
-
-        case .notDetermined:
-            NSLog("[DictateToBuffer] Requesting microphone permission...")
-            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-                DispatchQueue.main.async {
-                    if granted {
-                        NSLog("[DictateToBuffer] Microphone permission granted")
-                        self?.onMicrophonePermissionGranted()
-                    } else {
-                        NSLog("[DictateToBuffer] Microphone permission denied")
-                        self?.onMicrophonePermissionDenied()
-                    }
-                }
-            }
-
-        case .denied, .restricted:
-            NSLog("[DictateToBuffer] Microphone permission denied/restricted")
-            onMicrophonePermissionDenied()
-
-        @unknown default:
-            NSLog("[DictateToBuffer] Unknown microphone permission status")
-            onMicrophonePermissionDenied()
-        }
-    }
-
-    private func onMicrophonePermissionGranted() {
-        appState.microphonePermissionGranted = true
-
-        // Now safe to setup recording features
+        // Setup hotkey and push-to-talk immediately
+        // Permissions will be requested on-demand when user tries to record
         setupHotkey()
         setupPushToTalk()
 
         // Check for API key
         if KeychainManager.shared.getSonioxAPIKey() == nil {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.openSettings()
-            }
-        }
-    }
-
-    private func onMicrophonePermissionDenied() {
-        appState.microphonePermissionGranted = false
-        appState.errorMessage = "Microphone access required. Please enable in System Settings > Privacy & Security > Microphone"
-
-        // Show alert
-        let alert = NSAlert()
-        alert.messageText = "Microphone Access Required"
-        alert.informativeText = "DictateToBuffer needs microphone access to record audio for transcription.\n\nPlease enable it in System Settings > Privacy & Security > Microphone."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Open System Settings")
-        alert.addButton(withTitle: "Cancel")
-
-        if alert.runModal() == .alertFirstButtonReturn {
-            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
-                NSWorkspace.shared.open(url)
+            Task {
+                try? await Task.sleep(for: .milliseconds(500))
+                openSettings()
             }
         }
     }
@@ -151,179 +66,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pushToTalkService.stop()
     }
 
-    // MARK: - Status Bar Setup
-
-    private func setupStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-
-        if let button = statusItem?.button {
-            button.title = "🥒"
-            button.action = #selector(statusItemClicked)
-            button.target = self
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        }
-
-        setupMenu()
-    }
-
-    private func setupMenu() {
-        let menu = NSMenu()
-
-        // Recording toggle
-        let recordItem = NSMenuItem(
-            title: "Start Recording",
-            action: #selector(toggleRecording),
-            keyEquivalent: "d"
-        )
-        recordItem.keyEquivalentModifierMask = [.command, .shift]
-        menu.addItem(recordItem)
-
-        // Meeting recording toggle
-        let meetingTitle = appState.meetingRecordingState == .recording ? "Stop Meeting Recording" : "Record Meeting"
-        let meetingItem = NSMenuItem(
-            title: meetingTitle,
-            action: #selector(toggleMeetingRecording),
-            keyEquivalent: "m"
-        )
-        meetingItem.keyEquivalentModifierMask = [.command, .shift]
-        menu.addItem(meetingItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        // Audio device submenu
-        let deviceMenu = NSMenu()
-        let deviceItem = NSMenuItem(title: "Audio Device", action: nil, keyEquivalent: "")
-        deviceItem.submenu = deviceMenu
-        menu.addItem(deviceItem)
-
-        // Auto-detect option
-        let autoItem = NSMenuItem(
-            title: "Auto-detect",
-            action: #selector(selectAutoDetect),
-            keyEquivalent: ""
-        )
-        autoItem.state = appState.useAutoDetect ? .on : .off
-        deviceMenu.addItem(autoItem)
-        deviceMenu.addItem(NSMenuItem.separator())
-
-        // Device list
-        for device in audioDeviceManager.availableDevices {
-            let item = NSMenuItem(
-                title: device.name,
-                action: #selector(selectDevice(_:)),
-                keyEquivalent: ""
-            )
-            item.representedObject = device
-            item.state = (appState.selectedDeviceID == device.id && !appState.useAutoDetect) ? .on : .off
-            deviceMenu.addItem(item)
-        }
-
-        menu.addItem(NSMenuItem.separator())
-
-        // Settings
-        let settingsItem = NSMenuItem(
-            title: "Settings...",
-            action: #selector(openSettings),
-            keyEquivalent: ","
-        )
-        menu.addItem(settingsItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        // Quit
-        let quitItem = NSMenuItem(
-            title: "Quit",
-            action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q"
-        )
-        menu.addItem(quitItem)
-
-        // Store menu separately - don't assign to statusItem to allow left-click action
-        statusMenu = menu
-    }
-
     // MARK: - Bindings
 
     private func setupBindings() {
         appState.$recordingState
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
-                self?.updateStatusIcon()
                 self?.updateRecordingWindow(for: state)
+                self?.handleRecordingStateChange(state)
             }
             .store(in: &cancellables)
 
         appState.$meetingRecordingState
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
-                self?.updateStatusIcon()
                 self?.handleMeetingStateChange(state)
-            }
-            .store(in: &cancellables)
-
-        audioDeviceManager.$availableDevices
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.setupMenu()
             }
             .store(in: &cancellables)
     }
 
-    private func updateStatusIcon() {
-        guard let button = statusItem?.button else { return }
-
-        button.image = nil
-
-        // Meeting recording takes priority in icon display
-        if appState.meetingRecordingState == .recording {
-            button.title = "🎙️"  // Meeting recording
-            return
-        }
-        if appState.meetingRecordingState == .processing {
-            button.title = "⏳"
-            return
-        }
-
-        switch appState.recordingState {
-        case .idle:
-            if appState.meetingRecordingState == .success {
-                button.title = "✅"
-            } else if appState.meetingRecordingState == .error {
-                button.title = "❌"
-            } else {
-                button.title = "🥒"
-            }
-        case .recording:
-            button.title = "🔴"
-        case .processing:
-            button.title = "⏳"
+    private func handleRecordingStateChange(_ state: RecordingState) {
+        switch state {
         case .success:
-            button.title = "✅"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
                 if self.appState.recordingState == .success {
                     self.appState.recordingState = .idle
                 }
             }
         case .error:
-            button.title = "❌"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            Task {
+                try? await Task.sleep(for: .seconds(2))
                 if self.appState.recordingState == .error {
                     self.appState.recordingState = .idle
                 }
             }
+        default:
+            break
         }
     }
 
     private func handleMeetingStateChange(_ state: MeetingRecordingState) {
         switch state {
         case .success:
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            Task {
+                try? await Task.sleep(for: .seconds(2))
                 if self.appState.meetingRecordingState == .success {
                     self.appState.meetingRecordingState = .idle
                 }
             }
         case .error:
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            Task {
+                try? await Task.sleep(for: .seconds(2))
                 if self.appState.meetingRecordingState == .error {
                     self.appState.meetingRecordingState = .idle
                 }
@@ -341,7 +135,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showRecordingWindow()
         case .success:
             updateRecordingWindowContent()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
                 self.hideRecordingWindow()
             }
         case .idle, .error:
@@ -430,7 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func pushToTalkKeyChanged(_ notification: Notification) {
         guard let key = notification.object as? PushToTalkKey else { return }
-        NSLog("[DictateToBuffer] Push-to-talk key changed to: \(key.displayName)")
+        Log.app.info("Push-to-talk key changed to: \(key.displayName)")
 
         pushToTalkService.stop()
         pushToTalkService.selectedKey = key
@@ -441,14 +236,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func hotkeyChanged(_ notification: Notification) {
-        NSLog("[DictateToBuffer] Hotkey changed")
+        Log.app.info("Hotkey changed")
 
         // Unregister old hotkey
         hotkeyService.unregister()
 
         // Register new hotkey if set
         if let combo = notification.object as? KeyCombo {
-            NSLog("[DictateToBuffer] Registering new hotkey: \(combo.displayString)")
+            Log.app.info("Registering new hotkey: \(combo.displayString)")
             try? hotkeyService.register(keyCombo: combo) { [weak self] in
                 self?.toggleRecording()
             }
@@ -457,7 +252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startRecordingIfIdle() async {
         guard appState.recordingState == .idle else {
-            NSLog("[DictateToBuffer] startRecordingIfIdle: Not idle, ignoring")
+            Log.app.info("startRecordingIfIdle: Not idle, ignoring")
             return
         }
         await startRecording()
@@ -465,149 +260,143 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func stopRecordingIfRecording() async {
         guard appState.recordingState == .recording else {
-            NSLog("[DictateToBuffer] stopRecordingIfRecording: Not recording, ignoring")
+            Log.app.info("stopRecordingIfRecording: Not recording, ignoring")
             return
         }
         await stopRecording()
     }
 
-    // MARK: - Actions
+    // MARK: - Actions (exposed for SwiftUI and hotkeys)
 
-    @objc private func statusItemClicked(_ sender: Any?) {
-        statusMenu?.popUp(
-            positioning: nil,
-            at: NSPoint(x: 0, y: 0),
-            in: statusItem?.button
-        )
-    }
-
-    @objc private func toggleRecording() {
-        NSLog("[DictateToBuffer] toggleRecording called, current state: \(appState.recordingState)")
+    @objc func toggleRecording() {
+        Log.app.info("toggleRecording called, current state: \(self.appState.recordingState)")
         Task {
             await performToggleRecording()
         }
     }
 
     private func performToggleRecording() async {
-        NSLog("[DictateToBuffer] performToggleRecording: state = \(appState.recordingState)")
+        Log.app.info("performToggleRecording: state = \(self.appState.recordingState)")
         switch appState.recordingState {
         case .idle:
-            NSLog("[DictateToBuffer] State is idle, starting recording...")
+            Log.app.info("State is idle, starting recording...")
             await startRecording()
         case .recording:
-            NSLog("[DictateToBuffer] State is recording, stopping recording...")
+            Log.app.info("State is recording, stopping recording...")
             await stopRecording()
         default:
-            NSLog("[DictateToBuffer] State is \(appState.recordingState), ignoring toggle")
+            Log.app.info("State is \(self.appState.recordingState), ignoring toggle")
             break
         }
     }
 
     private func startRecording() async {
-        NSLog("[DictateToBuffer] startRecording: BEGIN")
+        Log.app.info("startRecording: BEGIN")
 
-        // Check microphone permission first
-        guard appState.microphonePermissionGranted else {
-            NSLog("[DictateToBuffer] startRecording: Microphone permission not granted")
+        // Request microphone permission on-demand
+        let micGranted = await PermissionManager.shared.ensureMicrophonePermission()
+        appState.microphonePermissionGranted = micGranted
+
+        guard micGranted else {
+            Log.app.info("startRecording: Microphone permission not granted")
             await MainActor.run {
                 appState.errorMessage = "Microphone access required"
                 appState.recordingState = .error
             }
-            PermissionManager.shared.showPermissionAlert(for: .microphone)
             return
         }
 
         guard let apiKey = KeychainManager.shared.getSonioxAPIKey(), !apiKey.isEmpty else {
-            NSLog("[DictateToBuffer] startRecording: No API key found")
+            Log.app.info("startRecording: No API key found")
             await MainActor.run {
                 appState.errorMessage = "Please add your Soniox API key in Settings"
                 appState.recordingState = .error
             }
             return
         }
-        NSLog("[DictateToBuffer] startRecording: API key found")
+        Log.app.info("startRecording: API key found")
 
         // Determine device
         var device: AudioDevice?
         if appState.useAutoDetect {
-            NSLog("[DictateToBuffer] startRecording: Using auto-detect, setting state to processing")
+            Log.app.info("startRecording: Using auto-detect, setting state to processing")
             await MainActor.run { appState.recordingState = .processing }
             device = await audioDeviceManager.autoDetectBestDevice()
-            NSLog("[DictateToBuffer] startRecording: Auto-detected device: \(device?.name ?? "none")")
+            Log.app.info("startRecording: Auto-detected device: \(device?.name ?? "none")")
         } else if let deviceID = appState.selectedDeviceID {
             device = audioDeviceManager.availableDevices.first { $0.id == deviceID }
-            NSLog("[DictateToBuffer] startRecording: Using selected device: \(device?.name ?? "none")")
+            Log.app.info("startRecording: Using selected device: \(device?.name ?? "none")")
         }
 
-        NSLog("[DictateToBuffer] startRecording: Setting state to recording")
+        Log.app.info("startRecording: Setting state to recording")
         await MainActor.run {
             appState.recordingState = .recording
             appState.recordingStartTime = Date()
         }
-        NSLog("[DictateToBuffer] startRecording: State is now \(appState.recordingState)")
+        Log.app.info("startRecording: State is now \(self.appState.recordingState)")
 
         do {
-            NSLog("[DictateToBuffer] startRecording: Calling audioRecorder.startRecording()")
+            Log.app.info("startRecording: Calling audioRecorder.startRecording()")
             try await audioRecorder.startRecording(
                 device: device,
                 quality: SettingsStorage.shared.audioQuality
             )
-            NSLog("[DictateToBuffer] startRecording: Recording started successfully")
+            Log.app.info("startRecording: Recording started successfully")
         } catch {
-            NSLog("[DictateToBuffer] startRecording: ERROR - \(error.localizedDescription)")
+            Log.app.info("startRecording: ERROR - \(error.localizedDescription)")
             await MainActor.run {
                 appState.errorMessage = error.localizedDescription
                 appState.recordingState = .error
             }
         }
-        NSLog("[DictateToBuffer] startRecording: END, final state = \(appState.recordingState)")
+        Log.app.info("startRecording: END, final state = \(self.appState.recordingState)")
     }
 
     private func stopRecording() async {
-        NSLog("[DictateToBuffer] stopRecording: BEGIN")
+        Log.app.info("stopRecording: BEGIN")
 
         await MainActor.run {
             appState.recordingState = .processing
         }
-        NSLog("[DictateToBuffer] stopRecording: State set to processing")
+        Log.app.info("stopRecording: State set to processing")
 
         do {
-            NSLog("[DictateToBuffer] stopRecording: Calling audioRecorder.stopRecording()")
+            Log.app.info("stopRecording: Calling audioRecorder.stopRecording()")
             let audioData = try await audioRecorder.stopRecording()
-            NSLog("[DictateToBuffer] stopRecording: Got audio data, size = \(audioData.count) bytes")
+            Log.app.info("stopRecording: Got audio data, size = \(audioData.count) bytes")
 
             guard let apiKey = KeychainManager.shared.getSonioxAPIKey() else {
-                NSLog("[DictateToBuffer] stopRecording: No API key!")
+                Log.app.info("stopRecording: No API key!")
                 throw TranscriptionError.noAPIKey
             }
 
-            NSLog("[DictateToBuffer] stopRecording: Calling transcription service")
+            Log.app.info("stopRecording: Calling transcription service")
             transcriptionService.apiKey = apiKey
             let text = try await transcriptionService.transcribe(audioData: audioData)
-            NSLog("[DictateToBuffer] stopRecording: Transcription received: \(text.prefix(50))...")
+            Log.app.info("stopRecording: Transcription received: \(text.prefix(50))...")
 
             clipboardService.copy(text: text)
-            NSLog("[DictateToBuffer] stopRecording: Text copied to clipboard")
+            Log.app.info("stopRecording: Text copied to clipboard")
 
             if SettingsStorage.shared.autoPaste {
-                NSLog("[DictateToBuffer] stopRecording: Auto-pasting")
+                Log.app.info("stopRecording: Auto-pasting")
                 do {
                     try await clipboardService.paste()
                 } catch ClipboardError.accessibilityNotGranted {
-                    NSLog("[DictateToBuffer] stopRecording: Accessibility permission needed")
+                    Log.app.info("stopRecording: Accessibility permission needed")
                     PermissionManager.shared.showPermissionAlert(for: .accessibility)
                 } catch {
-                    NSLog("[DictateToBuffer] stopRecording: Paste failed - \(error.localizedDescription)")
+                    Log.app.info("stopRecording: Paste failed - \(error.localizedDescription)")
                 }
             }
 
             if SettingsStorage.shared.playSoundOnCompletion {
-                NSLog("[DictateToBuffer] stopRecording: Playing sound")
+                Log.app.info("stopRecording: Playing sound")
                 NSSound(named: .init("Funk"))?.play()
             }
 
             if SettingsStorage.shared.showNotification {
-                NSLog("[DictateToBuffer] stopRecording: Showing notification")
+                Log.app.info("stopRecording: Showing notification")
                 NotificationManager.shared.showSuccess(text: text)
             }
 
@@ -615,22 +404,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 appState.lastTranscription = text
                 appState.recordingState = .success
             }
-            NSLog("[DictateToBuffer] stopRecording: SUCCESS")
+            Log.app.info("stopRecording: SUCCESS")
 
         } catch {
-            NSLog("[DictateToBuffer] stopRecording: ERROR - \(error.localizedDescription)")
+            Log.app.info("stopRecording: ERROR - \(error.localizedDescription)")
             await MainActor.run {
                 appState.errorMessage = error.localizedDescription
                 appState.recordingState = .error
             }
         }
-        NSLog("[DictateToBuffer] stopRecording: END")
+        Log.app.info("stopRecording: END")
     }
 
     // MARK: - Meeting Recording
 
-    @objc private func toggleMeetingRecording() {
-        NSLog("[DictateToBuffer] toggleMeetingRecording called, current state: \(appState.meetingRecordingState)")
+    @objc func toggleMeetingRecording() {
+        Log.app.info("toggleMeetingRecording called, current state: \(self.appState.meetingRecordingState)")
         Task {
             await performToggleMeetingRecording()
         }
@@ -643,15 +432,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .recording:
             await stopMeetingRecording()
         default:
-            NSLog("[DictateToBuffer] Meeting state is \(appState.meetingRecordingState), ignoring toggle")
+            Log.app.info("Meeting state is \(self.appState.meetingRecordingState), ignoring toggle")
         }
     }
 
     private func startMeetingRecording() async {
-        NSLog("[DictateToBuffer] startMeetingRecording: BEGIN")
+        Log.app.info("startMeetingRecording: BEGIN")
 
         guard #available(macOS 13.0, *) else {
-            NSLog("[DictateToBuffer] Meeting recording requires macOS 13.0+")
+            Log.app.info("Meeting recording requires macOS 13.0+")
             await MainActor.run {
                 appState.errorMessage = "Meeting recording requires macOS 13.0 or later"
                 appState.meetingRecordingState = .error
@@ -659,20 +448,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Check screen capture permission
-        let hasPermission = await MeetingRecorderService.checkPermission()
+        // Request screen capture permission on-demand
+        let hasPermission = await PermissionManager.shared.ensureScreenRecordingPermission()
+        appState.screenCapturePermissionGranted = hasPermission
+
         guard hasPermission else {
-            NSLog("[DictateToBuffer] Screen capture permission not granted")
+            Log.app.info("Screen capture permission not granted")
             await MainActor.run {
                 appState.errorMessage = "Screen recording permission required for meeting capture"
                 appState.meetingRecordingState = .error
             }
-            PermissionManager.shared.showPermissionAlert(for: .screenRecording)
             return
         }
 
         guard let apiKey = KeychainManager.shared.getSonioxAPIKey(), !apiKey.isEmpty else {
-            NSLog("[DictateToBuffer] No API key for meeting recording")
+            Log.app.info("No API key for meeting recording")
             await MainActor.run {
                 appState.errorMessage = "Please add your Soniox API key in Settings"
                 appState.meetingRecordingState = .error
@@ -688,10 +478,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             meetingRecorderService.audioSource = SettingsStorage.shared.meetingAudioSource
             try await meetingRecorderService.startRecording()
-            NSLog("[DictateToBuffer] Meeting recording started")
-            setupMenu() // Update menu title
+            Log.app.info("Meeting recording started")
         } catch {
-            NSLog("[DictateToBuffer] Meeting recording failed: \(error)")
+            Log.app.info("Meeting recording failed: \(error)")
             await MainActor.run {
                 appState.errorMessage = error.localizedDescription
                 appState.meetingRecordingState = .error
@@ -700,7 +489,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func stopMeetingRecording() async {
-        NSLog("[DictateToBuffer] stopMeetingRecording: BEGIN")
+        Log.app.info("stopMeetingRecording: BEGIN")
 
         guard #available(macOS 13.0, *) else { return }
 
@@ -714,29 +503,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             let audioData = try Data(contentsOf: audioURL)
-            NSLog("[DictateToBuffer] Meeting recording stopped, size = \(audioData.count) bytes")
+            Log.app.info("Meeting recording stopped, size = \(audioData.count) bytes")
 
             guard let apiKey = KeychainManager.shared.getSonioxAPIKey() else {
                 throw TranscriptionError.noAPIKey
             }
 
-            NSLog("[DictateToBuffer] Transcribing meeting recording...")
+            Log.app.info("Transcribing meeting recording...")
             transcriptionService.apiKey = apiKey
             let text = try await transcriptionService.transcribe(audioData: audioData)
-            NSLog("[DictateToBuffer] Meeting transcription received: \(text.prefix(100))...")
+            Log.app.info("Meeting transcription received: \(text.prefix(100))...")
 
             clipboardService.copy(text: text)
-            NSLog("[DictateToBuffer] stopMeetingRecording: Text copied to clipboard")
+            Log.app.info("stopMeetingRecording: Text copied to clipboard")
 
             if SettingsStorage.shared.autoPaste {
-                NSLog("[DictateToBuffer] stopMeetingRecording: Auto-pasting")
+                Log.app.info("stopMeetingRecording: Auto-pasting")
                 do {
                     try await clipboardService.paste()
                 } catch ClipboardError.accessibilityNotGranted {
-                    NSLog("[DictateToBuffer] stopMeetingRecording: Accessibility permission needed")
+                    Log.app.info("stopMeetingRecording: Accessibility permission needed")
                     PermissionManager.shared.showPermissionAlert(for: .accessibility)
                 } catch {
-                    NSLog("[DictateToBuffer] stopMeetingRecording: Paste failed - \(error.localizedDescription)")
+                    Log.app.info("stopMeetingRecording: Paste failed - \(error.localizedDescription)")
                 }
             }
 
@@ -758,7 +547,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try? FileManager.default.removeItem(at: audioURL)
 
         } catch {
-            NSLog("[DictateToBuffer] Meeting transcription failed: \(error)")
+            Log.app.info("Meeting transcription failed: \(error)")
             await MainActor.run {
                 appState.errorMessage = error.localizedDescription
                 appState.meetingRecordingState = .error
@@ -766,51 +555,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        setupMenu() // Update menu title
-        NSLog("[DictateToBuffer] stopMeetingRecording: END")
+        Log.app.info("stopMeetingRecording: END")
     }
 
-    @objc private func selectAutoDetect() {
+    // MARK: - Device Selection (exposed for SwiftUI)
+
+    func selectAutoDetect() {
         appState.useAutoDetect = true
         appState.selectedDeviceID = nil
-        SettingsStorage.shared.useAutoDetect = true
-        SettingsStorage.shared.selectedDeviceID = nil
-        setupMenu()
     }
 
-    @objc private func selectDevice(_ sender: NSMenuItem) {
-        guard let device = sender.representedObject as? AudioDevice else { return }
+    func selectDevice(_ device: AudioDevice) {
         appState.useAutoDetect = false
         appState.selectedDeviceID = device.id
-        SettingsStorage.shared.useAutoDetect = false
-        SettingsStorage.shared.selectedDeviceID = device.id
-        setupMenu()
     }
 
-    @objc private func openSettings() {
-        if settingsWindow == nil {
-            let settingsView = SettingsView()
-                .environmentObject(appState)
+    // MARK: - Settings
 
-            let hostingController = NSHostingController(rootView: settingsView)
-
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
-                styleMask: [.titled, .closable, .miniaturizable],
-                backing: .buffered,
-                defer: false
-            )
-            window.title = "Dictate to Buffer Settings"
-            window.contentViewController = hostingController
-            window.center()
-            window.isReleasedWhenClosed = false
-            window.level = .floating
-
-            settingsWindow = window
-        }
-
-        settingsWindow?.orderFrontRegardless()
-        settingsWindow?.makeKey()
-        NSApp.activate(ignoringOtherApps: true)
+    func openSettings() {
+        // Trigger settings opening via AppState (observed by SwiftUI)
+        appState.shouldOpenSettings = true
     }
+
 }

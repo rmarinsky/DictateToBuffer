@@ -52,20 +52,22 @@ struct PermissionsSettingsView: View {
             
             Section {
                 Button("Refresh Permission Status") {
-                    refreshPermissions()
+                    Task {
+                        await refreshPermissions()
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .formStyle(.grouped)
         .frame(minWidth: 400, minHeight: 450)
-        .onAppear {
-            refreshPermissions()
+        .task {
+            await refreshPermissions()
         }
     }
     
-    private func refreshPermissions() {
-        PermissionManager.shared.refreshStatus()
+    private func refreshPermissions() async {
+        await PermissionManager.shared.refreshStatus()
         
         // Update local state
         microphoneGranted = PermissionManager.shared.status.microphone

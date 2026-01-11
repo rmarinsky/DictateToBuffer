@@ -1,6 +1,7 @@
 import AppKit
 import Carbon
 import ApplicationServices
+import os
 
 enum ClipboardError: LocalizedError {
     case accessibilityNotGranted
@@ -38,10 +39,10 @@ final class ClipboardService {
     func paste() async throws {
         // Check accessibility permission first
         let isGranted = ClipboardService.isAccessibilityGranted()
-        NSLog("[ClipboardService] Accessibility permission check: \(isGranted)")
+        Log.app.info("Accessibility permission check: \(isGranted)")
 
         guard isGranted else {
-            NSLog("[ClipboardService] Accessibility permission not granted")
+            Log.app.info("Accessibility permission not granted")
             throw ClipboardError.accessibilityNotGranted
         }
 
@@ -50,13 +51,13 @@ final class ClipboardService {
 
         // Simulate Cmd+V using CGEvent
         guard let source = CGEventSource(stateID: .hidSystemState) else {
-            NSLog("[ClipboardService] Failed to create event source")
+            Log.app.info("Failed to create event source")
             throw ClipboardError.pasteEventFailed
         }
 
         // Key down: V (keycode 9) with Command modifier
         guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(9), keyDown: true) else {
-            NSLog("[ClipboardService] Failed to create keyDown event")
+            Log.app.info("Failed to create keyDown event")
             throw ClipboardError.pasteEventFailed
         }
         keyDown.flags = .maskCommand
@@ -67,13 +68,13 @@ final class ClipboardService {
 
         // Key up: V with Command
         guard let keyUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(9), keyDown: false) else {
-            NSLog("[ClipboardService] Failed to create keyUp event")
+            Log.app.info("Failed to create keyUp event")
             throw ClipboardError.pasteEventFailed
         }
         keyUp.flags = .maskCommand
         keyUp.post(tap: .cgAnnotatedSessionEventTap)
 
-        NSLog("[ClipboardService] Paste event sent successfully to frontmost app")
+        Log.app.info("Paste event sent successfully to frontmost app")
     }
 
     func getContent() -> String? {

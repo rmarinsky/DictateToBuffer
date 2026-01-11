@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Carbon
+import os
 
 final class PushToTalkService {
     private var globalMonitor: Any?
@@ -34,12 +35,13 @@ final class PushToTalkService {
         }
 
         // Become ready after cooldown
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
             self?.isReady = true
-            NSLog("[PushToTalk] Now ready to accept input")
+            Log.app.info("Now ready to accept input")
         }
 
-        NSLog("[PushToTalk] Started monitoring for \(selectedKey.displayName)")
+        Log.app.info("Started monitoring for \(self.selectedKey.displayName)")
     }
 
     func stop() {
@@ -54,7 +56,7 @@ final class PushToTalkService {
         isKeyPressed = false
         isReady = false
         startTime = nil
-        NSLog("[PushToTalk] Stopped monitoring")
+        Log.app.info("Stopped monitoring")
     }
 
     private func handleFlagsChanged(_ event: NSEvent) {
@@ -89,11 +91,11 @@ final class PushToTalkService {
             if keyCode == 57 {
                 if !isKeyPressed {
                     isKeyPressed = true
-                    NSLog("[PushToTalk] Caps Lock pressed - starting recording")
+                    Log.app.info("Caps Lock pressed - starting recording")
                     onKeyDown?()
                 } else {
                     isKeyPressed = false
-                    NSLog("[PushToTalk] Caps Lock released - stopping recording")
+                    Log.app.info("Caps Lock released - stopping recording")
                     onKeyUp?()
                 }
             }
@@ -101,11 +103,11 @@ final class PushToTalkService {
             // For Right Shift and Right Option
             if isPressed && !isKeyPressed {
                 isKeyPressed = true
-                NSLog("[PushToTalk] \(selectedKey.displayName) pressed - starting recording")
+                Log.app.info("\(self.selectedKey.displayName) pressed - starting recording")
                 onKeyDown?()
             } else if !isPressed && isKeyPressed && isCorrectKeyCode(keyCode) {
                 isKeyPressed = false
-                NSLog("[PushToTalk] \(selectedKey.displayName) released - stopping recording")
+                Log.app.info("\(self.selectedKey.displayName) released - stopping recording")
                 onKeyUp?()
             }
         }

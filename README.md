@@ -1,126 +1,178 @@
-# Dictate to Buffer - macOS App
+# DictateToBuffer
 
-Native macOS menu bar application for voice dictation with Soniox transcription.
+A native macOS menu bar app for voice dictation. Record your voice, get it transcribed via Soniox API, and automatically paste the text.
 
 ## Features
 
-- Menu bar app with global hotkey (⌘⇧D)
-- Auto-detect best microphone or manual selection
-- Minimal floating recording indicator
-- API keys stored securely in macOS Keychain
-- Auto-paste transcribed text
+- **Voice Dictation** - Press hotkey, speak, release, text appears
+- **Menu Bar App** - Lives in your menu bar, no dock icon
+- **Global Hotkey** - Default: `Cmd+Shift+D`
+- **Push-to-Talk** - Hold Caps Lock, Right Shift, or Right Option
+- **Meeting Recording** - Capture system audio from Zoom, Meet, etc. (`Cmd+Shift+M`)
+- **Auto-Paste** - Transcribed text automatically pastes to active app
+- **Secure Storage** - API keys stored in macOS Keychain
 
 ## Requirements
 
 - macOS 14.0+ (Sonoma)
 - Xcode 15.0+
-- Soniox API key ([create one at Soniox Console](https://console.soniox.com) - see [documentation](https://soniox.com/docs))
+- [Homebrew](https://brew.sh) (for XcodeGen)
+- [Soniox API key](https://console.soniox.com)
 
-## Project Setup
+## Build & Install
 
-### Option 1: Create Xcode Project Manually
-
-1. Open Xcode
-2. File → New → Project
-3. Choose **macOS** → **App**
-4. Configure:
-   - Product Name: `DictateToBuffer`
-   - Team: Your team
-   - Organization Identifier: `com.dictate`
-   - Interface: **SwiftUI**
-   - Language: **Swift**
-   - Uncheck "Include Tests"
-
-5. After project creation:
-   - Delete the auto-generated `ContentView.swift`
-   - Drag all files from `DictateToBuffer/` folder into the Xcode project
-   - In Project Settings → Signing & Capabilities:
-     - Add "Audio Input" capability
-     - Add "Keychain Sharing" capability
-     - Add "Network (Client)" capability
-
-6. Configure Info.plist:
-   - Set `LSUIElement` = `YES` (menu bar app, no dock icon)
-   - Add `NSMicrophoneUsageDescription`
-
-7. Build & Run (⌘R)
-
-### Option 2: Generate Xcode Project with Script
+### 1. Clone the Repository
 
 ```bash
-cd /Users/rmarinskyi/PycharmProjects/DictateToBuffer
+git clone https://github.com/YOUR_USERNAME/DictateToBuffer.git
+cd DictateToBuffer
+```
+
+### 2. Generate Xcode Project
+
+```bash
 ./generate_project.sh
 ```
 
-## Project Structure
+This installs XcodeGen (if needed) and generates `DictateToBuffer.xcodeproj`.
 
+### 3. Open in Xcode
+
+```bash
+open DictateToBuffer.xcodeproj
 ```
-DictateToBuffer/
-├── App/
-│   ├── DictateToBufferApp.swift    # Entry point
-│   ├── AppDelegate.swift           # Menu bar & orchestration
-│   └── AppState.swift              # Shared state
-│
-├── Features/
-│   ├── Recording/
-│   │   └── RecordingIndicatorView.swift  # Floating pill
-│   └── Settings/
-│       ├── SettingsView.swift      # Main settings
-│       ├── GeneralSettingsView.swift
-│       ├── AudioSettingsView.swift
-│       └── APISettingsView.swift
-│
-├── Core/
-│   ├── Models/
-│   │   ├── AudioDevice.swift
-│   │   ├── AudioQuality.swift
-│   │   ├── Errors.swift
-│   │   └── KeyCombo.swift
-│   │
-│   ├── Services/
-│   │   ├── AudioDeviceManager.swift
-│   │   ├── AudioRecorderService.swift
-│   │   ├── SonioxTranscriptionService.swift
-│   │   ├── ClipboardService.swift
-│   │   └── HotkeyService.swift
-│   │
-│   └── Storage/
-│       ├── KeychainManager.swift
-│       └── SettingsStorage.swift
-│
-├── Utilities/
-│   └── NotificationManager.swift
-│
-└── Resources/
-    ├── Info.plist
-    ├── DictateToBuffer.entitlements
-    └── Assets.xcassets/
+
+### 4. Configure Signing
+
+1. In Xcode, select the **DictateToBuffer** target
+2. Go to **Signing & Capabilities**
+3. Select your **Team** (or personal Apple ID)
+4. Xcode will automatically manage signing
+
+### 5. Build the App
+
+**Option A: Build in Xcode**
+- Press `Cmd+B` to build
+- Or `Cmd+R` to build and run
+
+**Option B: Build from Terminal**
+```bash
+xcodebuild -scheme DictateToBuffer -configuration Release build SYMROOT=./build
 ```
+
+### 6. Install to Applications
+
+After building, copy the app to your Applications folder:
+
+**From Xcode build:**
+```bash
+cp -r ~/Library/Developer/Xcode/DerivedData/DictateToBuffer-*/Build/Products/Release/DictateToBuffer.app /Applications/
+```
+
+**From terminal build:**
+```bash
+cp -r ./build/Release/DictateToBuffer.app /Applications/
+```
+
+Or manually:
+1. In Xcode: **Product** → **Show Build Folder in Finder**
+2. Navigate to `Products/Release/`
+3. Drag `DictateToBuffer.app` to `/Applications`
+
+## First Launch Setup
+
+### 1. Launch the App
+
+```bash
+open /Applications/DictateToBuffer.app
+```
+
+Or double-click in Finder. The app icon appears in your menu bar.
+
+### 2. Grant Permissions
+
+The app will request these permissions:
+
+| Permission | Why Needed | How to Grant |
+|------------|-----------|--------------|
+| **Microphone** | Record your voice | Click "Allow" when prompted |
+| **Accessibility** | Auto-paste text (Cmd+V simulation) | System Settings → Privacy & Security → Accessibility → Enable DictateToBuffer |
+| **Screen Recording** | Meeting recording (system audio) | System Settings → Privacy & Security → Screen Recording → Enable DictateToBuffer |
+
+### 3. Add Soniox API Key
+
+1. Click the menu bar icon
+2. Select **Settings**
+3. Go to **API** tab
+4. Enter your [Soniox API key](https://console.soniox.com)
+5. Click **Test Connection** to verify
 
 ## Usage
 
-1. Launch the app (appears in menu bar as 🎙️)
-2. Click menu bar icon → Settings → Add Soniox API key
-3. Select audio device or use Auto-detect
-4. Press ⌘⇧D or click menu bar icon to start recording
-5. Press again to stop → text is transcribed and pasted
+### Voice Dictation
 
-## Permissions Required
+| Action | Method |
+|--------|--------|
+| Start/Stop Recording | Click menu bar icon |
+| Start/Stop Recording | Press `Cmd+Shift+D` |
+| Push-to-Talk | Hold `Caps Lock`, `Right Shift`, or `Right Option` |
 
-- **Microphone** - For audio recording
-- **Accessibility** - For auto-paste (Cmd+V simulation)
-- **Keychain** - For secure API key storage
+1. Activate recording
+2. Speak clearly
+3. Stop recording
+4. Text is transcribed and pasted automatically
 
-## Development
+### Meeting Recording
 
-### Build
+| Action | Method |
+|--------|--------|
+| Start/Stop Meeting Recording | Press `Cmd+Shift+M` |
+| Start/Stop Meeting Recording | Menu → Record Meeting |
+
+Records system audio (Zoom, Google Meet, Teams, etc.) and transcribes when stopped.
+
+### Settings
+
+Access via menu bar icon → **Settings**:
+
+- **General** - Hotkey, push-to-talk key, auto-paste toggle
+- **Audio** - Microphone selection, audio quality
+- **Meetings** - Audio source (system only / system + mic)
+- **API** - Soniox API key
+
+## Troubleshooting
+
+### App doesn't appear in menu bar
+- Check if app is running: `ps aux | grep DictateToBuffer`
+- Try relaunching the app
+
+### Microphone not working
+- System Settings → Privacy & Security → Microphone → Ensure DictateToBuffer is enabled
+- Try selecting a different audio device in Settings → Audio
+
+### Auto-paste not working
+- System Settings → Privacy & Security → Accessibility → Enable DictateToBuffer
+- Restart the app after granting permission
+
+### Meeting recording not capturing audio
+- System Settings → Privacy & Security → Screen Recording → Enable DictateToBuffer
+- Restart the app after granting permission
+
+### "API key invalid" error
+- Verify your key at [console.soniox.com](https://console.soniox.com)
+- Re-enter the key in Settings → API
+
+## Uninstall
+
 ```bash
-xcodebuild -scheme DictateToBuffer -configuration Debug build
-```
+# Remove app
+rm -rf /Applications/DictateToBuffer.app
 
-### Run
-```bash
-open build/Debug/DictateToBuffer.app
+# Remove preferences (optional)
+defaults delete com.dictate.buffer
+
+# Remove keychain items (optional)
+security delete-generic-password -s "com.dictate.buffer.soniox" 2>/dev/null
 ```
 
 ## License

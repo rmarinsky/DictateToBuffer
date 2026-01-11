@@ -6,6 +6,7 @@ enum TranscriptionError: LocalizedError {
     case apiError(String)
     case invalidResponse
     case emptyTranscription
+    case invalidURL
 
     var errorDescription: String? {
         switch self {
@@ -19,6 +20,8 @@ enum TranscriptionError: LocalizedError {
             return "Invalid response from server"
         case .emptyTranscription:
             return "No speech detected"
+        case .invalidURL:
+            return "Invalid API URL"
         }
     }
 }

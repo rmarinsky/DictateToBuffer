@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import os
 
 enum RecordingState: Equatable, CustomStringConvertible {
     case idle
@@ -37,10 +38,11 @@ enum MeetingRecordingState: Equatable, CustomStringConvertible {
     }
 }
 
+@MainActor
 final class AppState: ObservableObject {
     @Published var recordingState: RecordingState = .idle {
         didSet {
-            NSLog("[AppState] recordingState changed: \(oldValue) -> \(recordingState)")
+            Log.app.debug("recordingState changed: \(oldValue.description) -> \(self.recordingState.description)")
         }
     }
     @Published var recordingStartTime: Date?
@@ -48,20 +50,31 @@ final class AppState: ObservableObject {
     @Published var errorMessage: String? {
         didSet {
             if let msg = errorMessage {
-                NSLog("[AppState] errorMessage set: \(msg)")
+                Log.app.debug("errorMessage set: \(msg)")
             }
         }
     }
 
-    @Published var useAutoDetect: Bool
-    @Published var selectedDeviceID: AudioDeviceID?
+    @Published var useAutoDetect: Bool {
+        didSet {
+            SettingsStorage.shared.useAutoDetect = useAutoDetect
+        }
+    }
+    @Published var selectedDeviceID: AudioDeviceID? {
+        didSet {
+            SettingsStorage.shared.selectedDeviceID = selectedDeviceID
+        }
+    }
     @Published var microphonePermissionGranted: Bool = false
     @Published var screenCapturePermissionGranted: Bool = false
+
+    // Settings trigger (for opening settings from non-SwiftUI code)
+    @Published var shouldOpenSettings: Bool = false
 
     // Meeting recording
     @Published var meetingRecordingState: MeetingRecordingState = .idle {
         didSet {
-            NSLog("[AppState] meetingRecordingState changed: \(oldValue) -> \(meetingRecordingState)")
+            Log.app.debug("meetingRecordingState changed: \(oldValue.description) -> \(self.meetingRecordingState.description)")
         }
     }
     @Published var meetingRecordingStartTime: Date?
@@ -80,6 +93,6 @@ final class AppState: ObservableObject {
         let settings = SettingsStorage.shared
         self.useAutoDetect = settings.useAutoDetect
         self.selectedDeviceID = settings.selectedDeviceID
-        NSLog("[AppState] Initialized: useAutoDetect=\(useAutoDetect), selectedDeviceID=\(String(describing: selectedDeviceID))")
+        Log.app.debug("Initialized: useAutoDetect=\(self.useAutoDetect), selectedDeviceID=\(String(describing: self.selectedDeviceID))")
     }
 }
