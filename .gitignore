@@ -153,3 +153,4 @@ coverage/
 *.gcov
 *.gcda
 *.gcno
+*.dmg
