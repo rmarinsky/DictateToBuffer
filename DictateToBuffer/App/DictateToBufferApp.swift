@@ -11,6 +11,7 @@ struct DictateToBufferApp: App {
             MenuBarContentView(
                 audioDeviceManager: appDelegate.audioDeviceManager,
                 onToggleRecording: { appDelegate.toggleRecording() },
+                onToggleTranslationRecording: { appDelegate.toggleTranslationRecording() },
                 onToggleMeetingRecording: { appDelegate.toggleMeetingRecording() },
                 onSelectAutoDetect: { appDelegate.selectAutoDetect() },
                 onSelectDevice: { device in appDelegate.selectDevice(device) }
@@ -19,6 +20,9 @@ struct DictateToBufferApp: App {
             .onReceive(appDelegate.appState.$shouldOpenSettings) { shouldOpen in
                 if shouldOpen {
                     openSettings()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
                     appDelegate.appState.shouldOpenSettings = false
                 }
             }

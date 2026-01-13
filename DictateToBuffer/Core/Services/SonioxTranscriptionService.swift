@@ -13,7 +13,7 @@ final class SonioxTranscriptionService {
     func transcribe(audioData: Data, language: String? = nil) async throws -> String {
         Log.transcription.info("transcribe: BEGIN, audioData size = \(audioData.count) bytes")
 
-        guard let apiKey = apiKey, !apiKey.isEmpty else {
+        guard let apiKey, !apiKey.isEmpty else {
             Log.transcription.info("transcribe: No API key!")
             throw TranscriptionError.noAPIKey
         }
@@ -45,7 +45,7 @@ final class SonioxTranscriptionService {
     func translateAndTranscribe(audioData: Data) async throws -> String {
         Log.transcription.info("translateAndTranscribe: BEGIN, audioData size = \(audioData.count) bytes")
 
-        guard let apiKey = apiKey, !apiKey.isEmpty else {
+        guard let apiKey, !apiKey.isEmpty else {
             Log.transcription.info("translateAndTranscribe: No API key!")
             throw TranscriptionError.noAPIKey
         }
@@ -88,11 +88,11 @@ final class SonioxTranscriptionService {
 
         // Build multipart body
         var body = Data()
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"recording.wav\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: audio/wav\r\n\r\n".data(using: .utf8)!)
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Disposition: form-data; name=\"file\"; filename=\"recording.wav\"\r\n".utf8))
+        body.append(Data("Content-Type: audio/wav\r\n\r\n".utf8))
         body.append(audioData)
-        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
 
         request.httpBody = body
 
@@ -210,11 +210,12 @@ final class SonioxTranscriptionService {
         request.httpMethod = "GET"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
-        for attempt in 1...maxPollingAttempts {
+        for attempt in 1 ... maxPollingAttempts {
             let (data, response) = try await URLSession.shared.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
+                  httpResponse.statusCode == 200
+            else {
                 let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
                 Log.transcription.info("Poll error: \(errorBody)")
                 throw TranscriptionError.invalidResponse
@@ -238,7 +239,7 @@ final class SonioxTranscriptionService {
             }
         }
 
-        throw TranscriptionError.apiError("Transcription timed out after \(self.maxPollingAttempts) seconds")
+        throw TranscriptionError.apiError("Transcription timed out after \(maxPollingAttempts) seconds")
     }
 
     // MARK: - Step 4: Get Transcript
@@ -314,7 +315,7 @@ final class SonioxTranscriptionService {
             return transcriptResponse.text
         }
 
-        let translatedText = translatedTokens.map { $0.text }.joined()
+        let translatedText = translatedTokens.map(\.text).joined()
         Log.transcription.info("Translated text extracted: \(translatedText.prefix(50))...")
 
         guard !translatedText.isEmpty else {
@@ -327,7 +328,7 @@ final class SonioxTranscriptionService {
     // MARK: - Test Connection
 
     func testConnection() async throws -> Bool {
-        guard let apiKey = apiKey, !apiKey.isEmpty else {
+        guard let apiKey, !apiKey.isEmpty else {
             throw TranscriptionError.noAPIKey
         }
 

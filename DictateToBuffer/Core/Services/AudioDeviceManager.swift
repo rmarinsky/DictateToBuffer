@@ -1,7 +1,7 @@
-import Foundation
-import CoreAudio
 import AVFoundation
 import Combine
+import CoreAudio
+import Foundation
 
 final class AudioDeviceManager: ObservableObject {
     @Published private(set) var availableDevices: [AudioDevice] = []
@@ -91,7 +91,8 @@ final class AudioDeviceManager: ObservableObject {
         return deviceIDs.compactMap { deviceID -> AudioDevice? in
             guard let name = getDeviceName(deviceID),
                   let inputChannels = getInputChannelCount(deviceID),
-                  inputChannels > 0 else {
+                  inputChannels > 0
+            else {
                 return nil
             }
 
@@ -136,19 +137,22 @@ final class AudioDeviceManager: ObservableObject {
             mElement: kAudioObjectPropertyElementMain
         )
 
-        var name: CFString?
-        var dataSize = UInt32(MemoryLayout<CFString?>.size)
+        var name: Unmanaged<CFString>?
+        var dataSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
 
-        let status = AudioObjectGetPropertyData(
-            deviceID,
-            &propertyAddress,
-            0,
-            nil,
-            &dataSize,
-            &name
-        )
+        let status = withUnsafeMutablePointer(to: &name) { namePtr in
+            AudioObjectGetPropertyData(
+                deviceID,
+                &propertyAddress,
+                0,
+                nil,
+                &dataSize,
+                namePtr
+            )
+        }
 
-        return status == noErr ? name as String? : nil
+        guard status == noErr, let unmanagedName = name else { return nil }
+        return unmanagedName.takeRetainedValue() as String
     }
 
     private func getInputChannelCount(_ deviceID: AudioDeviceID) -> Int? {
@@ -171,7 +175,7 @@ final class AudioDeviceManager: ObservableObject {
         let bufferList = bufferListPointer.pointee
         var channelCount = 0
 
-        for i in 0..<Int(bufferList.mNumberBuffers) {
+        for i in 0 ..< Int(bufferList.mNumberBuffers) {
             let buffer = withUnsafePointer(to: &bufferListPointer.pointee.mBuffers) {
                 $0.advanced(by: i).pointee
             }
@@ -195,7 +199,7 @@ final class AudioDeviceManager: ObservableObject {
         return status == noErr ? sampleRate : nil
     }
 
-    private func measureSignalLevel(deviceID: AudioDeviceID, duration: TimeInterval = 1.0) async -> Float {
+    private func measureSignalLevel(deviceID _: AudioDeviceID, duration: TimeInterval = 1.0) async -> Float {
         let audioEngine = AVAudioEngine()
         let inputNode = audioEngine.inputNode
 
@@ -210,7 +214,7 @@ final class AudioDeviceManager: ObservableObject {
             let frameLength = Int(buffer.frameLength)
 
             if let data = channelData {
-                for i in 0..<frameLength {
+                for i in 0 ..< frameLength {
                     samples.append(data[i])
                 }
             }

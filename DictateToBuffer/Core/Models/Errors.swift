@@ -11,17 +11,17 @@ enum TranscriptionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noAPIKey:
-            return "Please add your Soniox API key in Settings"
-        case .networkError(let error):
-            return "Network error: \(error.localizedDescription)"
-        case .apiError(let message):
-            return "API error: \(message)"
+            "Please add your Soniox API key in Settings"
+        case let .networkError(error):
+            "Network error: \(error.localizedDescription)"
+        case let .apiError(message):
+            "API error: \(message)"
         case .invalidResponse:
-            return "Invalid response from server"
+            "Invalid response from server"
         case .emptyTranscription:
-            return "No speech detected"
+            "No speech detected"
         case .invalidURL:
-            return "Invalid API URL"
+            "Invalid API URL"
         }
     }
 }
@@ -35,13 +35,13 @@ enum AudioError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noInputDevice:
-            return "No audio input device found"
+            "No audio input device found"
         case .permissionDenied:
-            return "Microphone permission denied. Please enable in System Settings."
-        case .recordingFailed(let reason):
-            return "Recording failed: \(reason)"
+            "Microphone permission denied. Please enable in System Settings."
+        case let .recordingFailed(reason):
+            "Recording failed: \(reason)"
         case .deviceNotFound:
-            return "Selected audio device not found"
+            "Selected audio device not found"
         }
     }
 }
@@ -54,11 +54,11 @@ enum KeychainError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .saveFailed:
-            return "Failed to save to Keychain"
+            "Failed to save to Keychain"
         case .readFailed:
-            return "Failed to read from Keychain"
+            "Failed to read from Keychain"
         case .deleteFailed:
-            return "Failed to delete from Keychain"
+            "Failed to delete from Keychain"
         }
     }
 }

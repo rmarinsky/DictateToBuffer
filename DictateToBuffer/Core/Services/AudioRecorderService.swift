@@ -1,6 +1,6 @@
-import Foundation
 import AVFoundation
 import Combine
+import Foundation
 import os
 
 @MainActor
@@ -61,7 +61,7 @@ final class AudioRecorderService: ObservableObject {
         Log.audio.info("startRecording: Audio settings configured, sampleRate=\(quality.sampleRate)")
 
         // Set input device if specified
-        if let device = device {
+        if let device {
             Log.audio.info("startRecording: Setting input device: \(device.name)")
             setInputDevice(device.id)
         }
@@ -86,7 +86,9 @@ final class AudioRecorderService: ObservableObject {
     func stopRecording() async throws -> Data {
         Log.audio.info("stopRecording: BEGIN, isRecording=\(self.isRecording)")
         guard isRecording, let recorder = audioRecorder, let url = recordingURL else {
-            Log.audio.info("stopRecording: No active recording! isRecording=\(self.isRecording), recorder=\(self.audioRecorder != nil), url=\(self.recordingURL?.path ?? "nil")")
+            let logMsg = "stopRecording: No active recording! isRecording=\(isRecording), " +
+                "recorder=\(audioRecorder != nil), url=\(recordingURL?.path ?? "nil")"
+            Log.audio.info("\(logMsg)")
             throw AudioError.recordingFailed("No active recording")
         }
 

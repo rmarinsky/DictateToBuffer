@@ -1,6 +1,6 @@
 import AppKit
-import Carbon
 import ApplicationServices
+import Carbon
 import os
 
 enum ClipboardError: LocalizedError {
@@ -10,9 +10,9 @@ enum ClipboardError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .accessibilityNotGranted:
-            return "Accessibility permission required for auto-paste"
+            "Accessibility permission required for auto-paste"
         case .pasteEventFailed:
-            return "Failed to simulate paste keyboard event"
+            "Failed to simulate paste keyboard event"
         }
     }
 }
@@ -27,7 +27,7 @@ final class ClipboardService {
 
     /// Check if accessibility permission is granted
     static func isAccessibilityGranted() -> Bool {
-        return AXIsProcessTrusted()
+        AXIsProcessTrusted()
     }
 
     /// Request accessibility permission (opens System Settings)
@@ -78,6 +78,6 @@ final class ClipboardService {
     }
 
     func getContent() -> String? {
-        return pasteboard.string(forType: .string)
+        pasteboard.string(forType: .string)
     }
 }

@@ -1,6 +1,6 @@
-import SwiftUI
 import AVFoundation
 import CoreAudio
+import SwiftUI
 
 struct AudioSettingsView: View {
     @StateObject private var deviceManager = AudioDeviceManager()
@@ -69,7 +69,8 @@ struct AudioSettingsView: View {
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(device.name)
-                                .foregroundColor(!useAutoDetect && selectedDeviceID == device.id ? .primary : .secondary)
+                                .foregroundColor(!useAutoDetect && selectedDeviceID == device
+                                    .id ? .primary : .secondary)
 
                             if device.isDefault {
                                 Text("System Default")
@@ -80,7 +81,7 @@ struct AudioSettingsView: View {
 
                         Spacer()
 
-                        if !useAutoDetect && selectedDeviceID == device.id {
+                        if !useAutoDetect, selectedDeviceID == device.id {
                             Image(systemName: "checkmark")
                                 .foregroundColor(.accentColor)
                         }
@@ -100,13 +101,13 @@ struct AudioSettingsView: View {
             Section {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Button(action: {
+                        Button {
                             if isTestRecording {
                                 stopTestRecording()
                             } else {
                                 startTestRecording()
                             }
-                        }) {
+                        } label: {
                             HStack {
                                 Image(systemName: isTestRecording ? "stop.circle.fill" : "mic.circle.fill")
                                     .foregroundColor(isTestRecording ? .red : .accentColor)
@@ -117,14 +118,14 @@ struct AudioSettingsView: View {
                         .tint(isTestRecording ? .red : .accentColor)
                         .disabled(isTestPlaying)
 
-                        if testRecordingURL != nil && !isTestRecording {
-                            Button(action: {
+                        if testRecordingURL != nil, !isTestRecording {
+                            Button {
                                 if isTestPlaying {
                                     stopTestPlayback()
                                 } else {
                                     playTestRecording()
                                 }
-                            }) {
+                            } label: {
                                 HStack {
                                     Image(systemName: isTestPlaying ? "stop.fill" : "play.fill")
                                     Text(isTestPlaying ? "Stop" : "Play")
@@ -179,11 +180,11 @@ struct AudioSettingsView: View {
 
     private var levelColor: Color {
         if testAudioLevel > 0.8 {
-            return .red
+            .red
         } else if testAudioLevel > 0.5 {
-            return .yellow
+            .yellow
         } else {
-            return .green
+            .green
         }
     }
 
@@ -191,17 +192,16 @@ struct AudioSettingsView: View {
 
     private func startTestRecording() {
         // Get the selected device
-        let device: AudioDevice?
-        if useAutoDetect {
-            device = deviceManager.defaultDevice
+        let device: AudioDevice? = if useAutoDetect {
+            deviceManager.defaultDevice
         } else if let selectedID = selectedDeviceID {
-            device = deviceManager.availableDevices.first { $0.id == selectedID }
+            deviceManager.availableDevices.first { $0.id == selectedID }
         } else {
-            device = deviceManager.defaultDevice
+            deviceManager.defaultDevice
         }
 
         // Set input device if specified
-        if let device = device {
+        if let device {
             setInputDevice(device.id)
         }
 
@@ -370,7 +370,7 @@ class AudioPlayerDelegate: NSObject, AVAudioPlayerDelegate {
     static let shared = AudioPlayerDelegate()
     var onFinish: (() -> Void)?
 
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+    func audioPlayerDidFinishPlaying(_: AVAudioPlayer, successfully _: Bool) {
         onFinish?()
     }
 }

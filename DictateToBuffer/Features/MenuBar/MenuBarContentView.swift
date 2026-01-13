@@ -6,6 +6,7 @@ struct MenuBarContentView: View {
     @Environment(\.openSettings) private var openSettings
 
     var onToggleRecording: @MainActor () -> Void
+    var onToggleTranslationRecording: @MainActor () -> Void
     var onToggleMeetingRecording: @MainActor () -> Void
     var onSelectAutoDetect: @MainActor () -> Void
     var onSelectDevice: @MainActor (AudioDevice) -> Void
@@ -23,6 +24,17 @@ struct MenuBarContentView: View {
                 }
             }
             .keyboardShortcut("d", modifiers: [.command, .shift])
+            
+            Button(action: onToggleTranslationRecording) {
+                HStack {
+                    Text(translateButtonTitle)
+                    Spacer()
+                    Text("⌘⇧T")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                }
+            }
+            .keyboardShortcut("t", modifiers: [.command, .shift])
 
             // Meeting recording toggle
             Button(action: onToggleMeetingRecording) {
@@ -52,10 +64,12 @@ struct MenuBarContentView: View {
                 Divider()
 
                 ForEach(audioDeviceManager.availableDevices, id: \.id) { device in
-                    Button(action: { onSelectDevice(device) }) {
+                    Button {
+                        onSelectDevice(device)
+                    } label: {
                         HStack {
                             Text(device.name)
-                            if !appState.useAutoDetect && appState.selectedDeviceID == device.id {
+                            if !appState.useAutoDetect, appState.selectedDeviceID == device.id {
                                 Image(systemName: "checkmark")
                             }
                         }
@@ -66,9 +80,14 @@ struct MenuBarContentView: View {
             Divider()
 
             // Settings
-            Button(action: { openSettings() }) {
+            Button {
+                openSettings()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+            } label: {
                 HStack {
-                    Text("Settings...")
+                    Text("Settings")
                     Spacer()
                     Text("⌘,")
                         .foregroundColor(.secondary)
@@ -91,30 +110,45 @@ struct MenuBarContentView: View {
     private var recordingButtonTitle: String {
         switch appState.recordingState {
         case .idle:
-            return "Start Recording"
+            "Transcribe me"
         case .recording:
-            return "Stop Recording"
+            "Stop listening"
         case .processing:
-            return "Processing..."
+            "Processing?"
         case .success:
-            return "Done"
+            "Transcribed!"
         case .error:
-            return "Error"
+            "Error :/"
+        }
+    }
+    
+    private var translateButtonTitle: String {
+        switch appState.translationRecordingState {
+        case .idle:
+            "Translate me"
+        case .recording:
+            "Stop listening"
+        case .processing:
+            "Processing?"
+        case .success:
+            "Translated!"
+        case .error:
+            "Error :/"
         }
     }
 
     private var meetingButtonTitle: String {
         switch appState.meetingRecordingState {
         case .idle:
-            return "Record Meeting"
+            "Record Meeting"
         case .recording:
-            return "Stop Meeting Recording"
+            "Stop Meeting Recording"
         case .processing:
-            return "Processing Meeting..."
+            "Processing Meeting?"
         case .success:
-            return "Meeting Done"
+            "Meeting Welldone!"
         case .error:
-            return "Meeting Error"
+            "Meeting Error :/"
         }
     }
 }

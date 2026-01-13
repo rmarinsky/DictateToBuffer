@@ -1,5 +1,5 @@
-import Foundation
 import Carbon
+import Foundation
 
 final class SettingsStorage {
     static let shared = SettingsStorage()
@@ -50,7 +50,8 @@ final class SettingsStorage {
     var audioQuality: AudioQuality {
         get {
             guard let rawValue = defaults.string(forKey: Key.audioQuality.rawValue),
-                  let quality = AudioQuality(rawValue: rawValue) else {
+                  let quality = AudioQuality(rawValue: rawValue)
+            else {
                 return .medium
             }
             return quality
@@ -104,7 +105,8 @@ final class SettingsStorage {
     var pushToTalkKey: PushToTalkKey {
         get {
             guard let rawValue = defaults.string(forKey: Key.pushToTalkKey.rawValue),
-                  let key = PushToTalkKey(rawValue: rawValue) else {
+                  let key = PushToTalkKey(rawValue: rawValue)
+            else {
                 return .none
             }
             return key
@@ -119,7 +121,8 @@ final class SettingsStorage {
     var meetingAudioSource: MeetingAudioSource {
         get {
             guard let rawValue = defaults.string(forKey: Key.meetingAudioSource.rawValue),
-                  let source = MeetingAudioSource(rawValue: rawValue) else {
+                  let source = MeetingAudioSource(rawValue: rawValue)
+            else {
                 return .systemOnly
             }
             return source
@@ -168,7 +171,8 @@ final class SettingsStorage {
     var translationPushToTalkKey: PushToTalkKey {
         get {
             guard let rawValue = defaults.string(forKey: Key.translationPushToTalkKey.rawValue),
-                  let key = PushToTalkKey(rawValue: rawValue) else {
+                  let key = PushToTalkKey(rawValue: rawValue)
+            else {
                 return .none
             }
             return key
@@ -178,4 +182,3 @@ final class SettingsStorage {
         }
     }
 }
-

@@ -1,6 +1,6 @@
-import Foundation
-import Carbon
 import AppKit
+import Carbon
+import Foundation
 
 struct KeyCombo: Codable, Equatable {
     let keyCode: UInt32
@@ -64,7 +64,7 @@ struct KeyCombo: Codable, Equatable {
 
     /// Default hotkey: Cmd + Shift + D
     static let `default` = KeyCombo(
-        keyCode: 2,  // 'd' key
+        keyCode: 2, // 'd' key
         modifiers: UInt32(cmdKey | shiftKey)
     )
 }

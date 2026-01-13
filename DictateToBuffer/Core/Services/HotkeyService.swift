@@ -1,5 +1,5 @@
-import Foundation
 import Carbon
+import Foundation
 
 final class HotkeyService {
     private var hotkeyRef: EventHotKeyRef?
@@ -23,7 +23,7 @@ final class HotkeyService {
 
         let status = InstallEventHandler(
             GetApplicationEventTarget(),
-            { (_, event, _) -> OSStatus in
+            { _, _, _ -> OSStatus in
                 HotkeyService.sharedInstance?.handler?()
                 return noErr
             },
@@ -62,7 +62,7 @@ final class HotkeyService {
             eventHandler = nil
         }
 
-        self.handler = nil
+        handler = nil
         HotkeyService.sharedInstance = nil
     }
 }

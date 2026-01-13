@@ -5,15 +5,17 @@ struct PermissionsSettingsView: View {
     @State private var accessibilityGranted = false
     @State private var screenRecordingGranted = false
     @State private var notificationsGranted = false
-    
+
     var body: some View {
         Form {
             Section {
-                Text("DictateToBuffer requires certain permissions to function properly. Review the permissions below and grant any that are missing.")
-                    .foregroundColor(.secondary)
-                    .font(.callout)
+                Text(
+                    "DictateToBuffer requires certain permissions to function properly. Review the permissions below and grant any that are missing."
+                )
+                .foregroundColor(.secondary)
+                .font(.callout)
             }
-            
+
             Section("Required Permissions") {
                 PermissionRow(
                     icon: "mic.fill",
@@ -22,7 +24,7 @@ struct PermissionsSettingsView: View {
                     isGranted: microphoneGranted,
                     permissionType: .microphone
                 )
-                
+
                 PermissionRow(
                     icon: "accessibility",
                     title: "Accessibility",
@@ -31,7 +33,7 @@ struct PermissionsSettingsView: View {
                     permissionType: .accessibility
                 )
             }
-            
+
             Section("Optional Permissions") {
                 PermissionRow(
                     icon: "rectangle.on.rectangle",
@@ -40,7 +42,7 @@ struct PermissionsSettingsView: View {
                     isGranted: screenRecordingGranted,
                     permissionType: .screenRecording
                 )
-                
+
                 PermissionRow(
                     icon: "bell.fill",
                     title: "Notifications",
@@ -49,7 +51,7 @@ struct PermissionsSettingsView: View {
                     permissionType: .notifications
                 )
             }
-            
+
             Section {
                 Button("Refresh Permission Status") {
                     Task {
@@ -64,10 +66,10 @@ struct PermissionsSettingsView: View {
             await refreshPermissions()
         }
     }
-    
+
     private func refreshPermissions() async {
         await PermissionManager.shared.refreshStatus()
-        
+
         // Update local state
         microphoneGranted = PermissionManager.shared.status.microphone
         accessibilityGranted = PermissionManager.shared.status.accessibility
@@ -82,7 +84,7 @@ struct PermissionRow: View {
     let description: String
     let isGranted: Bool
     let permissionType: PermissionType
-    
+
     var body: some View {
         HStack(spacing: 12) {
             // Icon
@@ -90,7 +92,7 @@ struct PermissionRow: View {
                 .font(.title2)
                 .foregroundColor(isGranted ? .green : .orange)
                 .frame(width: 32)
-            
+
             // Title and description
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -99,9 +101,9 @@ struct PermissionRow: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-            
+
             Spacer()
-            
+
             // Status and action button
             if isGranted {
                 Image(systemName: "checkmark.circle.fill")

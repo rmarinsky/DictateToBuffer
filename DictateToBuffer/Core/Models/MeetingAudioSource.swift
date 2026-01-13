@@ -7,18 +7,18 @@ enum MeetingAudioSource: String, Codable, CaseIterable {
     var displayName: String {
         switch self {
         case .systemOnly:
-            return "System Audio Only"
+            "System Audio Only"
         case .systemPlusMicrophone:
-            return "System + Microphone"
+            "System + Microphone"
         }
     }
 
     var description: String {
         switch self {
         case .systemOnly:
-            return "Record only what you hear (meeting participants)"
+            "Record only what you hear (meeting participants)"
         case .systemPlusMicrophone:
-            return "Record yourself and meeting participants"
+            "Record yourself and meeting participants"
         }
     }
 }

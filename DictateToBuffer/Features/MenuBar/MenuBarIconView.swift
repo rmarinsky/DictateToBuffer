@@ -16,6 +16,21 @@ struct MenuBarIconView: View {
             return "⏳"
         }
 
+        // Translation recording
+        switch appState.translationRecordingState {
+        case .recording:
+            return "🔴"
+        case .processing:
+            return "⏳"
+        case .success:
+            return "✅"
+        case .error:
+            return "❌"
+        case .idle:
+            break
+        }
+
+        // Regular recording
         switch appState.recordingState {
         case .idle:
             if appState.meetingRecordingState == .success {

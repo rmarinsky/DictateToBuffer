@@ -9,26 +9,26 @@ enum PushToTalkKey: String, Codable, CaseIterable {
     var displayName: String {
         switch self {
         case .none:
-            return "Disabled"
+            "Disabled"
         case .capsLock:
-            return "Caps Lock"
+            "Caps Lock"
         case .rightShift:
-            return "Right Shift"
+            "Right Shift"
         case .rightOption:
-            return "Right Option"
+            "Right Option"
         }
     }
 
     var symbol: String {
         switch self {
         case .none:
-            return ""
+            ""
         case .capsLock:
-            return "⇪"
+            "⇪"
         case .rightShift:
-            return "⇧"
+            "⇧"
         case .rightOption:
-            return "⌥"
+            "⌥"
         }
     }
 }

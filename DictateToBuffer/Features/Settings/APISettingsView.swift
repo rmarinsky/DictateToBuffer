@@ -53,7 +53,6 @@ struct APISettingsView: View {
                     }
                 }
             }
-
         }
         .formStyle(.grouped)
         .onAppear {
@@ -70,7 +69,7 @@ struct APISettingsView: View {
                     .foregroundColor(.green)
                 Text("Connection successful")
                     .foregroundColor(.green)
-            case .failure(let message):
+            case let .failure(message):
                 Image(systemName: "xmark.circle.fill")
                     .foregroundColor(.red)
                 Text(message)
@@ -92,7 +91,7 @@ struct APISettingsView: View {
         }
     }
 
-    private func testSonioxConnection() {
+    func testSonioxConnection() {
         isTesting = true
         testResult = nil
 

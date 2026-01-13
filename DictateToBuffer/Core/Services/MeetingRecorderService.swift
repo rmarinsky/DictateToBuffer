@@ -1,7 +1,7 @@
-import Foundation
 import AVFoundation
-import ScreenCaptureKit
+import Foundation
 import os
+import ScreenCaptureKit
 
 @available(macOS 13.0, *)
 final class MeetingRecorderService: NSObject {
@@ -28,7 +28,7 @@ final class MeetingRecorderService: NSObject {
     // MARK: - Permission Check
 
     static func checkPermission() async -> Bool {
-        return await SystemAudioCaptureService.checkPermission()
+        await SystemAudioCaptureService.checkPermission()
     }
 
     // MARK: - Start Recording
@@ -46,7 +46,7 @@ final class MeetingRecorderService: NSObject {
         let tempDir = FileManager.default.temporaryDirectory
         outputURL = tempDir.appendingPathComponent(fileName)
 
-        guard let outputURL = outputURL else {
+        guard let outputURL else {
             throw MeetingRecorderError.fileCreationFailed
         }
 
@@ -114,11 +114,11 @@ enum MeetingRecorderError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .fileCreationFailed:
-            return "Failed to create recording file"
+            "Failed to create recording file"
         case .permissionDenied:
-            return "Screen recording permission required for meeting capture"
+            "Screen recording permission required for meeting capture"
         case .recordingFailed:
-            return "Failed to start recording"
+            "Failed to start recording"
         }
     }
 }

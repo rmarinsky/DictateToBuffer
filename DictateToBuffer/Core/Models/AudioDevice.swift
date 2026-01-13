@@ -1,5 +1,5 @@
-import Foundation
 import CoreAudio
+import Foundation
 
 typealias AudioDeviceID = UInt32
 

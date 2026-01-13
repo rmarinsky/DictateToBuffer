@@ -1,0 +1,7 @@
+// Debug configuration
+// Use this for development and testing
+
+DEBUG_INFORMATION_FORMAT = dwarf-with-dsym
+SWIFT_OPTIMIZATION_LEVEL = -Onone
+GCC_OPTIMIZATION_LEVEL = 0
+ENABLE_TESTABILITY = YES

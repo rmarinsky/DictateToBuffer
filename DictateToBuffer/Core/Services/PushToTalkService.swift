@@ -1,6 +1,6 @@
-import Foundation
 import AppKit
 import Carbon
+import Foundation
 import os
 
 final class PushToTalkService {
@@ -101,11 +101,11 @@ final class PushToTalkService {
             }
         } else {
             // For Right Shift and Right Option
-            if isPressed && !isKeyPressed {
+            if isPressed, !isKeyPressed {
                 isKeyPressed = true
                 Log.app.info("\(self.selectedKey.displayName) pressed - starting recording")
                 onKeyDown?()
-            } else if !isPressed && isKeyPressed && isCorrectKeyCode(keyCode) {
+            } else if !isPressed, isKeyPressed, isCorrectKeyCode(keyCode) {
                 isKeyPressed = false
                 Log.app.info("\(self.selectedKey.displayName) released - stopping recording")
                 onKeyUp?()
@@ -116,13 +116,13 @@ final class PushToTalkService {
     private func isCorrectKeyCode(_ keyCode: UInt16) -> Bool {
         switch selectedKey {
         case .none:
-            return false
+            false
         case .capsLock:
-            return keyCode == 57
+            keyCode == 57
         case .rightShift:
-            return keyCode == 60
+            keyCode == 60
         case .rightOption:
-            return keyCode == 61
+            keyCode == 61
         }
     }
 }

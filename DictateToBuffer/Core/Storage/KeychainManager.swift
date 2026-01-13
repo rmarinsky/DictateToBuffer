@@ -15,7 +15,7 @@ final class KeychainManager {
     // MARK: - Soniox API Key
 
     func getSonioxAPIKey() -> String? {
-        return get(key: .sonioxAPIKey)
+        get(key: .sonioxAPIKey)
     }
 
     func setSonioxAPIKey(_ value: String) throws {
@@ -65,7 +65,8 @@ final class KeychainManager {
 
         guard status == errSecSuccess,
               let data = result as? Data,
-              let string = String(data: data, encoding: .utf8) else {
+              let string = String(data: data, encoding: .utf8)
+        else {
             return nil
         }
 

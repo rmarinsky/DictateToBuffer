@@ -1,5 +1,5 @@
-import Foundation
 import Combine
+import Foundation
 import os
 
 enum RecordingState: Equatable, CustomStringConvertible {
@@ -11,11 +11,11 @@ enum RecordingState: Equatable, CustomStringConvertible {
 
     var description: String {
         switch self {
-        case .idle: return "idle"
-        case .recording: return "recording"
-        case .processing: return "processing"
-        case .success: return "success"
-        case .error: return "error"
+        case .idle: "idle"
+        case .recording: "recording"
+        case .processing: "processing"
+        case .success: "success"
+        case .error: "error"
         }
     }
 }
@@ -29,11 +29,11 @@ enum MeetingRecordingState: Equatable, CustomStringConvertible {
 
     var description: String {
         switch self {
-        case .idle: return "idle"
-        case .recording: return "recording"
-        case .processing: return "processing"
-        case .success: return "success"
-        case .error: return "error"
+        case .idle: "idle"
+        case .recording: "recording"
+        case .processing: "processing"
+        case .success: "success"
+        case .error: "error"
         }
     }
 }
@@ -47,11 +47,11 @@ enum TranslationRecordingState: Equatable, CustomStringConvertible {
 
     var description: String {
         switch self {
-        case .idle: return "idle"
-        case .recording: return "recording"
-        case .processing: return "processing"
-        case .success: return "success"
-        case .error: return "error"
+        case .idle: "idle"
+        case .recording: "recording"
+        case .processing: "processing"
+        case .success: "success"
+        case .error: "error"
         }
     }
 }
@@ -63,6 +63,7 @@ final class AppState: ObservableObject {
             Log.app.debug("recordingState changed: \(oldValue.description) -> \(self.recordingState.description)")
         }
     }
+
     @Published var recordingStartTime: Date?
     @Published var lastTranscription: String?
     @Published var errorMessage: String? {
@@ -78,11 +79,13 @@ final class AppState: ObservableObject {
             SettingsStorage.shared.useAutoDetect = useAutoDetect
         }
     }
+
     @Published var selectedDeviceID: AudioDeviceID? {
         didSet {
             SettingsStorage.shared.selectedDeviceID = selectedDeviceID
         }
     }
+
     @Published var microphonePermissionGranted: Bool = false
     @Published var screenCapturePermissionGranted: Bool = false
 
@@ -92,17 +95,23 @@ final class AppState: ObservableObject {
     // Meeting recording
     @Published var meetingRecordingState: MeetingRecordingState = .idle {
         didSet {
-            Log.app.debug("meetingRecordingState changed: \(oldValue.description) -> \(self.meetingRecordingState.description)")
+            Log.app
+                .debug("meetingRecordingState changed: \(oldValue.description) -> \(self.meetingRecordingState.description)")
         }
     }
+
     @Published var meetingRecordingStartTime: Date?
 
     // Translation recording (EN <-> UK)
     @Published var translationRecordingState: TranslationRecordingState = .idle {
         didSet {
-            Log.app.debug("translationRecordingState changed: \(oldValue.description) -> \(self.translationRecordingState.description)")
+            Log.app
+                .debug(
+                    "translationRecordingState changed: \(oldValue.description) -> \(self.translationRecordingState.description)"
+                )
         }
     }
+
     @Published var translationRecordingStartTime: Date?
 
     var recordingDuration: TimeInterval {
@@ -122,8 +131,25 @@ final class AppState: ObservableObject {
 
     init() {
         let settings = SettingsStorage.shared
-        self.useAutoDetect = settings.useAutoDetect
-        self.selectedDeviceID = settings.selectedDeviceID
-        Log.app.debug("Initialized: useAutoDetect=\(self.useAutoDetect), selectedDeviceID=\(String(describing: self.selectedDeviceID))")
+        useAutoDetect = settings.useAutoDetect
+        selectedDeviceID = settings.selectedDeviceID
+        Log.app
+            .debug(
+                "Initialized: useAutoDetect=\(self.useAutoDetect), selectedDeviceID=\(String(describing: self.selectedDeviceID))"
+            )
+    }
+}
+
+// MARK: - RecordingState Extension
+
+extension RecordingState {
+    init(from translationState: TranslationRecordingState) {
+        switch translationState {
+        case .idle: self = .idle
+        case .recording: self = .recording
+        case .processing: self = .processing
+        case .success: self = .success
+        case .error: self = .error
+        }
     }
 }

@@ -1,5 +1,5 @@
-import SwiftUI
 import AVFoundation
+import SwiftUI
 
 struct MeetingSettingsView: View {
     @State private var audioSource = SettingsStorage.shared.meetingAudioSource
@@ -44,9 +44,11 @@ struct MeetingSettingsView: View {
             } header: {
                 Text("Meeting Recording")
             } footer: {
-                Text("Meeting recording captures system audio for transcribing calls and meetings. Requires Screen Recording permission.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                Text(
+                    "Meeting recording captures system audio for transcribing calls and meetings. Requires Screen Recording permission."
+                )
+                .font(.caption)
+                .foregroundColor(.secondary)
             }
 
             Section {
@@ -79,13 +81,13 @@ struct MeetingSettingsView: View {
                 Section {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
-                            Button(action: {
+                            Button {
                                 if isTestCapturing {
                                     Task { await stopTestCapture() }
                                 } else {
                                     Task { await startTestCapture() }
                                 }
-                            }) {
+                            } label: {
                                 HStack {
                                     Image(systemName: isTestCapturing ? "stop.circle.fill" : "waveform.circle.fill")
                                         .foregroundColor(isTestCapturing ? .red : .accentColor)
@@ -96,14 +98,14 @@ struct MeetingSettingsView: View {
                             .tint(isTestCapturing ? .red : .accentColor)
                             .disabled(isTestPlaying)
 
-                            if testCaptureURL != nil && !isTestCapturing {
-                                Button(action: {
+                            if testCaptureURL != nil, !isTestCapturing {
+                                Button {
                                     if isTestPlaying {
                                         stopTestPlayback()
                                     } else {
                                         playTestCapture()
                                     }
-                                }) {
+                                } label: {
                                     HStack {
                                         Image(systemName: isTestPlaying ? "stop.fill" : "play.fill")
                                         Text(isTestPlaying ? "Stop" : "Play")
@@ -126,15 +128,18 @@ struct MeetingSettingsView: View {
                         if !testStatusMessage.isEmpty {
                             Text(testStatusMessage)
                                 .font(.caption)
-                                .foregroundColor(testStatusMessage.contains("Error") || testStatusMessage.contains("permission") ? .red : .secondary)
+                                .foregroundColor(testStatusMessage.contains("Error") || testStatusMessage
+                                    .contains("permission") ? .red : .secondary)
                         }
                     }
                 } header: {
                     Text("Test System Audio Capture")
                 } footer: {
-                    Text("Play audio on your Mac (music, video, etc.) while capturing to test. Requires Screen Recording permission.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    Text(
+                        "Play audio on your Mac (music, video, etc.) while capturing to test. Requires Screen Recording permission."
+                    )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 }
             }
         }
@@ -271,7 +276,7 @@ class SystemAudioPlayerDelegate: NSObject, AVAudioPlayerDelegate {
     static let shared = SystemAudioPlayerDelegate()
     var onFinish: (() -> Void)?
 
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+    func audioPlayerDidFinishPlaying(_: AVAudioPlayer, successfully _: Bool) {
         onFinish?()
     }
 }

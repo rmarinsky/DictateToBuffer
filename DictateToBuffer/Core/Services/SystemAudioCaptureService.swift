@@ -1,8 +1,8 @@
-import Foundation
-import ScreenCaptureKit
 import AVFoundation
 import CoreMedia
+import Foundation
 import os
+import ScreenCaptureKit
 
 @available(macOS 13.0, *)
 final class SystemAudioCaptureService: NSObject {
@@ -33,7 +33,7 @@ final class SystemAudioCaptureService: NSObject {
 
     static func requestPermission() async -> Bool {
         // Requesting shareable content triggers the permission dialog
-        return await checkPermission()
+        await checkPermission()
     }
 
     // MARK: - Start Capture
@@ -72,12 +72,16 @@ final class SystemAudioCaptureService: NSObject {
         // Create stream
         stream = SCStream(filter: filter, configuration: config, delegate: self)
 
-        guard let stream = stream else {
+        guard let stream else {
             throw SystemAudioError.streamCreationFailed
         }
 
         // Add audio output
-        try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: DispatchQueue(label: "com.dictate.buffer.systemaudio"))
+        try stream.addStreamOutput(
+            self,
+            type: .audio,
+            sampleHandlerQueue: DispatchQueue(label: "com.dictate.buffer.systemaudio")
+        )
 
         // Setup audio file for recording
         try setupAudioFile(at: outputURL)
@@ -93,7 +97,7 @@ final class SystemAudioCaptureService: NSObject {
     // MARK: - Stop Capture
 
     func stopCapture() async throws -> URL? {
-        guard isCapturing, let stream = stream else {
+        guard isCapturing, let stream else {
             Log.audio.info("Not capturing")
             return nil
         }
@@ -142,7 +146,7 @@ final class SystemAudioCaptureService: NSObject {
 
 @available(macOS 13.0, *)
 extension SystemAudioCaptureService: SCStreamDelegate {
-    func stream(_ stream: SCStream, didStopWithError error: Error) {
+    func stream(_: SCStream, didStopWithError error: Error) {
         Log.audio.info("Stream stopped with error: \(error)")
         isCapturing = false
         onError?(error)
@@ -153,136 +157,214 @@ extension SystemAudioCaptureService: SCStreamDelegate {
 
 @available(macOS 13.0, *)
 extension SystemAudioCaptureService: SCStreamOutput {
-    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+    func stream(_: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .audio else { return }
-        guard let audioFile = audioFile else { return }
+        guard let audioFile else { return }
 
-        // Get format description
         guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
-              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription) else {
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription)
+        else {
             return
         }
 
         let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
         guard numSamples > 0 else { return }
 
-        // Log first few samples for debugging
-        sampleCount += 1
-        if sampleCount <= 3 {
-            let isFloat = (asbd.pointee.mFormatFlags & kAudioFormatFlagIsFloat) != 0
-            let isNonInterleaved = (asbd.pointee.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0
-            Log.audio.info("Audio sample \(self.sampleCount): frames=\(numSamples), sampleRate=\(asbd.pointee.mSampleRate), channels=\(asbd.pointee.mChannelsPerFrame), bitsPerChannel=\(asbd.pointee.mBitsPerChannel), isFloat=\(isFloat), isNonInterleaved=\(isNonInterleaved)")
+        logSampleInfoIfNeeded(asbd: asbd, numSamples: numSamples)
+
+        guard let pcmBuffer = createPCMBuffer(from: sampleBuffer, asbd: asbd, numSamples: numSamples) else {
+            return
         }
 
-        // Create AVAudioFormat from the stream description
+        writeBufferToFile(pcmBuffer, audioFile: audioFile, numSamples: numSamples)
+    }
+
+    // MARK: - Helper Methods
+
+    private func logSampleInfoIfNeeded(
+        asbd: UnsafePointer<AudioStreamBasicDescription>,
+        numSamples: Int
+    ) {
+        sampleCount += 1
+        guard sampleCount <= 3 else { return }
+
+        let isFloat = (asbd.pointee.mFormatFlags & kAudioFormatFlagIsFloat) != 0
+        let isNonInterleaved = (asbd.pointee.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0
+        let logMessage = "Audio sample \(sampleCount): frames=\(numSamples), " +
+            "sampleRate=\(asbd.pointee.mSampleRate), channels=\(asbd.pointee.mChannelsPerFrame), " +
+            "bitsPerChannel=\(asbd.pointee.mBitsPerChannel), isFloat=\(isFloat), " +
+            "isNonInterleaved=\(isNonInterleaved)"
+        Log.audio.info("\(logMessage)")
+    }
+
+    private func createPCMBuffer(
+        from sampleBuffer: CMSampleBuffer,
+        asbd: UnsafePointer<AudioStreamBasicDescription>,
+        numSamples: Int
+    ) -> AVAudioPCMBuffer? {
         guard let inputFormat = AVAudioFormat(streamDescription: asbd) else {
             Log.audio.info("Failed to create input format")
-            return
+            return nil
         }
 
-        // Create PCM buffer
-        guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: AVAudioFrameCount(numSamples)) else {
+        guard let pcmBuffer = AVAudioPCMBuffer(
+            pcmFormat: inputFormat,
+            frameCapacity: AVAudioFrameCount(numSamples)
+        ) else {
             Log.audio.info("Failed to create PCM buffer")
-            return
+            return nil
         }
         pcmBuffer.frameLength = AVAudioFrameCount(numSamples)
 
-        // Get audio data from sample buffer
         guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else {
             Log.audio.info("Failed to get data buffer")
-            return
+            return nil
         }
 
-        var totalLength: Int = 0
+        guard let dataPointer = getDataPointer(from: blockBuffer) else {
+            return nil
+        }
+
+        copyAudioData(to: pcmBuffer, from: dataPointer, asbd: asbd, numSamples: numSamples)
+        return pcmBuffer
+    }
+
+    private func getDataPointer(from blockBuffer: CMBlockBuffer) -> UnsafeMutablePointer<Int8>? {
+        var totalLength = 0
         var dataPointer: UnsafeMutablePointer<Int8>?
-        let status = CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &totalLength, dataPointerOut: &dataPointer)
+        let status = CMBlockBufferGetDataPointer(
+            blockBuffer,
+            atOffset: 0,
+            lengthAtOffsetOut: nil,
+            totalLengthOut: &totalLength,
+            dataPointerOut: &dataPointer
+        )
 
         guard status == kCMBlockBufferNoErr, let data = dataPointer else {
             Log.audio.info("Failed to get data pointer, status: \(status)")
-            return
+            return nil
         }
+        return data
+    }
 
-        // Copy data to PCM buffer based on format
+    private func copyAudioData(
+        to pcmBuffer: AVAudioPCMBuffer,
+        from data: UnsafeMutablePointer<Int8>,
+        asbd: UnsafePointer<AudioStreamBasicDescription>,
+        numSamples: Int
+    ) {
         let isNonInterleaved = (asbd.pointee.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0
 
         if isNonInterleaved {
-            // Non-interleaved: each channel's data is contiguous
-            let channelCount = Int(asbd.pointee.mChannelsPerFrame)
-            let bytesPerFrame = Int(asbd.pointee.mBytesPerFrame)
-            let framesPerBuffer = numSamples
-
-            if let floatChannelData = pcmBuffer.floatChannelData {
-                for channel in 0..<channelCount {
-                    let channelOffset = channel * framesPerBuffer * bytesPerFrame
-                    let srcPtr = data.advanced(by: channelOffset)
-                    let dstPtr = floatChannelData[channel]
-                    memcpy(dstPtr, srcPtr, framesPerBuffer * bytesPerFrame)
-                }
-            }
+            copyNonInterleavedData(to: pcmBuffer, from: data, asbd: asbd, numSamples: numSamples)
         } else {
-            // Interleaved: samples are interleaved
-            if let floatChannelData = pcmBuffer.floatChannelData {
-                // For interleaved stereo float, data is [L0, R0, L1, R1, ...]
-                let srcPtr = UnsafeRawPointer(data)
-                let channelCount = Int(asbd.pointee.mChannelsPerFrame)
-                let bytesPerSample = Int(asbd.pointee.mBitsPerChannel / 8)
+            copyInterleavedData(to: pcmBuffer, from: data, asbd: asbd, numSamples: numSamples)
+        }
+    }
 
-                for frame in 0..<numSamples {
-                    for channel in 0..<channelCount {
-                        let srcOffset = (frame * channelCount + channel) * bytesPerSample
-                        let value = srcPtr.load(fromByteOffset: srcOffset, as: Float.self)
-                        floatChannelData[channel][frame] = value
-                    }
-                }
+    private func copyNonInterleavedData(
+        to pcmBuffer: AVAudioPCMBuffer,
+        from data: UnsafeMutablePointer<Int8>,
+        asbd: UnsafePointer<AudioStreamBasicDescription>,
+        numSamples: Int
+    ) {
+        let channelCount = Int(asbd.pointee.mChannelsPerFrame)
+        let bytesPerFrame = Int(asbd.pointee.mBytesPerFrame)
+
+        guard let floatChannelData = pcmBuffer.floatChannelData else { return }
+
+        for channel in 0 ..< channelCount {
+            let channelOffset = channel * numSamples * bytesPerFrame
+            let srcPtr = data.advanced(by: channelOffset)
+            let dstPtr = floatChannelData[channel]
+            memcpy(dstPtr, srcPtr, numSamples * bytesPerFrame)
+        }
+    }
+
+    private func copyInterleavedData(
+        to pcmBuffer: AVAudioPCMBuffer,
+        from data: UnsafeMutablePointer<Int8>,
+        asbd: UnsafePointer<AudioStreamBasicDescription>,
+        numSamples: Int
+    ) {
+        guard let floatChannelData = pcmBuffer.floatChannelData else { return }
+
+        let srcPtr = UnsafeRawPointer(data)
+        let channelCount = Int(asbd.pointee.mChannelsPerFrame)
+        let bytesPerSample = Int(asbd.pointee.mBitsPerChannel / 8)
+
+        for frame in 0 ..< numSamples {
+            for channel in 0 ..< channelCount {
+                let srcOffset = (frame * channelCount + channel) * bytesPerSample
+                let value = srcPtr.load(fromByteOffset: srcOffset, as: Float.self)
+                floatChannelData[channel][frame] = value
             }
         }
+    }
 
-        // Write to file - may need format conversion
+    private func writeBufferToFile(
+        _ pcmBuffer: AVAudioPCMBuffer,
+        audioFile: AVAudioFile,
+        numSamples: Int
+    ) {
         do {
+            let inputFormat = pcmBuffer.format
             let fileFormat = audioFile.processingFormat
 
             if inputFormat == fileFormat {
                 try audioFile.write(from: pcmBuffer)
             } else {
-                // Need format conversion
-                if audioConverter == nil {
-                    audioConverter = AVAudioConverter(from: inputFormat, to: fileFormat)
-                }
-
-                guard let converter = audioConverter else {
-                    Log.audio.info("Failed to create converter")
-                    return
-                }
-
-                guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: fileFormat, frameCapacity: AVAudioFrameCount(numSamples)) else {
-                    Log.audio.info("Failed to create output buffer")
-                    return
-                }
-
-                var error: NSError?
-                var hasData = true
-                converter.convert(to: outputBuffer, error: &error) { _, outStatus in
-                    if hasData {
-                        hasData = false
-                        outStatus.pointee = .haveData
-                        return pcmBuffer
-                    } else {
-                        outStatus.pointee = .noDataNow
-                        return nil
-                    }
-                }
-
-                if let error = error {
-                    Log.audio.info("Conversion error: \(error)")
-                    return
-                }
-
-                if outputBuffer.frameLength > 0 {
-                    try audioFile.write(from: outputBuffer)
-                }
+                try writeWithConversion(pcmBuffer, to: audioFile, numSamples: numSamples)
             }
         } catch {
             Log.audio.info("Error writing audio: \(error)")
+        }
+    }
+
+    private func writeWithConversion(
+        _ pcmBuffer: AVAudioPCMBuffer,
+        to audioFile: AVAudioFile,
+        numSamples: Int
+    ) throws {
+        let fileFormat = audioFile.processingFormat
+
+        if audioConverter == nil {
+            audioConverter = AVAudioConverter(from: pcmBuffer.format, to: fileFormat)
+        }
+
+        guard let converter = audioConverter else {
+            Log.audio.info("Failed to create converter")
+            return
+        }
+
+        guard let outputBuffer = AVAudioPCMBuffer(
+            pcmFormat: fileFormat,
+            frameCapacity: AVAudioFrameCount(numSamples)
+        ) else {
+            Log.audio.info("Failed to create output buffer")
+            return
+        }
+
+        var error: NSError?
+        var hasData = true
+        converter.convert(to: outputBuffer, error: &error) { _, outStatus in
+            if hasData {
+                hasData = false
+                outStatus.pointee = .haveData
+                return pcmBuffer
+            } else {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+        }
+
+        if let error {
+            Log.audio.info("Conversion error: \(error)")
+            return
+        }
+
+        if outputBuffer.frameLength > 0 {
+            try audioFile.write(from: outputBuffer)
         }
     }
 }
@@ -297,11 +379,11 @@ enum SystemAudioError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noDisplayFound:
-            return "No display found for screen capture"
+            "No display found for screen capture"
         case .streamCreationFailed:
-            return "Failed to create audio capture stream"
+            "Failed to create audio capture stream"
         case .permissionDenied:
-            return "Screen recording permission required"
+            "Screen recording permission required"
         }
     }
 }

@@ -1,5 +1,5 @@
-import SwiftUI
 import Carbon
+import SwiftUI
 
 struct GeneralSettingsView: View {
     @State private var autoPaste = SettingsStorage.shared.autoPaste
@@ -72,6 +72,7 @@ struct GeneralSettingsView: View {
                 Toggle("Launch at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, newValue in
                         SettingsStorage.shared.launchAtLogin = newValue
+                        // swiftlint:disable:next todo
                         // TODO: Implement launch at login with SMAppService
                     }
             } header: {
@@ -87,13 +88,13 @@ struct GeneralSettingsView: View {
 
             Spacer()
 
-            Button(action: {
+            Button {
                 if isRecordingHotkey {
                     stopRecordingHotkey()
                 } else {
                     startRecordingHotkey()
                 }
-            }) {
+            } label: {
                 Text(hotkeyDisplayString)
                     .frame(minWidth: 100)
                     .padding(.horizontal, 12)
@@ -167,13 +168,13 @@ struct GeneralSettingsView: View {
 
             Spacer()
 
-            Button(action: {
+            Button {
                 if isRecordingTranslationHotkey {
                     stopRecordingTranslationHotkey()
                 } else {
                     startRecordingTranslationHotkey()
                 }
-            }) {
+            } label: {
                 Text(translationHotkeyDisplayString)
                     .frame(minWidth: 100)
                     .padding(.horizontal, 12)
