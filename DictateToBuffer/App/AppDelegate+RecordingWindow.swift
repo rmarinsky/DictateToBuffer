@@ -37,7 +37,7 @@ extension AppDelegate {
     func showRecordingWindow() {
         if recordingWindow == nil {
             let contentView = RecordingIndicatorView()
-                .environmentObject(appState)
+                .environment(appState)
 
             let hostingView = NSHostingView(rootView: contentView)
             hostingView.frame = NSRect(x: 0, y: 0, width: 200, height: 44)

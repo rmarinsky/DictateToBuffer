@@ -1,6 +1,5 @@
 import AppKit
 import AVFoundation
-import Combine
 import os
 import SwiftUI
 
@@ -12,7 +11,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let appState = AppState()
 
-    private var cancellables = Set<AnyCancellable>()
+    // App Nap prevention tokens
+    var recordingActivityToken: NSObjectProtocol?
+    var meetingActivityToken: NSObjectProtocol?
+    var translationActivityToken: NSObjectProtocol?
 
     // MARK: - Services (exposed for SwiftUI access)
 
@@ -22,8 +24,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var clipboardService = ClipboardService()
     lazy var hotkeyService = HotkeyService()
     lazy var pushToTalkService = PushToTalkService()
-    lazy var meetingHotkeyService = HotkeyService()
-    lazy var translationHotkeyService = HotkeyService()
     lazy var translationPushToTalkService = PushToTalkService()
     @available(macOS 13.0, *)
     lazy var meetingRecorderService = MeetingRecorderService()
@@ -31,29 +31,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_: Notification) {
-        setupBindings()
 
         // Listen for push-to-talk key changes
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(pushToTalkKeyChanged(_:)),
             name: .pushToTalkKeyChanged,
-            object: nil
-        )
-
-        // Listen for hotkey changes
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(hotkeyChanged(_:)),
-            name: .hotkeyChanged,
-            object: nil
-        )
-
-        // Listen for translation hotkey changes
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(translationHotkeyChanged(_:)),
-            name: .translationHotkeyChanged,
             object: nil
         )
 
@@ -65,12 +48,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
-        // Setup hotkey and push-to-talk immediately
+        // Setup hotkeys and push-to-talk immediately
         // Permissions will be requested on-demand when user tries to record
-        setupHotkey()
+        setupHotkeys()
         setupPushToTalk()
-        setupTranslationHotkey()
         setupTranslationPushToTalk()
+
+        // Check for orphaned recordings from previous crash
+        checkForOrphanedRecordings()
 
         // Check for API key
         if KeychainManager.shared.getSonioxAPIKey() == nil {
@@ -81,41 +66,97 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func checkForOrphanedRecordings() {
+        if let (state, fileExists) = RecoveryStateManager.shared.hasOrphanedRecording() {
+            if fileExists {
+                Log.app.info("Found orphaned recording from \(state.startTime)")
+                showRecoveryAlert(for: state)
+            } else {
+                // File doesn't exist, just clear the state
+                RecoveryStateManager.shared.clearState()
+            }
+        }
+    }
+
+    private func showRecoveryAlert(for state: RecoveryState) {
+        let alert = NSAlert()
+        alert.messageText = "Recover Previous Recording?"
+        alert.informativeText = "An incomplete \(state.recordingType.rawValue) recording was found from \(formatDate(state.startTime)). Would you like to try to transcribe it?"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Transcribe")
+        alert.addButton(withTitle: "Discard")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            recoverRecording(from: state)
+        } else {
+            discardRecovery(state: state)
+        }
+    }
+
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+
+    private func recoverRecording(from state: RecoveryState) {
+        Task {
+            do {
+                let audioData = try Data(contentsOf: URL(fileURLWithPath: state.tempFilePath))
+                Log.app.info("Recovered audio data: \(audioData.count) bytes")
+
+                guard let apiKey = KeychainManager.shared.getSonioxAPIKey() else {
+                    throw TranscriptionError.noAPIKey
+                }
+
+                transcriptionService.apiKey = apiKey
+
+                let text: String
+                switch state.recordingType {
+                case .voice, .meeting:
+                    text = try await transcriptionService.transcribe(audioData: audioData)
+                case .translation:
+                    text = try await transcriptionService.translateAndTranscribe(audioData: audioData)
+                }
+
+                clipboardService.copy(text: text)
+                Log.app.info("Recovery transcription successful")
+
+                if SettingsStorage.shared.playSoundOnCompletion {
+                    NSSound(named: .init("Funk"))?.play()
+                }
+
+                NotificationManager.shared.showSuccess(text: "Recovered: \(text.prefix(50))...")
+
+            } catch {
+                Log.app.error("Recovery transcription failed: \(error.localizedDescription)")
+                NotificationManager.shared.showError(message: "Recovery failed: \(error.localizedDescription)")
+            }
+
+            // Clean up
+            discardRecovery(state: state)
+        }
+    }
+
+    private func discardRecovery(state: RecoveryState) {
+        try? FileManager.default.removeItem(atPath: state.tempFilePath)
+        RecoveryStateManager.shared.clearState()
+        Log.app.info("Orphaned recording discarded")
+    }
+
     func applicationWillTerminate(_: Notification) {
-        hotkeyService.unregister()
+        hotkeyService.unregisterAll()
         pushToTalkService.stop()
-        translationHotkeyService.unregister()
         translationPushToTalkService.stop()
     }
 
-    // MARK: - Bindings
+    // MARK: - State Change Handlers
+    // Note: These are called directly from recording methods after state changes
+    // Since @Observable doesn't use Combine publishers like ObservableObject
 
-    private func setupBindings() {
-        appState.$recordingState
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] state in
-                self?.updateRecordingWindow(for: state)
-                self?.handleRecordingStateChange(state)
-            }
-            .store(in: &cancellables)
-
-        appState.$meetingRecordingState
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] state in
-                self?.handleMeetingStateChange(state)
-            }
-            .store(in: &cancellables)
-
-        appState.$translationRecordingState
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] state in
-                self?.updateRecordingWindowForTranslation(for: state)
-                self?.handleTranslationStateChange(state)
-            }
-            .store(in: &cancellables)
-    }
-
-    private func handleRecordingStateChange(_ state: RecordingState) {
+    func handleRecordingStateChange(_ state: RecordingState) {
         switch state {
         case .success:
             Task {
@@ -136,7 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func handleMeetingStateChange(_ state: MeetingRecordingState) {
+    func handleMeetingStateChange(_ state: MeetingRecordingState) {
         switch state {
         case .success:
             Task {
@@ -157,7 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func handleTranslationStateChange(_ state: TranslationRecordingState) {
+    func handleTranslationStateChange(_ state: TranslationRecordingState) {
         switch state {
         case .success:
             Task {

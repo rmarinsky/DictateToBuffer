@@ -49,40 +49,84 @@ extension AppDelegate {
         appState.microphonePermissionGranted = micGranted
 
         guard micGranted else {
-            Log.app.info("startRecording: Microphone permission not granted")
+            Log.app.warning("startRecording: Microphone permission not granted")
             await MainActor.run {
                 appState.errorMessage = "Microphone access required"
                 appState.recordingState = .error
+                handleRecordingStateChange(.error)
             }
             return
         }
 
         guard let apiKey = KeychainManager.shared.getSonioxAPIKey(), !apiKey.isEmpty else {
-            Log.app.info("startRecording: No API key found")
+            Log.app.warning("startRecording: No API key found")
             await MainActor.run {
                 appState.errorMessage = "Please add your Soniox API key in Settings"
                 appState.recordingState = .error
+                handleRecordingStateChange(.error)
             }
             return
         }
         Log.app.info("startRecording: API key found")
 
-        // Determine device
+        // Determine device with fallback to system default
         var device: AudioDevice?
+        var usedFallback = false
+
         if appState.useAutoDetect {
             Log.app.info("startRecording: Using auto-detect")
             await MainActor.run { appState.recordingState = .processing }
             device = await audioDeviceManager.autoDetectBestDevice()
             Log.app.info("startRecording: Auto-detected device: \(device?.name ?? "none")")
         } else if let deviceID = appState.selectedDeviceID {
-            device = audioDeviceManager.availableDevices.first { $0.id == deviceID }
-            Log.app.info("startRecording: Using selected device: \(device?.name ?? "none")")
+            // Refresh device list to ensure we have current state
+            audioDeviceManager.refreshDevices()
+
+            if audioDeviceManager.isDeviceAvailable(deviceID) {
+                device = audioDeviceManager.device(for: deviceID)
+                Log.app.info("startRecording: Using selected device: \(device?.name ?? "none")")
+            } else {
+                // Selected device is no longer available - fallback to system default
+                Log.app.warning("startRecording: Selected device (ID: \(deviceID)) not available, falling back to default")
+                device = audioDeviceManager.getCurrentDefaultDevice()
+                usedFallback = true
+                Log.app.info("startRecording: Fallback to default device: \(device?.name ?? "none")")
+            }
+        } else {
+            // No device selected - use system default
+            Log.app.info("startRecording: No device selected, using system default")
+            device = audioDeviceManager.getCurrentDefaultDevice()
+        }
+
+        // If still no device available, try last resort or show error
+        if device == nil && !appState.useAutoDetect {
+            if audioDeviceManager.availableDevices.isEmpty {
+                Log.app.error("startRecording: No audio input devices available")
+                await MainActor.run {
+                    appState.errorMessage = "No microphone found. Please connect a microphone."
+                    appState.recordingState = .error
+                    handleRecordingStateChange(.error)
+                }
+                return
+            }
+            // Last resort: pick first available device
+            device = audioDeviceManager.availableDevices.first
+            usedFallback = true
+            Log.app.info("startRecording: Using first available device: \(device?.name ?? "none")")
         }
 
         Log.app.info("startRecording: Setting state to recording")
+
+        // Prevent App Nap during recording
+        recordingActivityToken = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .idleSystemSleepDisabled],
+            reason: "Voice recording in progress"
+        )
+
         await MainActor.run {
             appState.recordingState = .recording
             appState.recordingStartTime = Date()
+            updateRecordingWindow(for: .recording)
         }
 
         do {
@@ -92,11 +136,31 @@ extension AppDelegate {
                 quality: SettingsStorage.shared.audioQuality
             )
             Log.app.info("startRecording: Recording started successfully")
+
+            // Notify user if we fell back to a different microphone
+            if usedFallback, let fallbackDevice = device {
+                NotificationManager.shared.showWarning(
+                    title: "Microphone Changed",
+                    message: "Using \(fallbackDevice.name) (previous device unavailable)"
+                )
+            }
+
+            // Save recovery state in case of crash
+            if let path = audioRecorder.currentRecordingPath {
+                let state = RecoveryState(
+                    tempFilePath: path,
+                    startTime: Date(),
+                    recordingType: .voice
+                )
+                RecoveryStateManager.shared.saveState(state)
+            }
         } catch {
-            Log.app.info("startRecording: ERROR - \(error.localizedDescription)")
+            Log.app.error("startRecording: ERROR - \(error.localizedDescription)")
             await MainActor.run {
                 appState.errorMessage = error.localizedDescription
                 appState.recordingState = .error
+                updateRecordingWindow(for: .error)
+                handleRecordingStateChange(.error)
             }
         }
     }
@@ -106,6 +170,7 @@ extension AppDelegate {
 
         await MainActor.run {
             appState.recordingState = .processing
+            updateRecordingWindow(for: .processing)
         }
 
         do {
@@ -114,7 +179,7 @@ extension AppDelegate {
             Log.app.info("stopRecording: Got audio data, size = \(audioData.count) bytes")
 
             guard let apiKey = KeychainManager.shared.getSonioxAPIKey() else {
-                Log.app.info("stopRecording: No API key!")
+                Log.app.error("stopRecording: No API key!")
                 throw TranscriptionError.noAPIKey
             }
 
@@ -131,10 +196,10 @@ extension AppDelegate {
                 do {
                     try await clipboardService.paste()
                 } catch ClipboardError.accessibilityNotGranted {
-                    Log.app.info("stopRecording: Accessibility permission needed")
+                    Log.app.warning("stopRecording: Accessibility permission needed")
                     PermissionManager.shared.showPermissionAlert(for: .accessibility)
                 } catch {
-                    Log.app.info("stopRecording: Paste failed - \(error.localizedDescription)")
+                    Log.app.error("stopRecording: Paste failed - \(error.localizedDescription)")
                 }
             }
 
@@ -148,21 +213,41 @@ extension AppDelegate {
                 NotificationManager.shared.showSuccess(text: "Transcribed: \(text.prefix(50))...")
             }
 
+            // Clear recovery state on success
+            RecoveryStateManager.shared.clearState()
+
             await MainActor.run {
                 appState.lastTranscription = text
+                appState.isEmptyTranscription = false
                 appState.recordingState = .success
                 appState.recordingStartTime = nil
+                updateRecordingWindow(for: .success)
+                handleRecordingStateChange(.success)
             }
             Log.app.info("stopRecording: SUCCESS")
 
         } catch {
-            Log.app.info("stopRecording: ERROR - \(error.localizedDescription)")
+            Log.app.error("stopRecording: ERROR - \(error.localizedDescription)")
+            let isEmptyTranscription: Bool = {
+                guard case .emptyTranscription = error as? TranscriptionError else { return false }
+                return true
+            }()
             await MainActor.run {
                 appState.errorMessage = error.localizedDescription
+                appState.isEmptyTranscription = isEmptyTranscription
                 appState.recordingState = .error
                 appState.recordingStartTime = nil
+                updateRecordingWindow(for: .error)
+                handleRecordingStateChange(.error)
             }
         }
+
+        // End App Nap prevention
+        if let token = recordingActivityToken {
+            ProcessInfo.processInfo.endActivity(token)
+            recordingActivityToken = nil
+        }
+
         Log.app.info("stopRecording: END")
     }
 }

@@ -1,5 +1,5 @@
-import Combine
 import Foundation
+import Observation
 import os
 
 enum RecordingState: Equatable, CustomStringConvertible {
@@ -56,17 +56,18 @@ enum TranslationRecordingState: Equatable, CustomStringConvertible {
     }
 }
 
+@Observable
 @MainActor
-final class AppState: ObservableObject {
-    @Published var recordingState: RecordingState = .idle {
+final class AppState {
+    var recordingState: RecordingState = .idle {
         didSet {
             Log.app.debug("recordingState changed: \(oldValue.description) -> \(self.recordingState.description)")
         }
     }
 
-    @Published var recordingStartTime: Date?
-    @Published var lastTranscription: String?
-    @Published var errorMessage: String? {
+    var recordingStartTime: Date?
+    var lastTranscription: String?
+    var errorMessage: String? {
         didSet {
             if let msg = errorMessage {
                 Log.app.debug("errorMessage set: \(msg)")
@@ -74,36 +75,38 @@ final class AppState: ObservableObject {
         }
     }
 
-    @Published var useAutoDetect: Bool {
+    var isEmptyTranscription: Bool = false
+
+    var useAutoDetect: Bool {
         didSet {
             SettingsStorage.shared.useAutoDetect = useAutoDetect
         }
     }
 
-    @Published var selectedDeviceID: AudioDeviceID? {
+    var selectedDeviceID: AudioDeviceID? {
         didSet {
             SettingsStorage.shared.selectedDeviceID = selectedDeviceID
         }
     }
 
-    @Published var microphonePermissionGranted: Bool = false
-    @Published var screenCapturePermissionGranted: Bool = false
+    var microphonePermissionGranted: Bool = false
+    var screenCapturePermissionGranted: Bool = false
 
     // Settings trigger (for opening settings from non-SwiftUI code)
-    @Published var shouldOpenSettings: Bool = false
+    var shouldOpenSettings: Bool = false
 
     // Meeting recording
-    @Published var meetingRecordingState: MeetingRecordingState = .idle {
+    var meetingRecordingState: MeetingRecordingState = .idle {
         didSet {
             Log.app
                 .debug("meetingRecordingState changed: \(oldValue.description) -> \(self.meetingRecordingState.description)")
         }
     }
 
-    @Published var meetingRecordingStartTime: Date?
+    var meetingRecordingStartTime: Date?
 
     // Translation recording (EN <-> UK)
-    @Published var translationRecordingState: TranslationRecordingState = .idle {
+    var translationRecordingState: TranslationRecordingState = .idle {
         didSet {
             Log.app
                 .debug(
@@ -112,7 +115,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    @Published var translationRecordingStartTime: Date?
+    var translationRecordingStartTime: Date?
 
     var recordingDuration: TimeInterval {
         guard let startTime = recordingStartTime else { return 0 }

@@ -26,7 +26,7 @@ final class SystemAudioCaptureService: NSObject {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             return !content.displays.isEmpty
         } catch {
-            Log.audio.info("Permission check failed: \(error)")
+            Log.audio.error("Permission check failed: \(error)")
             return false
         }
     }
@@ -40,7 +40,7 @@ final class SystemAudioCaptureService: NSObject {
 
     func startCapture(to outputURL: URL) async throws {
         guard !isCapturing else {
-            Log.audio.info("Already capturing")
+            Log.audio.warning("Already capturing")
             return
         }
 
@@ -98,7 +98,7 @@ final class SystemAudioCaptureService: NSObject {
 
     func stopCapture() async throws -> URL? {
         guard isCapturing, let stream else {
-            Log.audio.info("Not capturing")
+            Log.audio.warning("Not capturing")
             return nil
         }
 
@@ -147,7 +147,7 @@ final class SystemAudioCaptureService: NSObject {
 @available(macOS 13.0, *)
 extension SystemAudioCaptureService: SCStreamDelegate {
     func stream(_: SCStream, didStopWithError error: Error) {
-        Log.audio.info("Stream stopped with error: \(error)")
+        Log.audio.error("Stream stopped with error: \(error)")
         isCapturing = false
         onError?(error)
     }
@@ -203,7 +203,7 @@ extension SystemAudioCaptureService: SCStreamOutput {
         numSamples: Int
     ) -> AVAudioPCMBuffer? {
         guard let inputFormat = AVAudioFormat(streamDescription: asbd) else {
-            Log.audio.info("Failed to create input format")
+            Log.audio.error("Failed to create input format")
             return nil
         }
 
@@ -211,13 +211,13 @@ extension SystemAudioCaptureService: SCStreamOutput {
             pcmFormat: inputFormat,
             frameCapacity: AVAudioFrameCount(numSamples)
         ) else {
-            Log.audio.info("Failed to create PCM buffer")
+            Log.audio.error("Failed to create PCM buffer")
             return nil
         }
         pcmBuffer.frameLength = AVAudioFrameCount(numSamples)
 
         guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else {
-            Log.audio.info("Failed to get data buffer")
+            Log.audio.error("Failed to get data buffer")
             return nil
         }
 
@@ -241,7 +241,7 @@ extension SystemAudioCaptureService: SCStreamOutput {
         )
 
         guard status == kCMBlockBufferNoErr, let data = dataPointer else {
-            Log.audio.info("Failed to get data pointer, status: \(status)")
+            Log.audio.error("Failed to get data pointer, status: \(status)")
             return nil
         }
         return data
@@ -317,7 +317,7 @@ extension SystemAudioCaptureService: SCStreamOutput {
                 try writeWithConversion(pcmBuffer, to: audioFile, numSamples: numSamples)
             }
         } catch {
-            Log.audio.info("Error writing audio: \(error)")
+            Log.audio.error("Error writing audio: \(error)")
         }
     }
 
@@ -333,7 +333,7 @@ extension SystemAudioCaptureService: SCStreamOutput {
         }
 
         guard let converter = audioConverter else {
-            Log.audio.info("Failed to create converter")
+            Log.audio.error("Failed to create converter")
             return
         }
 
@@ -341,7 +341,7 @@ extension SystemAudioCaptureService: SCStreamOutput {
             pcmFormat: fileFormat,
             frameCapacity: AVAudioFrameCount(numSamples)
         ) else {
-            Log.audio.info("Failed to create output buffer")
+            Log.audio.error("Failed to create output buffer")
             return
         }
 
@@ -359,7 +359,7 @@ extension SystemAudioCaptureService: SCStreamOutput {
         }
 
         if let error {
-            Log.audio.info("Conversion error: \(error)")
+            Log.audio.error("Conversion error: \(error)")
             return
         }
 

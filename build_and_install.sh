@@ -8,9 +8,34 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 APP_NAME="DictateToBuffer"
+BUNDLE_ID="com.dictate.buffer"
 BUILD_DIR="$SCRIPT_DIR/build"
 APP_PATH="$BUILD_DIR/Release/${APP_NAME}.app"
 INSTALL_PATH="/Applications/${APP_NAME}.app"
+
+echo "=== Clean Install: $APP_NAME ==="
+echo ""
+
+# Step 1: Kill running process
+echo "Killing $APP_NAME process if running..."
+pkill -x "$APP_NAME" 2>/dev/null || true
+sleep 1
+
+# Step 2: Remove from /Applications
+if [ -d "$INSTALL_PATH" ]; then
+    echo "Removing existing installation from /Applications..."
+    rm -rf "$INSTALL_PATH"
+fi
+
+# Step 3: Reset permissions (Accessibility and Screen Recording)
+echo "Resetting Accessibility permissions for $BUNDLE_ID..."
+tccutil reset Accessibility "$BUNDLE_ID" 2>/dev/null || true
+
+echo "Resetting Screen Recording permissions for $BUNDLE_ID..."
+tccutil reset ScreenCapture "$BUNDLE_ID" 2>/dev/null || true
+
+echo "Clean-up complete."
+echo ""
 
 echo "=== Building $APP_NAME ==="
 echo ""
@@ -51,15 +76,14 @@ fi
 echo ""
 echo "Build successful: $APP_PATH"
 
-# Remove old installation if exists
-if [ -d "$INSTALL_PATH" ]; then
-    echo "Removing existing installation..."
-    rm -rf "$INSTALL_PATH"
-fi
-
 # Copy to /Applications
 echo "Installing to $INSTALL_PATH..."
 cp -R "$APP_PATH" "$INSTALL_PATH"
+
+# Clear quarantine and re-sign for local development
+echo "Signing app for local use..."
+xattr -cr "$INSTALL_PATH"
+codesign --force --deep --sign - "$INSTALL_PATH" 2>/dev/null || true
 
 echo ""
 echo "=== Installation Complete ==="

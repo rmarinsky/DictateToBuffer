@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct MenuBarContentView: View {
-    @EnvironmentObject var appState: AppState
+    @Environment(AppState.self) var appState
     @ObservedObject var audioDeviceManager: AudioDeviceManager
     @Environment(\.openSettings) private var openSettings
 
@@ -24,7 +24,7 @@ struct MenuBarContentView: View {
                 }
             }
             .keyboardShortcut("d", modifiers: [.command, .shift])
-            
+
             Button(action: onToggleTranslationRecording) {
                 HStack {
                     Text(translateButtonTitle)
@@ -121,7 +121,7 @@ struct MenuBarContentView: View {
             "Error :/"
         }
     }
-    
+
     private var translateButtonTitle: String {
         switch appState.translationRecordingState {
         case .idle:

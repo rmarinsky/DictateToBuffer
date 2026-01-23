@@ -1,4 +1,4 @@
-import Carbon
+import CoreAudio
 import Foundation
 
 final class SettingsStorage {
@@ -14,11 +14,8 @@ final class SettingsStorage {
         case playSoundOnCompletion
         case showNotification
         case launchAtLogin
-        case globalHotkey
         case pushToTalkKey
         case meetingAudioSource
-        case meetingHotkey
-        case translationHotkey
         case translationPushToTalkKey
     }
 
@@ -81,25 +78,6 @@ final class SettingsStorage {
         set { defaults.set(newValue, forKey: Key.launchAtLogin.rawValue) }
     }
 
-    // MARK: - Global Hotkey
-
-    var globalHotkey: KeyCombo? {
-        get {
-            guard let data = defaults.data(forKey: Key.globalHotkey.rawValue) else {
-                return .default
-            }
-            return try? JSONDecoder().decode(KeyCombo.self, from: data)
-        }
-        set {
-            if let combo = newValue,
-               let data = try? JSONEncoder().encode(combo) {
-                defaults.set(data, forKey: Key.globalHotkey.rawValue)
-            } else {
-                defaults.removeObject(forKey: Key.globalHotkey.rawValue)
-            }
-        }
-    }
-
     // MARK: - Push to Talk
 
     var pushToTalkKey: PushToTalkKey {
@@ -132,41 +110,7 @@ final class SettingsStorage {
         }
     }
 
-    var meetingHotkey: KeyCombo? {
-        get {
-            guard let data = defaults.data(forKey: Key.meetingHotkey.rawValue) else {
-                return KeyCombo(keyCode: 46, modifiers: UInt32(cmdKey | shiftKey)) // ⌘⇧M
-            }
-            return try? JSONDecoder().decode(KeyCombo.self, from: data)
-        }
-        set {
-            if let combo = newValue,
-               let data = try? JSONEncoder().encode(combo) {
-                defaults.set(data, forKey: Key.meetingHotkey.rawValue)
-            } else {
-                defaults.removeObject(forKey: Key.meetingHotkey.rawValue)
-            }
-        }
-    }
-
-    // MARK: - Translation
-
-    var translationHotkey: KeyCombo? {
-        get {
-            guard let data = defaults.data(forKey: Key.translationHotkey.rawValue) else {
-                return KeyCombo(keyCode: 17, modifiers: UInt32(cmdKey | shiftKey)) // ⌘⇧T
-            }
-            return try? JSONDecoder().decode(KeyCombo.self, from: data)
-        }
-        set {
-            if let combo = newValue,
-               let data = try? JSONEncoder().encode(combo) {
-                defaults.set(data, forKey: Key.translationHotkey.rawValue)
-            } else {
-                defaults.removeObject(forKey: Key.translationHotkey.rawValue)
-            }
-        }
-    }
+    // MARK: - Translation Push to Talk
 
     var translationPushToTalkKey: PushToTalkKey {
         get {

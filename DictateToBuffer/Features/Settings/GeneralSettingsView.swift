@@ -1,18 +1,13 @@
-import Carbon
+import KeyboardShortcuts
+import ServiceManagement
 import SwiftUI
 
 struct GeneralSettingsView: View {
     @State private var autoPaste = SettingsStorage.shared.autoPaste
     @State private var playSound = SettingsStorage.shared.playSoundOnCompletion
     @State private var showNotification = SettingsStorage.shared.showNotification
-    @State private var launchAtLogin = SettingsStorage.shared.launchAtLogin
-    @State private var isRecordingHotkey = false
-    @State private var currentHotkey: KeyCombo? = SettingsStorage.shared.globalHotkey
+    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var pushToTalkKey = SettingsStorage.shared.pushToTalkKey
-    @State private var eventMonitor: Any?
-    @State private var isRecordingTranslationHotkey = false
-    @State private var translationHotkey: KeyCombo? = SettingsStorage.shared.translationHotkey
-    @State private var translationEventMonitor: Any?
     @State private var translationPushToTalkKey = SettingsStorage.shared.translationPushToTalkKey
 
     var body: some View {
@@ -20,15 +15,9 @@ struct GeneralSettingsView: View {
             Section {
                 hotkeySection
             } header: {
-                Text("Global Hotkey")
-            }
-
-            Section {
-                translationHotkeySection
-            } header: {
-                Text("Translation Hotkey")
+                Text("Global Hotkeys")
             } footer: {
-                Text("Translate between English and Ukrainian. Auto-detects the spoken language.")
+                Text("Click on a recorder to set a new shortcut. Press Escape to cancel.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -71,9 +60,17 @@ struct GeneralSettingsView: View {
 
                 Toggle("Launch at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, newValue in
-                        SettingsStorage.shared.launchAtLogin = newValue
-                        // swiftlint:disable:next todo
-                        // TODO: Implement launch at login with SMAppService
+                        do {
+                            if newValue {
+                                try SMAppService.mainApp.register()
+                            } else {
+                                try SMAppService.mainApp.unregister()
+                            }
+                        } catch {
+                            Log.app.error("Failed to update launch at login: \(error.localizedDescription)")
+                            // Revert toggle on failure
+                            launchAtLogin = !newValue
+                        }
                     }
             } header: {
                 Text("Behavior")
@@ -83,160 +80,25 @@ struct GeneralSettingsView: View {
     }
 
     private var hotkeySection: some View {
-        HStack {
-            Text("Start/Stop Recording:")
-
-            Spacer()
-
-            Button {
-                if isRecordingHotkey {
-                    stopRecordingHotkey()
-                } else {
-                    startRecordingHotkey()
-                }
-            } label: {
-                Text(hotkeyDisplayString)
-                    .frame(minWidth: 100)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-            }
-            .buttonStyle(.bordered)
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(isRecordingHotkey ? Color.accentColor : Color.clear, lineWidth: 2)
-            )
-
-            if currentHotkey != nil {
-                Button(action: clearHotkey) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Clear hotkey")
-            }
-        }
-    }
-
-    private var hotkeyDisplayString: String {
-        if isRecordingHotkey {
-            return "Press keys..."
-        }
-        return currentHotkey?.displayString ?? "Not set"
-    }
-
-    private func startRecordingHotkey() {
-        isRecordingHotkey = true
-
-        // Add local monitor for key events
-        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
-            if event.keyCode == 53 { // Escape - cancel
-                stopRecordingHotkey()
-                return nil
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Recording:")
+                    .frame(width: 100, alignment: .leading)
+                KeyboardShortcuts.Recorder(for: .toggleRecording)
             }
 
-            if let combo = KeyCombo.from(event: event) {
-                currentHotkey = combo
-                SettingsStorage.shared.globalHotkey = combo
-                NotificationCenter.default.post(name: .hotkeyChanged, object: combo)
-                stopRecordingHotkey()
-                return nil // Consume the event
+            HStack {
+                Text("Translation:")
+                    .frame(width: 100, alignment: .leading)
+                KeyboardShortcuts.Recorder(for: .toggleTranslation)
             }
 
-            return event
-        }
-    }
-
-    private func stopRecordingHotkey() {
-        isRecordingHotkey = false
-        if let monitor = eventMonitor {
-            NSEvent.removeMonitor(monitor)
-            eventMonitor = nil
-        }
-    }
-
-    private func clearHotkey() {
-        currentHotkey = nil
-        SettingsStorage.shared.globalHotkey = nil
-        NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
-    }
-
-    // MARK: - Translation Hotkey
-
-    private var translationHotkeySection: some View {
-        HStack {
-            Text("Translate EN ↔ UK:")
-
-            Spacer()
-
-            Button {
-                if isRecordingTranslationHotkey {
-                    stopRecordingTranslationHotkey()
-                } else {
-                    startRecordingTranslationHotkey()
-                }
-            } label: {
-                Text(translationHotkeyDisplayString)
-                    .frame(minWidth: 100)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-            }
-            .buttonStyle(.bordered)
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(isRecordingTranslationHotkey ? Color.accentColor : Color.clear, lineWidth: 2)
-            )
-
-            if translationHotkey != nil {
-                Button(action: clearTranslationHotkey) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Clear translation hotkey")
+            HStack {
+                Text("Meeting:")
+                    .frame(width: 100, alignment: .leading)
+                KeyboardShortcuts.Recorder(for: .toggleMeetingRecording)
             }
         }
-    }
-
-    private var translationHotkeyDisplayString: String {
-        if isRecordingTranslationHotkey {
-            return "Press keys..."
-        }
-        return translationHotkey?.displayString ?? "Not set"
-    }
-
-    private func startRecordingTranslationHotkey() {
-        isRecordingTranslationHotkey = true
-
-        translationEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
-            if event.keyCode == 53 { // Escape - cancel
-                stopRecordingTranslationHotkey()
-                return nil
-            }
-
-            if let combo = KeyCombo.from(event: event) {
-                translationHotkey = combo
-                SettingsStorage.shared.translationHotkey = combo
-                NotificationCenter.default.post(name: .translationHotkeyChanged, object: combo)
-                stopRecordingTranslationHotkey()
-                return nil
-            }
-
-            return event
-        }
-    }
-
-    private func stopRecordingTranslationHotkey() {
-        isRecordingTranslationHotkey = false
-        if let monitor = translationEventMonitor {
-            NSEvent.removeMonitor(monitor)
-            translationEventMonitor = nil
-        }
-    }
-
-    private func clearTranslationHotkey() {
-        translationHotkey = nil
-        SettingsStorage.shared.translationHotkey = nil
-        NotificationCenter.default.post(name: .translationHotkeyChanged, object: nil)
     }
 
     // MARK: - Translation Push to Talk
@@ -296,12 +158,10 @@ struct GeneralSettingsView: View {
 
 extension Notification.Name {
     static let pushToTalkKeyChanged = Notification.Name("pushToTalkKeyChanged")
-    static let hotkeyChanged = Notification.Name("hotkeyChanged")
-    static let translationHotkeyChanged = Notification.Name("translationHotkeyChanged")
     static let translationPushToTalkKeyChanged = Notification.Name("translationPushToTalkKeyChanged")
 }
 
 #Preview {
     GeneralSettingsView()
-        .frame(width: 450, height: 300)
+        .frame(width: 450, height: 400)
 }

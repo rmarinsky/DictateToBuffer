@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct MenuBarIconView: View {
-    @EnvironmentObject var appState: AppState
+    @Environment(AppState.self) var appState
 
     var body: some View {
         Text(iconText)
@@ -53,5 +53,5 @@ struct MenuBarIconView: View {
 
 #Preview {
     MenuBarIconView()
-        .environmentObject(AppState())
+        .environment(AppState())
 }

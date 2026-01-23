@@ -3,12 +3,18 @@ import Foundation
 // MARK: - Hotkey & Push to Talk
 
 extension AppDelegate {
-    func setupHotkey() {
-        let settings = SettingsStorage.shared
-        if let hotkey = settings.globalHotkey {
-            try? hotkeyService.register(keyCombo: hotkey) { [weak self] in
-                self?.toggleRecording()
-            }
+    func setupHotkeys() {
+        // Register all hotkeys - KeyboardShortcuts handles storage automatically
+        hotkeyService.registerRecordingHotkey { [weak self] in
+            self?.toggleRecording()
+        }
+
+        hotkeyService.registerMeetingHotkey { [weak self] in
+            self?.toggleMeetingRecording()
+        }
+
+        hotkeyService.registerTranslationHotkey { [weak self] in
+            self?.toggleTranslationRecording()
         }
     }
 
@@ -44,47 +50,6 @@ extension AppDelegate {
 
         if key != .none {
             pushToTalkService.start()
-        }
-    }
-
-    @objc func hotkeyChanged(_ notification: Notification) {
-        Log.app.info("Hotkey changed")
-
-        // Unregister old hotkey
-        hotkeyService.unregister()
-
-        // Register new hotkey if set
-        if let combo = notification.object as? KeyCombo {
-            Log.app.info("Registering new hotkey: \(combo.displayString)")
-            try? hotkeyService.register(keyCombo: combo) { [weak self] in
-                self?.toggleRecording()
-            }
-        }
-    }
-
-    // MARK: - Translation Hotkey
-
-    func setupTranslationHotkey() {
-        let settings = SettingsStorage.shared
-        if let hotkey = settings.translationHotkey {
-            try? translationHotkeyService.register(keyCombo: hotkey) { [weak self] in
-                self?.toggleTranslationRecording()
-            }
-        }
-    }
-
-    @objc func translationHotkeyChanged(_ notification: Notification) {
-        Log.app.info("Translation hotkey changed")
-
-        // Unregister old hotkey
-        translationHotkeyService.unregister()
-
-        // Register new hotkey if set
-        if let combo = notification.object as? KeyCombo {
-            Log.app.info("Registering new translation hotkey: \(combo.displayString)")
-            try? translationHotkeyService.register(keyCombo: combo) { [weak self] in
-                self?.toggleTranslationRecording()
-            }
         }
     }
 

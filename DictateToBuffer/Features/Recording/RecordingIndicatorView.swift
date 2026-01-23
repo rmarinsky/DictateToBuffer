@@ -2,7 +2,7 @@ import Combine
 import SwiftUI
 
 struct RecordingIndicatorView: View {
-    @EnvironmentObject var appState: AppState
+    @Environment(AppState.self) var appState
     @State private var isPulsing = false
     @State private var colonVisible = true
     @State private var currentDuration: TimeInterval = 0
@@ -31,10 +31,10 @@ struct RecordingIndicatorView: View {
         .onDisappear {
             stopTimer()
         }
-        .onReceive(appState.$recordingState) { state in
+        .onChange(of: appState.recordingState) { _, state in
             handleStateChange(state, isTranslation: false)
         }
-        .onReceive(appState.$translationRecordingState) { state in
+        .onChange(of: appState.translationRecordingState) { _, state in
             handleStateChange(RecordingState(from: state), isTranslation: true)
         }
     }
@@ -132,13 +132,17 @@ struct RecordingIndicatorView: View {
             timerText
 
         case .processing:
-            Text("...")
+            Text("")
 
         case .success:
             Text("Copied")
 
         case .error:
-            Text("Error")
+            if appState.isEmptyTranscription {
+                Text("I hear nothing")
+            } else {
+                Text("Error")
+            }
 
         case .idle:
             EmptyView()
@@ -149,9 +153,13 @@ struct RecordingIndicatorView: View {
         let duration = Int(currentDuration)
         let minutes = duration / 60
         let seconds = duration % 60
-        let colon = colonVisible ? ":" : " "
 
-        return Text(String(format: "%02d\(colon)%02d", minutes, seconds))
+        return HStack(spacing: 0) {
+            Text(String(format: "%02d", minutes))
+            Text(":")
+                .opacity(colonVisible ? 1.0 : 0.0)
+            Text(String(format: "%02d", seconds))
+        }
     }
 
     // MARK: - State Helpers
@@ -205,6 +213,6 @@ struct VisualEffectBlur: NSViewRepresentable {
 
 #Preview {
     RecordingIndicatorView()
-        .environmentObject(AppState())
+        .environment(AppState())
         .frame(width: 150, height: 40)
 }

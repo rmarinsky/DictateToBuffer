@@ -17,7 +17,7 @@ enum ClipboardError: LocalizedError {
     }
 }
 
-final class ClipboardService {
+final class ClipboardService: ClipboardServiceProtocol {
     private let pasteboard = NSPasteboard.general
 
     func copy(text: String) {
@@ -42,7 +42,7 @@ final class ClipboardService {
         Log.app.info("Accessibility permission check: \(isGranted)")
 
         guard isGranted else {
-            Log.app.info("Accessibility permission not granted")
+            Log.app.warning("Accessibility permission not granted")
             throw ClipboardError.accessibilityNotGranted
         }
 
@@ -51,13 +51,13 @@ final class ClipboardService {
 
         // Simulate Cmd+V using CGEvent
         guard let source = CGEventSource(stateID: .hidSystemState) else {
-            Log.app.info("Failed to create event source")
+            Log.app.error("Failed to create event source")
             throw ClipboardError.pasteEventFailed
         }
 
         // Key down: V (keycode 9) with Command modifier
         guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(9), keyDown: true) else {
-            Log.app.info("Failed to create keyDown event")
+            Log.app.error("Failed to create keyDown event")
             throw ClipboardError.pasteEventFailed
         }
         keyDown.flags = .maskCommand
@@ -68,7 +68,7 @@ final class ClipboardService {
 
         // Key up: V with Command
         guard let keyUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(9), keyDown: false) else {
-            Log.app.info("Failed to create keyUp event")
+            Log.app.error("Failed to create keyUp event")
             throw ClipboardError.pasteEventFailed
         }
         keyUp.flags = .maskCommand

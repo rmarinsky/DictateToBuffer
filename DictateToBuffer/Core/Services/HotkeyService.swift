@@ -1,68 +1,68 @@
-import Carbon
 import Foundation
+import KeyboardShortcuts
 
-final class HotkeyService {
-    private var hotkeyRef: EventHotKeyRef?
-    private var handler: (() -> Void)?
+// MARK: - Shortcut Names Extension
 
-    private static var sharedInstance: HotkeyService?
-    private var eventHandler: EventHandlerRef?
+extension KeyboardShortcuts.Name {
+    static let toggleRecording = Self("toggleRecording", default: .init(.d, modifiers: [.command, .shift]))
+    static let toggleMeetingRecording = Self("toggleMeetingRecording", default: .init(.m, modifiers: [.command, .shift]))
+    static let toggleTranslation = Self("toggleTranslation", default: .init(.t, modifiers: [.command, .shift]))
+}
 
-    func register(keyCombo: KeyCombo, handler: @escaping () -> Void) throws {
-        // Store handler
-        self.handler = handler
-        HotkeyService.sharedInstance = self
+// MARK: - Hotkey Service
 
-        // Create hotkey ID
-        var hotkeyID = EventHotKeyID()
-        hotkeyID.signature = OSType(0x4454_4246) // "DTBF"
-        hotkeyID.id = 1
+final class HotkeyService: HotkeyServiceProtocol {
+    private var recordingHandler: (() -> Void)?
+    private var meetingHandler: (() -> Void)?
+    private var translationHandler: (() -> Void)?
 
-        // Register hotkey
-        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+    // MARK: - Recording Hotkey
 
-        let status = InstallEventHandler(
-            GetApplicationEventTarget(),
-            { _, _, _ -> OSStatus in
-                HotkeyService.sharedInstance?.handler?()
-                return noErr
-            },
-            1,
-            &eventType,
-            nil,
-            &eventHandler
-        )
-
-        guard status == noErr else {
-            throw NSError(domain: "HotkeyService", code: Int(status), userInfo: nil)
-        }
-
-        let registerStatus = RegisterEventHotKey(
-            keyCombo.keyCode,
-            keyCombo.modifiers,
-            hotkeyID,
-            GetApplicationEventTarget(),
-            0,
-            &hotkeyRef
-        )
-
-        guard registerStatus == noErr else {
-            throw NSError(domain: "HotkeyService", code: Int(registerStatus), userInfo: nil)
+    func registerRecordingHotkey(handler: @escaping () -> Void) {
+        recordingHandler = handler
+        KeyboardShortcuts.onKeyDown(for: .toggleRecording) { [weak self] in
+            self?.recordingHandler?()
         }
     }
 
-    func unregister() {
-        if let ref = hotkeyRef {
-            UnregisterEventHotKey(ref)
-            hotkeyRef = nil
-        }
+    func unregisterRecordingHotkey() {
+        KeyboardShortcuts.disable(.toggleRecording)
+        recordingHandler = nil
+    }
 
-        if let handler = eventHandler {
-            RemoveEventHandler(handler)
-            eventHandler = nil
-        }
+    // MARK: - Meeting Hotkey
 
-        handler = nil
-        HotkeyService.sharedInstance = nil
+    func registerMeetingHotkey(handler: @escaping () -> Void) {
+        meetingHandler = handler
+        KeyboardShortcuts.onKeyDown(for: .toggleMeetingRecording) { [weak self] in
+            self?.meetingHandler?()
+        }
+    }
+
+    func unregisterMeetingHotkey() {
+        KeyboardShortcuts.disable(.toggleMeetingRecording)
+        meetingHandler = nil
+    }
+
+    // MARK: - Translation Hotkey
+
+    func registerTranslationHotkey(handler: @escaping () -> Void) {
+        translationHandler = handler
+        KeyboardShortcuts.onKeyDown(for: .toggleTranslation) { [weak self] in
+            self?.translationHandler?()
+        }
+    }
+
+    func unregisterTranslationHotkey() {
+        KeyboardShortcuts.disable(.toggleTranslation)
+        translationHandler = nil
+    }
+
+    // MARK: - Convenience Methods
+
+    func unregisterAll() {
+        unregisterRecordingHotkey()
+        unregisterMeetingHotkey()
+        unregisterTranslationHotkey()
     }
 }

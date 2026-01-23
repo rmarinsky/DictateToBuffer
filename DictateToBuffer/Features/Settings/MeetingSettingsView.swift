@@ -10,7 +10,6 @@ struct MeetingSettingsView: View {
     @State private var testCaptureURL: URL?
     @State private var testAudioPlayer: AVAudioPlayer?
     @State private var testStatusMessage = ""
-    @State private var hasScreenRecordingPermission = false
     @State private var captureService: SystemAudioCaptureService?
 
     var body: some View {
@@ -144,21 +143,8 @@ struct MeetingSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear {
-            checkScreenRecordingPermission()
-        }
         .onDisappear {
             cleanupTestCapture()
-        }
-    }
-
-    // MARK: - Permission Check
-
-    private func checkScreenRecordingPermission() {
-        if #available(macOS 13.0, *) {
-            Task {
-                hasScreenRecordingPermission = await SystemAudioCaptureService.checkPermission()
-            }
         }
     }
 

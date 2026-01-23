@@ -1,7 +1,7 @@
 import Foundation
 import os
 
-final class SonioxTranscriptionService {
+final class SonioxTranscriptionService: TranscriptionServiceProtocol {
     var apiKey: String?
 
     private let baseURL = "https://api.soniox.com/v1"
@@ -10,11 +10,49 @@ final class SonioxTranscriptionService {
     private let pollingInterval: TimeInterval = 1.0
     private let maxPollingAttempts = 60 // 60 seconds max wait
 
-    func transcribe(audioData: Data, language: String? = nil) async throws -> String {
+    // MARK: - Voice Note Processing Context
+
+    // swiftlint:disable line_length
+    private let voiceNoteContext = """
+        role: Voice note processing assistant
+        input: Raw Ukrainian speech transcript
+
+        tasks[3]{id,name,actions}:
+          1,Clean text,"remove fillers (е-е-е, ну, типу, як би), fix recognition errors, add punctuation"
+          2,Detect type,determine if work note or brainstorm
+          3,Format output,structure based on detected type
+
+        processing_rules[2]{type,rules}:
+          work_note,"extract key decisions, pull action items (who/what/when if present), group by topics if multiple"
+          brainstorm,"keep all ideas even raw ones, group similar thoughts, never discard unfinished ideas"
+
+        output_format:
+          style: concise - no fluff
+          headers: only when clear topic separation exists
+          lists: bullets for lists
+          dash: short (-) only - never long dash (—)
+
+        restrictions[5]:
+          never use long dash (—) - only short (-)
+          never add your own ideas or suggestions
+          never rephrase beyond recognition - keep my style
+          never write preambles like "here are your notes"
+          keep English tech terms as-is in Ukrainian text
+
+        language: Ukrainian
+        """
+    // swiftlint:enable line_length
+
+    // Protocol conformance method
+    func transcribe(audioData: Data) async throws -> String {
+        try await transcribe(audioData: audioData, language: nil)
+    }
+
+    func transcribe(audioData: Data, language: String?) async throws -> String {
         Log.transcription.info("transcribe: BEGIN, audioData size = \(audioData.count) bytes")
 
         guard let apiKey, !apiKey.isEmpty else {
-            Log.transcription.info("transcribe: No API key!")
+            Log.transcription.error("transcribe: No API key!")
             throw TranscriptionError.noAPIKey
         }
 
@@ -23,9 +61,51 @@ final class SonioxTranscriptionService {
         let fileId = try await uploadFile(audioData: audioData, apiKey: apiKey)
         Log.transcription.info("File uploaded, fileId = \(fileId)")
 
-        // Step 2: Create transcription job
-        Log.transcription.info("Step 2: Creating transcription job...")
-        let transcriptionId = try await createTranscription(fileId: fileId, language: language, apiKey: apiKey)
+        // Step 2: Create transcription job with voice note context
+        Log.transcription.info("Step 2: Creating transcription job with context...")
+        let transcriptionId = try await createTranscription(
+            fileId: fileId,
+            language: language,
+            context: voiceNoteContext,
+            apiKey: apiKey
+        )
+        Log.transcription.info("Transcription created, id = \(transcriptionId)")
+
+        // Step 3: Poll for completion
+        Log.transcription.info("Step 3: Polling for completion...")
+        try await waitForCompletion(transcriptionId: transcriptionId, apiKey: apiKey)
+        Log.transcription.info("Transcription completed")
+
+        // Step 4: Get the transcript text
+        Log.transcription.info("Step 4: Retrieving transcript...")
+        let text = try await getTranscript(transcriptionId: transcriptionId, apiKey: apiKey)
+        Log.transcription.info("Transcript retrieved: \(text.prefix(50))...")
+
+        return text
+    }
+
+    /// Transcribe meeting audio without voice note processing context
+    func transcribeMeeting(audioData: Data) async throws -> String {
+        Log.transcription.info("transcribeMeeting: BEGIN, audioData size = \(audioData.count) bytes")
+
+        guard let apiKey, !apiKey.isEmpty else {
+            Log.transcription.error("transcribeMeeting: No API key!")
+            throw TranscriptionError.noAPIKey
+        }
+
+        // Step 1: Upload the audio file
+        Log.transcription.info("Step 1: Uploading audio file...")
+        let fileId = try await uploadFile(audioData: audioData, apiKey: apiKey)
+        Log.transcription.info("File uploaded, fileId = \(fileId)")
+
+        // Step 2: Create transcription job WITHOUT context (plain transcription for meetings)
+        Log.transcription.info("Step 2: Creating transcription job (no context)...")
+        let transcriptionId = try await createTranscription(
+            fileId: fileId,
+            language: nil,
+            context: nil,
+            apiKey: apiKey
+        )
         Log.transcription.info("Transcription created, id = \(transcriptionId)")
 
         // Step 3: Poll for completion
@@ -46,7 +126,7 @@ final class SonioxTranscriptionService {
         Log.transcription.info("translateAndTranscribe: BEGIN, audioData size = \(audioData.count) bytes")
 
         guard let apiKey, !apiKey.isEmpty else {
-            Log.transcription.info("translateAndTranscribe: No API key!")
+            Log.transcription.error("translateAndTranscribe: No API key!")
             throw TranscriptionError.noAPIKey
         }
 
@@ -106,7 +186,7 @@ final class SonioxTranscriptionService {
 
         guard httpResponse.statusCode == 201 || httpResponse.statusCode == 200 else {
             let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-            Log.transcription.info("uploadFile: Error - \(errorBody)")
+            Log.transcription.error("uploadFile: Error - \(errorBody)")
             throw TranscriptionError.apiError("Upload failed: \(errorBody)")
         }
 
@@ -116,7 +196,12 @@ final class SonioxTranscriptionService {
 
     // MARK: - Step 2: Create Transcription
 
-    private func createTranscription(fileId: String, language: String?, apiKey: String) async throws -> String {
+    private func createTranscription(
+        fileId: String,
+        language: String?,
+        context: String?,
+        apiKey: String
+    ) async throws -> String {
         guard let url = URL(string: "\(baseURL)/transcriptions") else {
             throw TranscriptionError.invalidURL
         }
@@ -135,6 +220,10 @@ final class SonioxTranscriptionService {
             payload["language_hints"] = [lang]
         }
 
+        if let context {
+            payload["context"] = context
+        }
+
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -147,7 +236,7 @@ final class SonioxTranscriptionService {
 
         guard httpResponse.statusCode == 201 || httpResponse.statusCode == 200 else {
             let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-            Log.transcription.info("createTranscription: Error - \(errorBody)")
+            Log.transcription.error("createTranscription: Error - \(errorBody)")
             throw TranscriptionError.apiError("Create transcription failed: \(errorBody)")
         }
 
@@ -167,11 +256,12 @@ final class SonioxTranscriptionService {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        // Two-way translation: English <-> Ukrainian
+        // Two-way translation: English <-> Ukrainian with voice note context
         let payload: [String: Any] = [
             "file_id": fileId,
             "model": translationModel,
             "language_hints": ["en", "uk"],
+            "context": voiceNoteContext,
             "translation": [
                 "type": "two_way",
                 "language_a": "en",
@@ -191,7 +281,7 @@ final class SonioxTranscriptionService {
 
         guard httpResponse.statusCode == 201 || httpResponse.statusCode == 200 else {
             let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-            Log.transcription.info("createTranscriptionWithTranslation: Error - \(errorBody)")
+            Log.transcription.error("createTranscriptionWithTranslation: Error - \(errorBody)")
             throw TranscriptionError.apiError("Create translation failed: \(errorBody)")
         }
 
@@ -217,7 +307,7 @@ final class SonioxTranscriptionService {
                   httpResponse.statusCode == 200
             else {
                 let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-                Log.transcription.info("Poll error: \(errorBody)")
+                Log.transcription.error("Poll error: \(errorBody)")
                 throw TranscriptionError.invalidResponse
             }
 
@@ -230,7 +320,7 @@ final class SonioxTranscriptionService {
             case "error":
                 let errorMsg = statusResponse.error_message ?? "Unknown error"
                 let errorType = statusResponse.error_type ?? "unknown"
-                Log.transcription.info("Transcription failed: \(errorType) - \(errorMsg)")
+                Log.transcription.error("Transcription failed: \(errorType) - \(errorMsg)")
                 throw TranscriptionError.apiError("Transcription failed: \(errorMsg)")
             case "queued", "processing":
                 try await Task.sleep(nanoseconds: UInt64(pollingInterval * 1_000_000_000))
@@ -263,7 +353,7 @@ final class SonioxTranscriptionService {
 
         guard httpResponse.statusCode == 200 else {
             let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-            Log.transcription.info("getTranscript: Error - \(errorBody)")
+            Log.transcription.error("getTranscript: Error - \(errorBody)")
             throw TranscriptionError.apiError("Get transcript failed: \(errorBody)")
         }
 
@@ -297,7 +387,7 @@ final class SonioxTranscriptionService {
 
         guard httpResponse.statusCode == 200 else {
             let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-            Log.transcription.info("getTranslatedTranscript: Error - \(errorBody)")
+            Log.transcription.error("getTranslatedTranscript: Error - \(errorBody)")
             throw TranscriptionError.apiError("Get translated transcript failed: \(errorBody)")
         }
 

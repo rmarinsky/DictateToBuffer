@@ -114,7 +114,7 @@ final class PermissionManager {
             return granted
 
         case .denied, .restricted:
-            Log.permissions.info("Microphone permission denied/restricted")
+            Log.permissions.warning("Microphone permission denied/restricted")
             return false
 
         @unknown default:
@@ -158,7 +158,7 @@ final class PermissionManager {
         do {
             return try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
         } catch {
-            Log.permissions.info("Notification permission error: \(error.localizedDescription)")
+            Log.permissions.error("Notification permission error: \(error.localizedDescription)")
             return false
         }
     }
@@ -183,7 +183,7 @@ final class PermissionManager {
     /// by attempting to access SCShareableContent
     func requestScreenRecordingPermission() async -> Bool {
         guard #available(macOS 13.0, *) else {
-            Log.permissions.info("Screen recording requires macOS 13.0+")
+            Log.permissions.warning("Screen recording requires macOS 13.0+")
             return false
         }
 
@@ -196,7 +196,7 @@ final class PermissionManager {
         if granted {
             Log.permissions.info("Screen recording permission granted")
         } else {
-            Log.permissions.info("Screen recording permission not granted")
+            Log.permissions.warning("Screen recording permission not granted")
         }
 
         return granted
@@ -213,7 +213,7 @@ final class PermissionManager {
 
         if !granted {
             // If not granted, show alert to open System Settings
-            Log.permissions.info("Screen recording permission denied, prompting user to open Settings")
+            Log.permissions.warning("Screen recording permission denied, prompting user to open Settings")
             await MainActor.run {
                 showPermissionAlert(for: .screenRecording)
             }
@@ -269,9 +269,6 @@ final class PermissionManager {
         if !status.microphone {
             urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
         } else if !status.accessibility {
-            // Request accessibility with prompt (may not work in sandboxed apps)
-            requestAccessibilityPermission()
-            // Also open System Settings directly
             urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
         } else if !status.screenRecording {
             urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
@@ -336,21 +333,70 @@ final class PermissionManager {
 
     // MARK: - Helper Methods
 
-    /// Refresh permission status
+    /// Refresh permission status passively - only checks current status without triggering any dialogs
+    /// Note: Screen recording cannot be checked passively, so we keep the last known state
     func refreshStatus() async {
-        async let microphoneGranted = requestMicrophonePermission()
-        async let screenRecordingGranted = checkScreenRecordingPermission()
+        // Check microphone status passively (no dialog)
+        let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+        status.microphone = micStatus == .authorized
 
-        status.microphone = await microphoneGranted
-        status.screenRecording = await screenRecordingGranted
+        // Check accessibility passively (this is always passive)
         status.accessibility = checkAccessibilityPermission()
 
+        // Check notifications passively
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         status.notifications = settings.authorizationStatus == .authorized
+
+        // Screen recording: cannot check passively without triggering dialog
+        // Keep the last known state - don't update status.screenRecording here
     }
 
     /// Show individual permission alert
     func showPermissionAlert(for type: PermissionType) {
+        Task {
+            // First, try to request the permission (this will show system dialog if not determined)
+            switch type {
+            case .microphone:
+                let granted = await requestMicrophonePermission()
+                if granted {
+                    await refreshStatus()
+                    return
+                }
+                // If denied, show alert to open settings
+                
+            case .accessibility:
+                // Accessibility permission shows its own system dialog
+                requestAccessibilityPermission()
+                // Give it a moment to show the dialog
+                try? await Task.sleep(for: .seconds(1))
+                await refreshStatus()
+                return
+                
+            case .screenRecording:
+                let granted = await requestScreenRecordingPermission()
+                if granted {
+                    await refreshStatus()
+                    return
+                }
+                // If denied, show alert to open settings
+                
+            case .notifications:
+                let granted = await requestNotificationPermission()
+                if granted {
+                    await refreshStatus()
+                    return
+                }
+            }
+            
+            // If we get here, permission was denied - show alert to open System Settings
+            await MainActor.run {
+                showSettingsAlert(for: type)
+            }
+        }
+    }
+    
+    /// Show alert to open System Settings for a permission that was denied
+    private func showSettingsAlert(for type: PermissionType) {
         let alert = NSAlert()
 
         switch type {
@@ -399,9 +445,6 @@ final class PermissionManager {
         case .microphone:
             urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
         case .accessibility:
-            // First try the prompt API (may not work in sandboxed apps)
-            requestAccessibilityPermission()
-            // Also open System Settings directly as a fallback
             urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
         case .screenRecording:
             urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"

@@ -1,23 +1,30 @@
 import AVFoundation
 import Combine
+import CoreAudio
 import Foundation
 import os
 
 @MainActor
-final class AudioRecorderService: ObservableObject {
+final class AudioRecorderService: ObservableObject, AudioRecorderProtocol {
     @Published private(set) var isRecording = false
     @Published private(set) var audioLevel: Float = 0
 
-    private var audioRecorder: AVAudioRecorder?
+    private var audioEngine: AVAudioEngine?
+    private var audioFile: AVAudioFile?
     private var recordingURL: URL?
-    private var levelTimer: Timer?
+    private var configurationObserver: NSObjectProtocol?
+
+    /// Returns the current recording file path, if recording
+    var currentRecordingPath: String? {
+        recordingURL?.path
+    }
 
     // MARK: - Public Methods
 
     func startRecording(device: AudioDevice?, quality: AudioQuality) async throws {
         Log.audio.info("startRecording: BEGIN, isRecording=\(self.isRecording)")
         guard !isRecording else {
-            Log.audio.info("startRecording: Already recording, returning")
+            Log.audio.warning("startRecording: Already recording, returning")
             return
         }
 
@@ -33,9 +40,29 @@ final class AudioRecorderService: ObservableObject {
         }
 
         guard permissionStatus == .authorized else {
-            Log.audio.info("startRecording: Permission denied")
+            Log.audio.warning("startRecording: Permission denied")
             throw AudioError.permissionDenied
         }
+
+        // Set input device if specified
+        if let device {
+            Log.audio.info("startRecording: Setting input device: \(device.name)")
+            setInputDevice(device.id)
+        }
+
+        // Create and configure audio engine
+        let engine = AVAudioEngine()
+        audioEngine = engine
+
+        // Set up input device on the engine
+        if let device {
+            setEngineInputDevice(engine, deviceID: device.id)
+        }
+
+        let inputNode = engine.inputNode
+        let inputFormat = inputNode.outputFormat(forBus: 0)
+
+        Log.audio.info("startRecording: Input format - sampleRate=\(inputFormat.sampleRate), channels=\(inputFormat.channelCount)")
 
         // Create temporary file URL
         let tempDir = FileManager.default.temporaryDirectory
@@ -44,59 +71,92 @@ final class AudioRecorderService: ObservableObject {
         Log.audio.info("startRecording: Recording URL = \(self.recordingURL?.path ?? "nil")")
 
         guard let url = recordingURL else {
-            Log.audio.info("startRecording: Failed to create URL")
+            Log.audio.error("startRecording: Failed to create URL")
             throw AudioError.recordingFailed("Could not create recording file")
         }
 
-        // Configure audio settings
-        let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatLinearPCM),
-            AVSampleRateKey: quality.sampleRate,
-            AVNumberOfChannelsKey: 1,
-            AVLinearPCMBitDepthKey: 16,
-            AVLinearPCMIsFloatKey: false,
-            AVLinearPCMIsBigEndianKey: false,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
-        ]
-        Log.audio.info("startRecording: Audio settings configured, sampleRate=\(quality.sampleRate)")
-
-        // Set input device if specified
-        if let device {
-            Log.audio.info("startRecording: Setting input device: \(device.name)")
-            setInputDevice(device.id)
+        // Create audio file for writing - use the INPUT format to avoid realtime conversion
+        // The transcription service can handle various formats
+        do {
+            audioFile = try AVAudioFile(forWriting: url, settings: inputFormat.settings)
+        } catch {
+            Log.audio.error("startRecording: Failed to create audio file: \(error.localizedDescription)")
+            throw AudioError.recordingFailed("Could not create audio file: \(error.localizedDescription)")
         }
 
-        // Create and start recorder
-        Log.audio.info("startRecording: Creating AVAudioRecorder")
-        audioRecorder = try AVAudioRecorder(url: url, settings: settings)
-        audioRecorder?.isMeteringEnabled = true
-        audioRecorder?.prepareToRecord()
+        Log.audio.info("startRecording: Audio file created with input format settings")
 
-        Log.audio.info("startRecording: Calling record()")
-        guard audioRecorder?.record() == true else {
-            Log.audio.info("startRecording: record() returned false")
-            throw AudioError.recordingFailed("Failed to start recording")
+        // Capture file reference for use in tap callback (runs on audio thread)
+        guard let file = audioFile else {
+            throw AudioError.recordingFailed("Audio file not initialized")
+        }
+
+        // Install tap on input node to capture audio
+        // IMPORTANT: This callback runs on a realtime audio thread, NOT the main thread
+        // Write directly in the input format - no conversion needed
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+            // Update audio level from buffer (thread-safe method)
+            self?.updateAudioLevelFromBuffer(buffer)
+
+            // Write buffer directly to file - no format conversion
+            do {
+                try file.write(from: buffer)
+            } catch {
+                Log.audio.error("Failed to write audio buffer: \(error.localizedDescription)")
+            }
+        }
+
+        // Observe configuration changes for handling device switching
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleConfigurationChange()
+            }
+        }
+
+        // Start the engine
+        do {
+            try engine.start()
+            Log.audio.info("startRecording: Audio engine started")
+        } catch {
+            Log.audio.error("startRecording: Failed to start engine: \(error.localizedDescription)")
+            inputNode.removeTap(onBus: 0)
+            throw AudioError.recordingFailed("Failed to start audio engine: \(error.localizedDescription)")
         }
 
         isRecording = true
-        startLevelMonitoring()
         Log.audio.info("startRecording: END, isRecording=\(self.isRecording)")
     }
 
     func stopRecording() async throws -> Data {
         Log.audio.info("stopRecording: BEGIN, isRecording=\(self.isRecording)")
-        guard isRecording, let recorder = audioRecorder, let url = recordingURL else {
+        guard isRecording, let engine = audioEngine, let url = recordingURL else {
             let logMsg = "stopRecording: No active recording! isRecording=\(isRecording), " +
-                "recorder=\(audioRecorder != nil), url=\(recordingURL?.path ?? "nil")"
-            Log.audio.info("\(logMsg)")
+                "engine=\(audioEngine != nil), url=\(recordingURL?.path ?? "nil")"
+            Log.audio.warning("\(logMsg)")
             throw AudioError.recordingFailed("No active recording")
         }
 
-        Log.audio.info("stopRecording: Stopping level monitoring")
-        stopLevelMonitoring()
-        Log.audio.info("stopRecording: Stopping recorder")
-        recorder.stop()
+        Log.audio.info("stopRecording: Removing tap and stopping engine")
+
+        // Remove tap and stop engine
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+
+        // Remove configuration observer
+        if let observer = configurationObserver {
+            NotificationCenter.default.removeObserver(observer)
+            configurationObserver = nil
+        }
+
+        // Close the audio file
+        audioFile = nil
+
         isRecording = false
+        audioLevel = 0
 
         // Read audio data
         Log.audio.info("stopRecording: Reading audio data from \(url.path)")
@@ -105,7 +165,7 @@ final class AudioRecorderService: ObservableObject {
 
         // Cleanup
         try? FileManager.default.removeItem(at: url)
-        audioRecorder = nil
+        audioEngine = nil
         recordingURL = nil
 
         Log.audio.info("stopRecording: END")
@@ -113,9 +173,18 @@ final class AudioRecorderService: ObservableObject {
     }
 
     func cancelRecording() {
-        stopLevelMonitoring()
-        audioRecorder?.stop()
-        audioRecorder = nil
+        guard let engine = audioEngine else { return }
+
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+
+        if let observer = configurationObserver {
+            NotificationCenter.default.removeObserver(observer)
+            configurationObserver = nil
+        }
+
+        audioFile = nil
+        audioEngine = nil
 
         if let url = recordingURL {
             try? FileManager.default.removeItem(at: url)
@@ -123,6 +192,7 @@ final class AudioRecorderService: ObservableObject {
         }
 
         isRecording = false
+        audioLevel = 0
     }
 
     // MARK: - Private Methods
@@ -148,27 +218,65 @@ final class AudioRecorderService: ObservableObject {
         )
     }
 
-    private func startLevelMonitoring() {
-        levelTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.updateAudioLevel()
+    private func setEngineInputDevice(_ engine: AVAudioEngine, deviceID: AudioDeviceID) {
+        // Set the audio unit's input device directly
+        let inputNode = engine.inputNode
+        guard let audioUnit = inputNode.audioUnit else { return }
+
+        var mutableDeviceID = deviceID
+        let status = AudioUnitSetProperty(
+            audioUnit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &mutableDeviceID,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+
+        if status != noErr {
+            Log.audio.warning("Failed to set engine input device: \(status)")
+        }
+    }
+
+    private func handleConfigurationChange() {
+        Log.audio.info("Audio configuration changed - handling device switch")
+
+        guard isRecording, let engine = audioEngine else { return }
+
+        // The engine automatically handles configuration changes in most cases
+        // Just ensure it's still running
+        if !engine.isRunning {
+            do {
+                try engine.start()
+                Log.audio.info("Audio engine restarted after configuration change")
+            } catch {
+                Log.audio.error("Failed to restart engine after config change: \(error.localizedDescription)")
+                // Recording will continue to fail, but we don't want to crash
             }
         }
     }
 
-    private func stopLevelMonitoring() {
-        levelTimer?.invalidate()
-        levelTimer = nil
-        audioLevel = 0
-    }
+    private nonisolated func updateAudioLevelFromBuffer(_ buffer: AVAudioPCMBuffer) {
+        guard let channelData = buffer.floatChannelData?[0] else { return }
 
-    private func updateAudioLevel() {
-        audioRecorder?.updateMeters()
-        let level = audioRecorder?.averagePower(forChannel: 0) ?? -160
+        let frameLength = Int(buffer.frameLength)
+        guard frameLength > 0 else { return }
 
-        // Convert dB to linear scale (0-1)
+        // Calculate RMS (Root Mean Square) for audio level
+        var sum: Float = 0
+        for i in 0..<frameLength {
+            let sample = channelData[i]
+            sum += sample * sample
+        }
+        let rms = sqrt(sum / Float(frameLength))
+
+        // Convert to dB and normalize
+        let db = 20 * log10(max(rms, 0.0001))
         let minDb: Float = -60
-        let normalizedLevel = max(0, (level - minDb) / -minDb)
-        audioLevel = normalizedLevel
+        let normalizedLevel = max(0, min(1, (db - minDb) / -minDb))
+
+        Task { @MainActor [weak self] in
+            self?.audioLevel = normalizedLevel
+        }
     }
 }

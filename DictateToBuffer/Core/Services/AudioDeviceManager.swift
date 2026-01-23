@@ -3,7 +3,7 @@ import Combine
 import CoreAudio
 import Foundation
 
-final class AudioDeviceManager: ObservableObject {
+final class AudioDeviceManager: ObservableObject, AudioDeviceManagerProtocol {
     @Published private(set) var availableDevices: [AudioDevice] = []
     @Published private(set) var defaultDevice: AudioDevice?
 
@@ -25,6 +25,22 @@ final class AudioDeviceManager: ObservableObject {
     func refreshDevices() {
         availableDevices = getInputDevices()
         defaultDevice = availableDevices.first { $0.isDefault }
+    }
+
+    /// Check if a device with the given ID is currently available
+    func isDeviceAvailable(_ deviceID: AudioDeviceID) -> Bool {
+        availableDevices.contains { $0.id == deviceID }
+    }
+
+    /// Get device by ID, returns nil if not available
+    func device(for deviceID: AudioDeviceID) -> AudioDevice? {
+        availableDevices.first { $0.id == deviceID }
+    }
+
+    /// Get the current system default input device (refreshes first to ensure accuracy)
+    func getCurrentDefaultDevice() -> AudioDevice? {
+        refreshDevices()
+        return defaultDevice
     }
 
     func autoDetectBestDevice() async -> AudioDevice? {

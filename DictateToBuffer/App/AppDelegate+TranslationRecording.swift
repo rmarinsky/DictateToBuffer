@@ -46,40 +46,84 @@ extension AppDelegate {
         appState.microphonePermissionGranted = micGranted
 
         guard micGranted else {
-            Log.app.info("startTranslationRecording: Microphone permission not granted")
+            Log.app.warning("startTranslationRecording: Microphone permission not granted")
             await MainActor.run {
                 appState.errorMessage = "Microphone access required"
                 appState.translationRecordingState = .error
+                handleTranslationStateChange(.error)
             }
             return
         }
 
         guard let apiKey = KeychainManager.shared.getSonioxAPIKey(), !apiKey.isEmpty else {
-            Log.app.info("startTranslationRecording: No API key found")
+            Log.app.warning("startTranslationRecording: No API key found")
             await MainActor.run {
                 appState.errorMessage = "Please add your Soniox API key in Settings"
                 appState.translationRecordingState = .error
+                handleTranslationStateChange(.error)
             }
             return
         }
         Log.app.info("startTranslationRecording: API key found")
 
-        // Determine device
+        // Determine device with fallback to system default
         var device: AudioDevice?
+        var usedFallback = false
+
         if appState.useAutoDetect {
             Log.app.info("startTranslationRecording: Using auto-detect")
             await MainActor.run { appState.translationRecordingState = .processing }
             device = await audioDeviceManager.autoDetectBestDevice()
             Log.app.info("startTranslationRecording: Auto-detected device: \(device?.name ?? "none")")
         } else if let deviceID = appState.selectedDeviceID {
-            device = audioDeviceManager.availableDevices.first { $0.id == deviceID }
-            Log.app.info("startTranslationRecording: Using selected device: \(device?.name ?? "none")")
+            // Refresh device list to ensure we have current state
+            audioDeviceManager.refreshDevices()
+
+            if audioDeviceManager.isDeviceAvailable(deviceID) {
+                device = audioDeviceManager.device(for: deviceID)
+                Log.app.info("startTranslationRecording: Using selected device: \(device?.name ?? "none")")
+            } else {
+                // Selected device is no longer available - fallback to system default
+                Log.app.warning("startTranslationRecording: Selected device (ID: \(deviceID)) not available, falling back to default")
+                device = audioDeviceManager.getCurrentDefaultDevice()
+                usedFallback = true
+                Log.app.info("startTranslationRecording: Fallback to default device: \(device?.name ?? "none")")
+            }
+        } else {
+            // No device selected - use system default
+            Log.app.info("startTranslationRecording: No device selected, using system default")
+            device = audioDeviceManager.getCurrentDefaultDevice()
+        }
+
+        // If still no device available, try last resort or show error
+        if device == nil && !appState.useAutoDetect {
+            if audioDeviceManager.availableDevices.isEmpty {
+                Log.app.error("startTranslationRecording: No audio input devices available")
+                await MainActor.run {
+                    appState.errorMessage = "No microphone found. Please connect a microphone."
+                    appState.translationRecordingState = .error
+                    handleTranslationStateChange(.error)
+                }
+                return
+            }
+            // Last resort: pick first available device
+            device = audioDeviceManager.availableDevices.first
+            usedFallback = true
+            Log.app.info("startTranslationRecording: Using first available device: \(device?.name ?? "none")")
         }
 
         Log.app.info("startTranslationRecording: Setting state to recording")
+
+        // Prevent App Nap during translation recording
+        translationActivityToken = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .idleSystemSleepDisabled],
+            reason: "Translation recording in progress"
+        )
+
         await MainActor.run {
             appState.translationRecordingState = .recording
             appState.translationRecordingStartTime = Date()
+            updateRecordingWindowForTranslation(for: .recording)
         }
 
         do {
@@ -89,11 +133,31 @@ extension AppDelegate {
                 quality: SettingsStorage.shared.audioQuality
             )
             Log.app.info("startTranslationRecording: Recording started successfully")
+
+            // Notify user if we fell back to a different microphone
+            if usedFallback, let fallbackDevice = device {
+                NotificationManager.shared.showWarning(
+                    title: "Microphone Changed",
+                    message: "Using \(fallbackDevice.name) (previous device unavailable)"
+                )
+            }
+
+            // Save recovery state in case of crash
+            if let path = audioRecorder.currentRecordingPath {
+                let state = RecoveryState(
+                    tempFilePath: path,
+                    startTime: Date(),
+                    recordingType: .translation
+                )
+                RecoveryStateManager.shared.saveState(state)
+            }
         } catch {
-            Log.app.info("startTranslationRecording: ERROR - \(error.localizedDescription)")
+            Log.app.error("startTranslationRecording: ERROR - \(error.localizedDescription)")
             await MainActor.run {
                 appState.errorMessage = error.localizedDescription
                 appState.translationRecordingState = .error
+                updateRecordingWindowForTranslation(for: .error)
+                handleTranslationStateChange(.error)
             }
         }
     }
@@ -103,6 +167,7 @@ extension AppDelegate {
 
         await MainActor.run {
             appState.translationRecordingState = .processing
+            updateRecordingWindowForTranslation(for: .processing)
         }
 
         do {
@@ -111,7 +176,7 @@ extension AppDelegate {
             Log.app.info("stopTranslationRecording: Got audio data, size = \(audioData.count) bytes")
 
             guard let apiKey = KeychainManager.shared.getSonioxAPIKey() else {
-                Log.app.info("stopTranslationRecording: No API key!")
+                Log.app.error("stopTranslationRecording: No API key!")
                 throw TranscriptionError.noAPIKey
             }
 
@@ -128,10 +193,10 @@ extension AppDelegate {
                 do {
                     try await clipboardService.paste()
                 } catch ClipboardError.accessibilityNotGranted {
-                    Log.app.info("stopTranslationRecording: Accessibility permission needed")
+                    Log.app.warning("stopTranslationRecording: Accessibility permission needed")
                     PermissionManager.shared.showPermissionAlert(for: .accessibility)
                 } catch {
-                    Log.app.info("stopTranslationRecording: Paste failed - \(error.localizedDescription)")
+                    Log.app.error("stopTranslationRecording: Paste failed - \(error.localizedDescription)")
                 }
             }
 
@@ -145,21 +210,41 @@ extension AppDelegate {
                 NotificationManager.shared.showSuccess(text: "Translated: \(text.prefix(50))...")
             }
 
+            // Clear recovery state on success
+            RecoveryStateManager.shared.clearState()
+
             await MainActor.run {
                 appState.lastTranscription = text
+                appState.isEmptyTranscription = false
                 appState.translationRecordingState = .success
                 appState.translationRecordingStartTime = nil
+                updateRecordingWindowForTranslation(for: .success)
+                handleTranslationStateChange(.success)
             }
             Log.app.info("stopTranslationRecording: SUCCESS")
 
         } catch {
-            Log.app.info("stopTranslationRecording: ERROR - \(error.localizedDescription)")
+            Log.app.error("stopTranslationRecording: ERROR - \(error.localizedDescription)")
+            let isEmptyTranscription: Bool = {
+                guard case .emptyTranscription = error as? TranscriptionError else { return false }
+                return true
+            }()
             await MainActor.run {
                 appState.errorMessage = error.localizedDescription
+                appState.isEmptyTranscription = isEmptyTranscription
                 appState.translationRecordingState = .error
                 appState.translationRecordingStartTime = nil
+                updateRecordingWindowForTranslation(for: .error)
+                handleTranslationStateChange(.error)
             }
         }
+
+        // End App Nap prevention
+        if let token = translationActivityToken {
+            ProcessInfo.processInfo.endActivity(token)
+            translationActivityToken = nil
+        }
+
         Log.app.info("stopTranslationRecording: END")
     }
 }

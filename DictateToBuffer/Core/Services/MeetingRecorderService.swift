@@ -4,7 +4,7 @@ import os
 import ScreenCaptureKit
 
 @available(macOS 13.0, *)
-final class MeetingRecorderService: NSObject {
+final class MeetingRecorderService: NSObject, MeetingRecorderServiceProtocol {
     private var systemAudioService: SystemAudioCaptureService?
     private var audioEngine: AVAudioEngine?
     private var mixerNode: AVAudioMixerNode?
@@ -14,6 +14,11 @@ final class MeetingRecorderService: NSObject {
     private var startTime: Date?
 
     private(set) var isRecording = false
+
+    /// Returns the current recording file path, if recording
+    var currentRecordingPath: String? {
+        outputURL?.path
+    }
 
     var audioSource: MeetingAudioSource = .systemOnly
     var onError: ((Error) -> Void)?
@@ -35,7 +40,7 @@ final class MeetingRecorderService: NSObject {
 
     func startRecording() async throws {
         guard !isRecording else {
-            Log.recording.info("Already recording")
+            Log.recording.warning("Already recording")
             return
         }
 
@@ -78,7 +83,7 @@ final class MeetingRecorderService: NSObject {
 
     func stopRecording() async throws -> URL? {
         guard isRecording else {
-            Log.recording.info("Not recording")
+            Log.recording.warning("Not recording")
             return nil
         }
 

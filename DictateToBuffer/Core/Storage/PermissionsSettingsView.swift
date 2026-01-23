@@ -1,4 +1,7 @@
+import ApplicationServices
+import AVFoundation
 import SwiftUI
+import UserNotifications
 
 struct PermissionsSettingsView: View {
     @State private var microphoneGranted = false
@@ -20,8 +23,8 @@ struct PermissionsSettingsView: View {
                 PermissionRow(
                     icon: "mic.fill",
                     title: "Microphone Access",
-                    description: "Record audio for transcription",
-                    isGranted: microphoneGranted,
+                    description: "Record audio for transcription or translation",
+                    isGranted: $microphoneGranted,
                     permissionType: .microphone
                 )
 
@@ -29,52 +32,54 @@ struct PermissionsSettingsView: View {
                     icon: "accessibility",
                     title: "Accessibility",
                     description: "Auto-paste transcribed text",
-                    isGranted: accessibilityGranted,
+                    isGranted: $accessibilityGranted,
                     permissionType: .accessibility
+                )
+                
+                PermissionRow(
+                    icon: "rectangle.on.rectangle",
+                    title: "Screen Recording",
+                    description: "Record meeting audio (macOS 13.0+)",
+                    isGranted: $screenRecordingGranted,
+                    permissionType: .screenRecording
                 )
             }
 
             Section("Optional Permissions") {
                 PermissionRow(
-                    icon: "rectangle.on.rectangle",
-                    title: "Screen Recording",
-                    description: "Record meeting audio (macOS 13.0+)",
-                    isGranted: screenRecordingGranted,
-                    permissionType: .screenRecording
-                )
-
-                PermissionRow(
                     icon: "bell.fill",
                     title: "Notifications",
                     description: "Show transcription completion alerts",
-                    isGranted: notificationsGranted,
+                    isGranted: $notificationsGranted,
                     permissionType: .notifications
                 )
             }
 
-            Section {
-                Button("Refresh Permission Status") {
-                    Task {
-                        await refreshPermissions()
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .center)
-            }
         }
         .formStyle(.grouped)
         .task {
-            await refreshPermissions()
+            await checkPermissionsPassive()
         }
     }
 
-    private func refreshPermissions() async {
-        await PermissionManager.shared.refreshStatus()
+    /// Check permission status passively WITHOUT triggering any system dialogs
+    /// Only updates local state based on current permission status
+    private func checkPermissionsPassive() async {
+        // Check microphone status without requesting (no dialog)
+        let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+        microphoneGranted = micStatus == .authorized
 
-        // Update local state
-        microphoneGranted = PermissionManager.shared.status.microphone
-        accessibilityGranted = PermissionManager.shared.status.accessibility
+        // Check accessibility (this is always passive)
+        accessibilityGranted = AXIsProcessTrusted()
+
+        // Check notifications status (passive)
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        notificationsGranted = settings.authorizationStatus == .authorized
+
+        // Screen recording: cannot check passively without triggering dialog
+        // Show as not granted until user explicitly clicks Check
+        // We'll keep the last known state if available, but don't check
         screenRecordingGranted = PermissionManager.shared.status.screenRecording
-        notificationsGranted = PermissionManager.shared.status.notifications
     }
 }
 
@@ -82,7 +87,7 @@ struct PermissionRow: View {
     let icon: String
     let title: String
     let description: String
-    let isGranted: Bool
+    @Binding var isGranted: Bool
     let permissionType: PermissionType
 
     var body: some View {
@@ -110,13 +115,47 @@ struct PermissionRow: View {
                     .foregroundColor(.green)
                     .font(.title3)
             } else {
-                Button("Grant") {
-                    PermissionManager.shared.showPermissionAlert(for: permissionType)
+                Button("Check") {
+                    Task {
+                        await checkAndUpdatePermission()
+                    }
                 }
                 .buttonStyle(.borderedProminent)
             }
         }
         .padding(.vertical, 4)
+    }
+
+    /// Check permission and update the binding if granted
+    private func checkAndUpdatePermission() async {
+        let granted: Bool
+
+        switch permissionType {
+        case .microphone:
+            granted = await PermissionManager.shared.requestMicrophonePermission()
+
+        case .accessibility:
+            // First check if already granted
+            if AXIsProcessTrusted() {
+                granted = true
+            } else {
+                // Only show dialog if not yet granted
+                PermissionManager.shared.requestAccessibilityPermission()
+                // Give time for the system dialog to appear and user to respond
+                try? await Task.sleep(for: .seconds(1))
+                granted = AXIsProcessTrusted()
+            }
+
+        case .screenRecording:
+            granted = await PermissionManager.shared.requestScreenRecordingPermission()
+
+        case .notifications:
+            granted = await PermissionManager.shared.requestNotificationPermission()
+        }
+
+        await MainActor.run {
+            isGranted = granted
+        }
     }
 }
 

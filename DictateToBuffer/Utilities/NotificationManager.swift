@@ -37,4 +37,19 @@ final class NotificationManager {
 
         UNUserNotificationCenter.current().add(request)
     }
+
+    func showWarning(title: String, message: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = message
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: nil
+        )
+
+        UNUserNotificationCenter.current().add(request)
+    }
 }

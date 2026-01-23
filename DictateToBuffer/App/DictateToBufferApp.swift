@@ -16,8 +16,8 @@ struct DictateToBufferApp: App {
                 onSelectAutoDetect: { appDelegate.selectAutoDetect() },
                 onSelectDevice: { device in appDelegate.selectDevice(device) }
             )
-            .environmentObject(appDelegate.appState)
-            .onReceive(appDelegate.appState.$shouldOpenSettings) { shouldOpen in
+            .environment(appDelegate.appState)
+            .onChange(of: appDelegate.appState.shouldOpenSettings) { _, shouldOpen in
                 if shouldOpen {
                     openSettings()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -28,14 +28,14 @@ struct DictateToBufferApp: App {
             }
         } label: {
             MenuBarIconView()
-                .environmentObject(appDelegate.appState)
+                .environment(appDelegate.appState)
         }
         .menuBarExtraStyle(.menu)
 
         // SwiftUI-managed Settings window
         Settings {
             SettingsView()
-                .environmentObject(appDelegate.appState)
+                .environment(appDelegate.appState)
         }
     }
 }

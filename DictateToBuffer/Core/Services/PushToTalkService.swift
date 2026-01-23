@@ -3,7 +3,7 @@ import Carbon
 import Foundation
 import os
 
-final class PushToTalkService {
+final class PushToTalkService: PushToTalkServiceProtocol {
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var isKeyPressed = false

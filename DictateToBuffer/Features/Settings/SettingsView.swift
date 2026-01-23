@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @EnvironmentObject var appState: AppState
+    @Environment(AppState.self) var appState
 
     var body: some View {
         TabView {
@@ -29,12 +29,17 @@ struct SettingsView: View {
                 .tabItem {
                     Label("API", systemImage: "key")
                 }
+
+            LogsSettingsView()
+                .tabItem {
+                    Label("Logs", systemImage: "doc.text")
+                }
         }
-        .frame(width: 500, height: 650)
+        .frame(width: 600, height: 650)
     }
 }
 
 #Preview {
     SettingsView()
-        .environmentObject(AppState())
+        .environment(AppState())
 }
