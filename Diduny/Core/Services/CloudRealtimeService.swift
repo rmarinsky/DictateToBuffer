@@ -11,7 +11,13 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
         return "\(proxyBase)/api/v1/realtime"
     }
     private var webSocketTask: URLSessionWebSocketTask?
-    private var urlSession: URLSession?
+    /// One URLSession for the service's lifetime, so the TLS session cache
+    /// survives across connections (TLS 1.3 resumption saves a round trip on
+    /// every recording start). Never invalidate it — invalidateAndCancel would
+    /// permanently break all future connects. The session retains its delegate
+    /// (self); acceptable, this service lives as long as the app. Guarded by
+    /// lifecycleLock.
+    private var _sharedSession: URLSession?
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
     /// In-flight reconnect (sleeping during backoff). Held so disconnect() can cancel it —
@@ -19,6 +25,26 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
     /// socket after teardown and loops forever with no audio source. Guarded by lifecycleLock.
     private var reconnectTask: Task<Void, Never>?
     private var proxyReady = false
+    /// Resumed exactly once (take-and-nil under lifecycleLock) by whichever
+    /// fires first: proxy_ready, a proxy error frame, the timeout watchdog,
+    /// or disconnect.
+    private var proxyReadyContinuation: CheckedContinuation<Void, Error>?
+    private var proxyReadyTimeoutTask: Task<Void, Never>?
+    /// Audio produced while the socket is connecting or in reconnect backoff.
+    /// Flushed in order on connect, so the first seconds of speech reach
+    /// transcription instead of being dropped. Guarded by lifecycleLock.
+    private var pendingAudio = PreConnectAudioBuffer()
+    private var didWarnPendingAudioOverflow = false
+    /// True from connect() until disconnect() or a terminal failure — the
+    /// window in which buffering audio is worthwhile. Guarded by lifecycleLock.
+    private var sessionActive = false
+    /// True while the post-connect flush drains pendingAudio. New audio must
+    /// join the back of the queue during a flush, never jump straight to the
+    /// socket, or chunks would arrive out of order. Guarded by lifecycleLock.
+    private var flushingPendingAudio = false
+    /// Phase timings for the in-flight connect. Guarded by lifecycleLock; the
+    /// URLSession delegate and receive loop close phases from other threads.
+    private var currentConnectMetrics: ConnectMetrics?
 
     private var isConnected = false
     private var reconnectAttempt = 0
@@ -76,7 +102,14 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
         self.audioConfig = audioConfig
         self.translationConfig = translationConfig
         self.enableSpeakerDiarization = enableSpeakerDiarization
+        // Fresh session: start buffering incoming audio right away, so speech
+        // during the connect handshake is delivered once the socket is up.
+        lifecycleLock.lock()
         reconnectAttempt = 0
+        sessionActive = true
+        pendingAudio.removeAll()
+        didWarnPendingAudioOverflow = false
+        lifecycleLock.unlock()
         try await connectWebSocket()
     }
 
@@ -89,15 +122,15 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
             )
         }
 
-        // Clean up any existing connection before reconnecting
+        // Clean up any existing connection before reconnecting. Note:
+        // pendingAudio is deliberately NOT cleared — audio buffered during a
+        // reconnect backoff must survive into the new connection.
         pingTask?.cancel()
         pingTask = nil
         receiveTask?.cancel()
         receiveTask = nil
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
         webSocketTask = nil
-        urlSession?.invalidateAndCancel()
-        urlSession = nil
         lifecycleLock.lock()
         audioBytesSent = 0
         audioChunkCount = 0
@@ -106,13 +139,23 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
 
         onConnectionStatusChanged?(.connecting)
 
-        let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
-        self.urlSession = session
+        let metrics = ConnectMetrics(label: "[Cloud RT] connect")
+        lifecycleLock.lock()
+        currentConnectMetrics = metrics
+        lifecycleLock.unlock()
+        // Idempotent: the success path below finishes with "ok" first, so this
+        // only fires when an error path unwinds out of connectWebSocket().
+        defer { metrics.finish() }
+
+        let session = sharedSession()
 
         var wsURLString = wsURL
 
         // Pass auth token as query param (WebSocket headers are limited)
-        if let accessToken = await AuthService.shared.getAccessToken() {
+        metrics.begin(.tokenFetch)
+        let accessToken = await AuthService.shared.getAccessToken()
+        metrics.end(.tokenFetch)
+        if let accessToken {
             let separator = wsURLString.contains("?") ? "&" : "?"
             wsURLString += "\(separator)token=\(accessToken)"
         }
@@ -141,6 +184,7 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
         }
 
         self.webSocketTask = task
+        metrics.begin(.wsUpgrade) // ended by didOpenWithProtocol on the delegate queue
         task.resume()
 
         let config = Self.makeConnectionConfig(
@@ -155,6 +199,7 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
         let configString = String(data: configData, encoding: .utf8) ?? "{}"
 
         NSLog("[Cloud RT] Sending config: %@", configString)
+        metrics.begin(.configSend)
         do {
             try await task.send(.string(configString))
         } catch {
@@ -166,33 +211,118 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
             }
             throw error
         }
+        metrics.end(.configSend)
         NSLog("[Cloud RT] Config sent successfully, WebSocket connected")
 
         lifecycleLock.lock()
         isConnected = true
+        // Route new audio to the back of the queue until the flush drains it.
+        flushingPendingAudio = !pendingAudio.isEmpty
+        let needsFlush = flushingPendingAudio
         lifecycleLock.unlock()
 
         startReceiveLoop()
         startPingLoop()
 
-        // Wait for proxy_ready before marking connected
-        let deadline = Date().addingTimeInterval(10)
-        while Date() < deadline {
-            lifecycleLock.lock()
-            let ready = proxyReady
-            lifecycleLock.unlock()
-            if ready { break }
-            try? await Task.sleep(for: .milliseconds(50))
-        }
-        lifecycleLock.lock()
-        let proxyIsReady = proxyReady
-        lifecycleLock.unlock()
-        guard proxyIsReady else {
-            await disconnect()
-            throw RealtimeTranscriptionError.connectionFailed("Proxy did not send ready signal")
+        // Deliver audio captured while connecting. Safe before proxy_ready:
+        // the proxy buffers frames until Soniox is ready (1MB server cap).
+        if needsFlush {
+            await flushPendingAudio(task: task)
         }
 
+        // Wait for proxy_ready before marking connected.
+        metrics.begin(.proxyReadyWait) // ended by parseResponse when proxy_ready arrives
+        do {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                lifecycleLock.lock()
+                if proxyReady {
+                    lifecycleLock.unlock()
+                    continuation.resume()
+                    return
+                }
+                proxyReadyContinuation = continuation
+                proxyReadyTimeoutTask = Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(10))
+                    guard !Task.isCancelled else { return }
+                    self?.resumeProxyReady(with: .failure(
+                        RealtimeTranscriptionError.connectionFailed("Proxy did not send ready signal")
+                    ))
+                }
+                lifecycleLock.unlock()
+            }
+        } catch {
+            await disconnect()
+            throw error
+        }
+
+        metrics.finish(outcome: "ok")
         onConnectionStatusChanged?(.connected)
+    }
+
+    /// Thread-safe accessor for the process-lifetime URLSession (see _sharedSession).
+    private func sharedSession() -> URLSession {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        if let session = _sharedSession {
+            return session
+        }
+        let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+        _sharedSession = session
+        return session
+    }
+
+    /// Resolves the proxy_ready wait exactly once; later calls are no-ops.
+    private func resumeProxyReady(with result: Result<Void, Error>) {
+        lifecycleLock.lock()
+        let continuation = proxyReadyContinuation
+        proxyReadyContinuation = nil
+        let timeoutTask = proxyReadyTimeoutTask
+        proxyReadyTimeoutTask = nil
+        lifecycleLock.unlock()
+
+        timeoutTask?.cancel()
+        switch result {
+        case .success:
+            continuation?.resume()
+        case let .failure(error):
+            continuation?.resume(throwing: error)
+        }
+    }
+
+    /// Drains pendingAudio to the socket in FIFO order. Sends are awaited so
+    /// ordering is preserved; audio arriving mid-flush is appended behind the
+    /// queued chunks by sendAudioData (flushingPendingAudio gate).
+    private func flushPendingAudio(task: URLSessionWebSocketTask) async {
+        var flushedChunks = 0
+        var flushedBytes = 0
+        while true {
+            lifecycleLock.lock()
+            guard isConnected, let chunk = pendingAudio.removeFirst() else {
+                flushingPendingAudio = false
+                lifecycleLock.unlock()
+                break
+            }
+            audioBytesSent += chunk.count
+            audioChunkCount += 1
+            lifecycleLock.unlock()
+
+            do {
+                try await task.send(.data(chunk))
+                flushedChunks += 1
+                flushedBytes += chunk.count
+            } catch {
+                Log.transcription.error("Cloud RT: Buffered audio flush failed - \(error.localizedDescription)")
+                // The connection is failing; the receive loop / delegate will
+                // drive reconnect, and remaining chunks stay buffered for it.
+                lifecycleLock.lock()
+                flushingPendingAudio = false
+                lifecycleLock.unlock()
+                break
+            }
+        }
+        if flushedChunks > 0 {
+            NSLog("[Cloud RT] Flushed %d buffered audio chunks (%d bytes)", flushedChunks, flushedBytes)
+        }
     }
 
     // MARK: - Send Audio Data
@@ -206,7 +336,25 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
         // Capture task reference under the lock so we don't race with disconnect.
         // Do NOT hold the lock while calling task.send (may block on internal queues).
         lifecycleLock.lock()
-        guard isConnected, let task = webSocketTask else {
+        // Not connected yet (connecting or reconnect backoff), or a flush is
+        // still draining: buffer so nothing is lost and ordering holds.
+        if !isConnected || flushingPendingAudio || !pendingAudio.isEmpty {
+            guard sessionActive else {
+                lifecycleLock.unlock()
+                return
+            }
+            pendingAudio.append(data)
+            let overflowed = pendingAudio.didOverflow && !didWarnPendingAudioOverflow
+            if overflowed {
+                didWarnPendingAudioOverflow = true
+            }
+            lifecycleLock.unlock()
+            if overflowed {
+                Log.transcription.warning("Cloud RT: pre-connect audio buffer overflow — dropping oldest audio")
+            }
+            return
+        }
+        guard let task = webSocketTask else {
             lifecycleLock.unlock()
             return
         }
@@ -332,6 +480,11 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
     func disconnect() async {
         Log.transcription.info("Cloud RT: Disconnecting...")
 
+        // Unblock a connect() stuck waiting for proxy_ready.
+        resumeProxyReady(with: .failure(
+            RealtimeTranscriptionError.connectionFailed("Disconnected while connecting")
+        ))
+
         pingTask?.cancel()
         pingTask = nil
         receiveTask?.cancel()
@@ -341,17 +494,51 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
         let task = webSocketTask
         webSocketTask = nil
         isConnected = false
+        sessionActive = false
+        pendingAudio.removeAll()
+        flushingPendingAudio = false
         // Kill any reconnect scheduled by a drop that raced just before this disconnect.
         reconnectTask?.cancel()
         reconnectTask = nil
         lifecycleLock.unlock()
 
         task?.cancel(with: .normalClosure, reason: nil)
-        urlSession?.invalidateAndCancel()
-        urlSession = nil
+        // The shared URLSession stays alive: its TLS session cache makes the
+        // next connect cheaper, and invalidating it would break future connects.
         onConnectionStatusChanged?(.disconnected)
 
         Log.transcription.info("Cloud RT: Disconnected")
+    }
+
+    /// Drops all four session callbacks. Call from the owning teardown path
+    /// once the session is truly over — stale closures from a finished session
+    /// otherwise keep receiving tokens/status (e.g. from a racing reconnect)
+    /// and retain whatever they captured. NOT called inside disconnect():
+    /// reconnect-failure paths disconnect first and then report .failed
+    /// through these callbacks.
+    func clearCallbacks() {
+        finalizeStateLock.lock()
+        _onTokensReceived = nil
+        _onError = nil
+        _onConnectionStatusChanged = nil
+        _onSegmentBoundary = nil
+        finalizeStateLock.unlock()
+    }
+
+    private func resetReconnectAttempts() {
+        lifecycleLock.lock()
+        reconnectAttempt = 0
+        lifecycleLock.unlock()
+    }
+
+    /// Stops buffering and drops pending audio — the session has terminally
+    /// failed and nothing will consume the buffer.
+    private func endBufferingSession() {
+        lifecycleLock.lock()
+        sessionActive = false
+        pendingAudio.removeAll()
+        flushingPendingAudio = false
+        lifecycleLock.unlock()
     }
 
     // MARK: - Receive Loop
@@ -405,7 +592,10 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
            json["type"] as? String == "proxy_ready" {
             lifecycleLock.lock()
             proxyReady = true
+            let metrics = currentConnectMetrics
             lifecycleLock.unlock()
+            metrics?.end(.proxyReadyWait)
+            resumeProxyReady(with: .success(()))
             NSLog("[Cloud RT] Received proxy_ready signal")
             return
         }
@@ -416,6 +606,9 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
            json["tokens"] == nil {
             let error = RealtimeTranscriptionError.connectionFailed(errorMsg)
             Log.transcription.error("Cloud RT: Proxy error - \(errorMsg)")
+            // An error frame before proxy_ready means the connect failed —
+            // fail it now instead of waiting out the 10s timeout.
+            resumeProxyReady(with: .failure(error))
             onError?(error)
             onConnectionStatusChanged?(.failed(errorMsg))
             return
@@ -532,8 +725,14 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
         // refusing — and would surface a generic "Connection lost" instead of the
         // real reason. Detect it synchronously to stop the reconnect, then surface
         // the typed usage error with the best numbers we have.
+        // Whatever path led here, a connect() awaiting proxy_ready must not hang.
+        resumeProxyReady(with: .failure(
+            RealtimeTranscriptionError.connectionFailed("Connection lost while connecting")
+        ))
+
         if (webSocketTask?.response as? HTTPURLResponse)?.statusCode == 402 {
             Log.transcription.warning("Cloud RT: WS upgrade returned 402 — usage limit, not reconnecting")
+            endBufferingSession()
             Task { [weak self] in
                 guard let self else { return }
                 let usage = await UsageService.shared.cachedUsage
@@ -551,6 +750,7 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
         // Per ADR-0004: save partial transcript, show non-error UI, do NOT reconnect.
         if closeCode?.rawValue == 1001 {
             Log.transcription.info("Cloud RT: WS 1001 Going Away — session cap reached, not reconnecting")
+            endBufferingSession()
             onConnectionStatusChanged?(.disconnected)
             // Signal upstream (AppDelegate / MeetingRecorderService) to flush partial transcript.
             // We reuse the existing segmentBoundary path: emit .endpoint so callers finalise.
@@ -558,17 +758,25 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
             return
         }
 
-        guard reconnectAttempt < maxReconnectAttempts else {
+        lifecycleLock.lock()
+        let attempt = reconnectAttempt + 1
+        let withinLimit = attempt <= maxReconnectAttempts
+        if withinLimit {
+            reconnectAttempt = attempt
+        }
+        lifecycleLock.unlock()
+
+        guard withinLimit else {
             Log.transcription.error("Cloud RT: Max reconnect attempts reached")
+            endBufferingSession()
             onConnectionStatusChanged?(.failed("Connection lost after \(maxReconnectAttempts) attempts"))
             return
         }
 
-        reconnectAttempt += 1
-        let delay = pow(2.0, Double(reconnectAttempt)) // 2s, 4s, 8s
+        let delay = pow(2.0, Double(attempt)) // 2s, 4s, 8s
 
-        Log.transcription.info("Cloud RT: Reconnecting (attempt \(self.reconnectAttempt))...")
-        onConnectionStatusChanged?(.reconnecting(attempt: reconnectAttempt))
+        Log.transcription.info("Cloud RT: Reconnecting (attempt \(attempt))...")
+        onConnectionStatusChanged?(.reconnecting(attempt: attempt))
 
         lifecycleLock.lock()
         reconnectTask?.cancel()
@@ -583,7 +791,7 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
 
             do {
                 try await self.connectWebSocket()
-                self.reconnectAttempt = 0
+                self.resetReconnectAttempts()
                 Log.transcription.info("Cloud RT: Reconnected successfully")
             } catch let error as RealtimeTranscriptionError {
                 // ADR-0004: if WS upgrade returned 401, refresh Supabase token and retry once.
@@ -592,10 +800,11 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
                     do {
                         try await AuthService.shared.refreshTokens()
                         try await self.connectWebSocket()
-                        self.reconnectAttempt = 0
+                        self.resetReconnectAttempts()
                         Log.transcription.info("Cloud RT: Reconnected after token refresh")
                     } catch {
                         Log.transcription.error("Cloud RT: Reconnect after token refresh failed - \(error.localizedDescription)")
+                        self.endBufferingSession()
                         self.onError?(error)
                         self.onConnectionStatusChanged?(.failed("Session expired — please log in again"))
                     }
@@ -760,6 +969,10 @@ extension CloudRealtimeService: URLSessionWebSocketDelegate {
         webSocketTask _: URLSessionWebSocketTask,
         didOpenWithProtocol protocol: String?
     ) {
+        lifecycleLock.lock()
+        let metrics = currentConnectMetrics
+        lifecycleLock.unlock()
+        metrics?.end(.wsUpgrade)
         Log.transcription.info("Cloud RT: WebSocket opened, protocol: \(String(describing: `protocol`))")
     }
 

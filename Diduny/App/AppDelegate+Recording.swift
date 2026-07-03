@@ -156,6 +156,10 @@ extension AppDelegate {
             return
         }
 
+        // Pre-warm the auth token so a needed refresh overlaps audio setup
+        // instead of sitting inside the realtime connect.
+        Task { _ = await AuthService.shared.getAccessToken() }
+
         // Request microphone permission on-demand
         let micGranted = await PermissionManager.shared.ensureMicrophonePermission(context: .dictation)
         appState.microphonePermissionGranted = micGranted
@@ -603,15 +607,22 @@ extension AppDelegate {
             rtService?.sendAudioData(pcmData)
         }
 
-        rtService.onTokensReceived = { [weak self, weak accumulator] tokens in
+        // The accumulator (correctness path) processes every batch off-main;
+        // only the overlay UI update is coalesced to ≤10Hz.
+        let overlayCoalescer = RealtimeTokenCoalescer { [weak self] events in
+            for case let .tokens(tokens) in events {
+                self?.updateRecordingFeedbackTokens(tokens, mode: .voice)
+            }
+        }
+        // The closure owns the coalescer (strong capture); it dies with the
+        // callback when stopVoiceRealtimeSession nils onTokensReceived.
+        rtService.onTokensReceived = { [weak accumulator] tokens in
             if let accumulator {
                 Task {
                     await accumulator.process(tokens: tokens)
                 }
             }
-            Task { @MainActor in
-                self?.updateRecordingFeedbackTokens(tokens, mode: .voice)
-            }
+            overlayCoalescer.add(tokens)
         }
 
         rtService.onConnectionStatusChanged = { [weak self] status in
@@ -681,10 +692,7 @@ extension AppDelegate {
             audioRecorder.onRealtimeAudioData = nil
             voiceRealtimeSessionEnabled = false
             voiceRealtimeAccumulator = nil
-            realtimeTranscriptionService.onTokensReceived = nil
-            realtimeTranscriptionService.onError = nil
-            realtimeTranscriptionService.onConnectionStatusChanged = nil
-            realtimeTranscriptionService.onSegmentBoundary = nil
+            realtimeTranscriptionService.clearCallbacks()
         }
 
         guard wasEnabled else {

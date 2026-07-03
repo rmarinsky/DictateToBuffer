@@ -103,15 +103,14 @@ struct LiveTranscriptView: View {
                 .padding(16)
                 .textSelection(.enabled)
             }
+            // Unanimated: these fire on every store flush (≤10Hz), and an
+            // easing animation per flush kept a layout animation running on
+            // the main thread for the whole meeting.
             .onChange(of: store.segments.count) {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo("bottom", anchor: .bottom)
-                }
+                proxy.scrollTo("bottom", anchor: .bottom)
             }
             .onChange(of: store.provisionalText) {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo("bottom", anchor: .bottom)
-                }
+                proxy.scrollTo("bottom", anchor: .bottom)
             }
         }
     }

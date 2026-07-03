@@ -40,18 +40,25 @@ struct RealtimeToken: Identifiable, Equatable {
 struct TranscriptSegment: Identifiable {
     let id: UUID
     var speaker: String?
-    var tokens: [RealtimeToken]
+    private(set) var tokens: [RealtimeToken]
+    /// Concatenated token text, maintained incrementally by append(_:).
+    /// Stored rather than computed: the growing segment is on screen and
+    /// re-rendered on every token, so re-joining all tokens per access made
+    /// live-transcript cost O(n²) over a long single-speaker stretch.
+    private(set) var text: String
     var startMs: Int
 
     init(speaker: String? = nil, tokens: [RealtimeToken] = [], startMs: Int = 0) {
         self.id = UUID()
         self.speaker = speaker
         self.tokens = tokens
+        self.text = tokens.map(\.text).joined()
         self.startMs = startMs
     }
 
-    var text: String {
-        tokens.map(\.text).joined()
+    mutating func append(_ token: RealtimeToken) {
+        tokens.append(token)
+        text += token.text
     }
 
     var isFinal: Bool {

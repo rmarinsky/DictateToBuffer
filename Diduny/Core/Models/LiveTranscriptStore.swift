@@ -72,7 +72,7 @@ final class LiveTranscriptStore {
         if let lastIndex = segments.indices.last,
            segments[lastIndex].speaker == token.speaker
         {
-            segments[lastIndex].tokens.append(token)
+            segments[lastIndex].append(token)
         } else {
             // New speaker or first segment
             let segment = TranscriptSegment(

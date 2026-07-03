@@ -133,6 +133,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var translationPipelineTask: Task<Void, Never>?
     var meetingPipelineTask: Task<Void, Never>?
     var meetingTranslationPipelineTask: Task<Void, Never>?
+    /// In-flight meeting realtime WS connect, launched before capture setup so
+    /// the handshake overlaps it. Held so stop/cancel can abort a connect that
+    /// is still in progress.
+    var meetingRealtimeConnectTask: Task<Void, Never>?
+    /// Batches meeting realtime tokens to ≤10Hz store updates. Held so the
+    /// stop path can flush the tail before reading the transcript.
+    var meetingTokenCoalescer: RealtimeTokenCoalescer?
 
     // Auto-reset Tasks (success/error → idle timers)
     var voiceAutoResetTask: Task<Void, Never>?
@@ -188,6 +195,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // flag) which does not trigger the keychain read.
 
         setupNotchStopHandler()
+
+        // Meeting starts fetch SCShareableContent (0.5-2s from the window
+        // server); warm the cache now so the first start hits it. No-op until
+        // screen-recording permission has been granted.
+        ShareableContentCache.shared.prewarm()
 
         // Listen for push-to-talk key changes
         NotificationCenter.default.addObserver(
@@ -962,6 +974,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func handleMeetingStateChange(_ state: RecordingState) {
+        // Belt-and-braces: an error mid-meeting must never leave the global
+        // Escape key monitor installed (stop/cancel paths deactivate it
+        // themselves; error paths reach here). Meeting .error implies meeting
+        // was the active mode, so no other mode's monitor can be live.
+        if state == .error {
+            EscapeCancelService.shared.deactivate()
+        }
         meetingAutoResetTask?.cancel()
         handleStateChange(
             state,

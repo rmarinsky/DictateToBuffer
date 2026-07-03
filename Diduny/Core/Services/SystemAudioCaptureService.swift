@@ -202,8 +202,25 @@ final class SystemAudioCaptureService: NSObject {
     }
 
     private func createAndStartSystemStream() async throws {
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+        let cachedContent = try await ConnectMetrics.measure("[Meeting] sc_content_fetch") {
+            try await ShareableContentCache.shared.current()
+        }
 
+        do {
+            try await startSystemStream(with: cachedContent)
+        } catch {
+            // Cached content can reference a display that is gone (monitor
+            // unplugged since the prewarm) — retry once with a fresh fetch.
+            NSLog(
+                "[AudioCapture] SCStream start failed (%@) — retrying with fresh shareable content",
+                String(describing: error)
+            )
+            let freshContent = try await ShareableContentCache.shared.refresh()
+            try await startSystemStream(with: freshContent)
+        }
+    }
+
+    private func startSystemStream(with content: SCShareableContent) async throws {
         guard let display = content.displays.first else {
             throw SystemAudioError.noDisplayFound
         }
@@ -218,7 +235,9 @@ final class SystemAudioCaptureService: NSObject {
             try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: streamOutputQueue)
             try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: streamOutputQueue)
             self.stream = stream
-            try await stream.startCapture()
+            try await ConnectMetrics.measure("[Meeting] sc_stream_start") {
+                try await stream.startCapture()
+            }
         } catch {
             self.stream = nil
             throw error
