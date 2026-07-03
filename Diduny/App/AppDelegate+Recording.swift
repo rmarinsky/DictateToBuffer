@@ -609,8 +609,10 @@ extension AppDelegate {
 
         // The accumulator (correctness path) processes every batch off-main;
         // only the overlay UI update is coalesced to ≤10Hz.
-        let overlayCoalescer = RealtimeTokenCoalescer { [weak self] tokens in
-            self?.updateRecordingFeedbackTokens(tokens, mode: .voice)
+        let overlayCoalescer = RealtimeTokenCoalescer { [weak self] events in
+            for case let .tokens(tokens) in events {
+                self?.updateRecordingFeedbackTokens(tokens, mode: .voice)
+            }
         }
         // The closure owns the coalescer (strong capture); it dies with the
         // callback when stopVoiceRealtimeSession nils onTokensReceived.

@@ -305,8 +305,15 @@ extension AppDelegate {
         // Wire token callbacks. Batches are coalesced to ≤10Hz before touching
         // the @Observable store — per-message main-actor updates made SwiftUI
         // re-render for every WS message and lag grew with the meeting.
-        let coalescer = RealtimeTokenCoalescer { [weak store] tokens in
-            store?.processTokens(tokens)
+        let coalescer = RealtimeTokenCoalescer { [weak store] events in
+            for event in events {
+                switch event {
+                case let .tokens(tokens):
+                    store?.processTokens(tokens)
+                case .segmentBoundary:
+                    store?.markSegmentBoundary()
+                }
+            }
         }
         meetingTokenCoalescer = coalescer
         rtService.onTokensReceived = { [weak coalescer] tokens in
@@ -319,10 +326,10 @@ extension AppDelegate {
             }
         }
 
-        rtService.onSegmentBoundary = { [weak store] _ in
-            Task { @MainActor in
-                store?.markSegmentBoundary()
-            }
+        // Boundaries go through the coalescer so they stay ordered relative to
+        // the token batches it is still holding.
+        rtService.onSegmentBoundary = { [weak coalescer] boundary in
+            coalescer?.addBoundary(boundary)
         }
 
         rtService.onError = { error in
