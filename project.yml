@@ -72,6 +72,8 @@ targets:
       - path: Diduny
         excludes:
           - "**/.DS_Store"
+          - ".claude"
+          - "**/.claude"
     dependencies:
       - package: KeyboardShortcuts
       - package: DynamicNotchKit

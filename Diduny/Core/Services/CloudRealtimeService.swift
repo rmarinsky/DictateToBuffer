@@ -19,6 +19,9 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
     /// socket after teardown and loops forever with no audio source. Guarded by lifecycleLock.
     private var reconnectTask: Task<Void, Never>?
     private var proxyReady = false
+    /// Phase timings for the in-flight connect. Guarded by lifecycleLock; the
+    /// URLSession delegate and receive loop close phases from other threads.
+    private var currentConnectMetrics: ConnectMetrics?
 
     private var isConnected = false
     private var reconnectAttempt = 0
@@ -106,13 +109,24 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
 
         onConnectionStatusChanged?(.connecting)
 
+        let metrics = ConnectMetrics(label: "[Cloud RT] connect")
+        lifecycleLock.lock()
+        currentConnectMetrics = metrics
+        lifecycleLock.unlock()
+        // Idempotent: the success path below finishes with "ok" first, so this
+        // only fires when an error path unwinds out of connectWebSocket().
+        defer { metrics.finish() }
+
         let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
         self.urlSession = session
 
         var wsURLString = wsURL
 
         // Pass auth token as query param (WebSocket headers are limited)
-        if let accessToken = await AuthService.shared.getAccessToken() {
+        metrics.begin(.tokenFetch)
+        let accessToken = await AuthService.shared.getAccessToken()
+        metrics.end(.tokenFetch)
+        if let accessToken {
             let separator = wsURLString.contains("?") ? "&" : "?"
             wsURLString += "\(separator)token=\(accessToken)"
         }
@@ -141,6 +155,7 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
         }
 
         self.webSocketTask = task
+        metrics.begin(.wsUpgrade) // ended by didOpenWithProtocol on the delegate queue
         task.resume()
 
         let config = Self.makeConnectionConfig(
@@ -155,6 +170,7 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
         let configString = String(data: configData, encoding: .utf8) ?? "{}"
 
         NSLog("[Cloud RT] Sending config: %@", configString)
+        metrics.begin(.configSend)
         do {
             try await task.send(.string(configString))
         } catch {
@@ -166,6 +182,7 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
             }
             throw error
         }
+        metrics.end(.configSend)
         NSLog("[Cloud RT] Config sent successfully, WebSocket connected")
 
         lifecycleLock.lock()
@@ -176,6 +193,7 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
         startPingLoop()
 
         // Wait for proxy_ready before marking connected
+        metrics.begin(.proxyReadyWait) // ended by parseResponse when proxy_ready arrives
         let deadline = Date().addingTimeInterval(10)
         while Date() < deadline {
             lifecycleLock.lock()
@@ -192,6 +210,7 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
             throw RealtimeTranscriptionError.connectionFailed("Proxy did not send ready signal")
         }
 
+        metrics.finish(outcome: "ok")
         onConnectionStatusChanged?(.connected)
     }
 
@@ -405,7 +424,9 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
            json["type"] as? String == "proxy_ready" {
             lifecycleLock.lock()
             proxyReady = true
+            let metrics = currentConnectMetrics
             lifecycleLock.unlock()
+            metrics?.end(.proxyReadyWait)
             NSLog("[Cloud RT] Received proxy_ready signal")
             return
         }
@@ -760,6 +781,10 @@ extension CloudRealtimeService: URLSessionWebSocketDelegate {
         webSocketTask _: URLSessionWebSocketTask,
         didOpenWithProtocol protocol: String?
     ) {
+        lifecycleLock.lock()
+        let metrics = currentConnectMetrics
+        lifecycleLock.unlock()
+        metrics?.end(.wsUpgrade)
         Log.transcription.info("Cloud RT: WebSocket opened, protocol: \(String(describing: `protocol`))")
     }
 

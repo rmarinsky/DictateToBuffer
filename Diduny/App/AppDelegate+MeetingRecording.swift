@@ -132,6 +132,11 @@ extension AppDelegate {
 
         let cloudModeEnabled = SettingsStorage.shared.effectiveMeetingRealtimeTranscriptionEnabled
 
+        // Timed from after the permission check (which can block on a user
+        // prompt) to the .recording state transition.
+        let startMetrics = ConnectMetrics(label: "[Meeting] start")
+        defer { startMetrics.finish() }
+
         // Prevent App Nap during meeting recording
         meetingActivityToken = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiated, .idleSystemSleepDisabled],
@@ -176,7 +181,9 @@ extension AppDelegate {
                 appState.deviceFallbackWarning = nil
             }
 
+            startMetrics.begin(.recorderStart)
             try await meetingRecorderService.startRecording()
+            startMetrics.end(.recorderStart)
             Log.app.info("Meeting recording started")
 
             // Setup real-time transcription in Cloud mode
@@ -207,6 +214,7 @@ extension AppDelegate {
                 appState.liveTranscriptStore = store
                 handleMeetingStateChange(.recording)
             }
+            startMetrics.finish(outcome: "ok")
 
             // Show transcript window only if we have real-time transcription
             if let store {

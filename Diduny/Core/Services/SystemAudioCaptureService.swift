@@ -202,7 +202,9 @@ final class SystemAudioCaptureService: NSObject {
     }
 
     private func createAndStartSystemStream() async throws {
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+        let content = try await ConnectMetrics.measure("[Meeting] sc_content_fetch") {
+            try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+        }
 
         guard let display = content.displays.first else {
             throw SystemAudioError.noDisplayFound
@@ -218,7 +220,9 @@ final class SystemAudioCaptureService: NSObject {
             try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: streamOutputQueue)
             try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: streamOutputQueue)
             self.stream = stream
-            try await stream.startCapture()
+            try await ConnectMetrics.measure("[Meeting] sc_stream_start") {
+                try await stream.startCapture()
+            }
         } catch {
             self.stream = nil
             throw error
