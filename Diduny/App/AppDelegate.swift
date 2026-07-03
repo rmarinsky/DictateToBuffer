@@ -137,6 +137,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the handshake overlaps it. Held so stop/cancel can abort a connect that
     /// is still in progress.
     var meetingRealtimeConnectTask: Task<Void, Never>?
+    /// Batches meeting realtime tokens to ≤10Hz store updates. Held so the
+    /// stop path can flush the tail before reading the transcript.
+    var meetingTokenCoalescer: RealtimeTokenCoalescer?
 
     // Auto-reset Tasks (success/error → idle timers)
     var voiceAutoResetTask: Task<Void, Never>?
@@ -971,6 +974,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func handleMeetingStateChange(_ state: RecordingState) {
+        // Belt-and-braces: an error mid-meeting must never leave the global
+        // Escape key monitor installed (stop/cancel paths deactivate it
+        // themselves; error paths reach here). Meeting .error implies meeting
+        // was the active mode, so no other mode's monitor can be live.
+        if state == .error {
+            EscapeCancelService.shared.deactivate()
+        }
         meetingAutoResetTask?.cancel()
         handleStateChange(
             state,

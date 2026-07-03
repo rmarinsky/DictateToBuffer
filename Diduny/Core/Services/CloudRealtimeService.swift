@@ -102,10 +102,10 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
         self.audioConfig = audioConfig
         self.translationConfig = translationConfig
         self.enableSpeakerDiarization = enableSpeakerDiarization
-        reconnectAttempt = 0
         // Fresh session: start buffering incoming audio right away, so speech
         // during the connect handshake is delivered once the socket is up.
         lifecycleLock.lock()
+        reconnectAttempt = 0
         sessionActive = true
         pendingAudio.removeAll()
         didWarnPendingAudioOverflow = false
@@ -510,6 +510,27 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
         Log.transcription.info("Cloud RT: Disconnected")
     }
 
+    /// Drops all four session callbacks. Call from the owning teardown path
+    /// once the session is truly over — stale closures from a finished session
+    /// otherwise keep receiving tokens/status (e.g. from a racing reconnect)
+    /// and retain whatever they captured. NOT called inside disconnect():
+    /// reconnect-failure paths disconnect first and then report .failed
+    /// through these callbacks.
+    func clearCallbacks() {
+        finalizeStateLock.lock()
+        _onTokensReceived = nil
+        _onError = nil
+        _onConnectionStatusChanged = nil
+        _onSegmentBoundary = nil
+        finalizeStateLock.unlock()
+    }
+
+    private func resetReconnectAttempts() {
+        lifecycleLock.lock()
+        reconnectAttempt = 0
+        lifecycleLock.unlock()
+    }
+
     /// Stops buffering and drops pending audio — the session has terminally
     /// failed and nothing will consume the buffer.
     private func endBufferingSession() {
@@ -737,18 +758,25 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
             return
         }
 
-        guard reconnectAttempt < maxReconnectAttempts else {
+        lifecycleLock.lock()
+        let attempt = reconnectAttempt + 1
+        let withinLimit = attempt <= maxReconnectAttempts
+        if withinLimit {
+            reconnectAttempt = attempt
+        }
+        lifecycleLock.unlock()
+
+        guard withinLimit else {
             Log.transcription.error("Cloud RT: Max reconnect attempts reached")
             endBufferingSession()
             onConnectionStatusChanged?(.failed("Connection lost after \(maxReconnectAttempts) attempts"))
             return
         }
 
-        reconnectAttempt += 1
-        let delay = pow(2.0, Double(reconnectAttempt)) // 2s, 4s, 8s
+        let delay = pow(2.0, Double(attempt)) // 2s, 4s, 8s
 
-        Log.transcription.info("Cloud RT: Reconnecting (attempt \(self.reconnectAttempt))...")
-        onConnectionStatusChanged?(.reconnecting(attempt: reconnectAttempt))
+        Log.transcription.info("Cloud RT: Reconnecting (attempt \(attempt))...")
+        onConnectionStatusChanged?(.reconnecting(attempt: attempt))
 
         lifecycleLock.lock()
         reconnectTask?.cancel()
@@ -763,7 +791,7 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
 
             do {
                 try await self.connectWebSocket()
-                self.reconnectAttempt = 0
+                self.resetReconnectAttempts()
                 Log.transcription.info("Cloud RT: Reconnected successfully")
             } catch let error as RealtimeTranscriptionError {
                 // ADR-0004: if WS upgrade returned 401, refresh Supabase token and retry once.
@@ -772,7 +800,7 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
                     do {
                         try await AuthService.shared.refreshTokens()
                         try await self.connectWebSocket()
-                        self.reconnectAttempt = 0
+                        self.resetReconnectAttempts()
                         Log.transcription.info("Cloud RT: Reconnected after token refresh")
                     } catch {
                         Log.transcription.error("Cloud RT: Reconnect after token refresh failed - \(error.localizedDescription)")

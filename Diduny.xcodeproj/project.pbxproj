@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		007C689901A82C26D1AFD661 /* NotchManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12B40184B3E0CE6E0736EE82 /* NotchManagerTests.swift */; };
 		03386BD1EB00ACDF8DD60759 /* EscapeCancelServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C46453045F6E830B4B5B48D4 /* EscapeCancelServiceTests.swift */; };
+		03BA270D9BB719167A7AA9B3 /* RealtimeTokenCoalescer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1297828B8BD8BEDBAFD9F235 /* RealtimeTokenCoalescer.swift */; };
 		03EBBAC2178925692C5B0F28 /* OnboardingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A7E2F21047194B8A5423BF5 /* OnboardingManager.swift */; };
 		0A59DE9F5E2B2FC471865D70 /* MainWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA793C0790C4F9F4B19764D7 /* MainWindowController.swift */; };
 		0B16463025082AB0F9EF90A5 /* LiveTranscriptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54C08AEA7B3D9495385E0990 /* LiveTranscriptView.swift */; };
@@ -66,6 +67,7 @@
 		733D324CBB0ADB12B3780BF8 /* WhisperTranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6206FCF30AD9AFE3530CB50 /* WhisperTranscriptionService.swift */; };
 		760CD3415170E644BC1DDCBB /* AudioDictationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CAB5C5B84DF4B8F5E37A9FF /* AudioDictationSettingsView.swift */; };
 		78E2E9B4903AA5A8A50AA6FC /* AppDelegate+Hotkeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D2CC58C907B4985941DCDA9 /* AppDelegate+Hotkeys.swift */; };
+		7A7AA8F88FE669AF3F3D3981 /* RealtimeTokenCoalescerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04B570652EBADE0FBAE4F9E5 /* RealtimeTokenCoalescerTests.swift */; };
 		7E2725D4B5424D54367BCC82 /* WhisperError.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06909181E0B9AD3B70E57E3 /* WhisperError.swift */; };
 		8089B2EF55ADCDC2F120C765 /* LaunchAtLogin in Frameworks */ = {isa = PBXBuildFile; productRef = 57D44526E8ECA54C87677F5B /* LaunchAtLogin */; };
 		818876F960D5611C3320AEC9 /* RemoteConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58445C3A1AF119838326EC9F /* RemoteConfig.swift */; };
@@ -73,6 +75,7 @@
 		8652A9D79DB6EF0EA183113A /* CloudTranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D808ED223F5466862CE124F /* CloudTranscriptionService.swift */; };
 		8864F470B8EFDFF965ABAA76 /* SupportedLanguage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 459DCE179DA235DE6208C013 /* SupportedLanguage.swift */; };
 		8CAA1C227A9788C6A9687E7D /* NotchContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 622FD84CF56FC17420114B9C /* NotchContentView.swift */; };
+		8D4D2E64E0D98B0052939BEF /* LiveTranscriptStorePerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF436ACD38BA065B33601DBE /* LiveTranscriptStorePerformanceTests.swift */; };
 		8E61D4628397B11E5BCEE03D /* SystemAudioCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70DDD786E73A1532AE91FC20 /* SystemAudioCaptureService.swift */; };
 		8FA6B8A6240D6AE7AEA1754C /* RealtimeTranscription.swift in Sources */ = {isa = PBXBuildFile; fileRef = 158C39D9362442B65F2948C6 /* RealtimeTranscription.swift */; };
 		9082E75ACDAF59018B93B6DF /* ProtectedLexiconService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 258680FE2F7ED1EB6DB95757 /* ProtectedLexiconService.swift */; };
@@ -148,11 +151,13 @@
 		001D5E66F362C783C621055C /* CloudRealtimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudRealtimeService.swift; sourceTree = "<group>"; };
 		01E272A8E12D4EEF5D724E91 /* AppDelegate+TranslationRecording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppDelegate+TranslationRecording.swift"; sourceTree = "<group>"; };
 		0491E26240E167BDB5DCACEE /* HotkeyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyService.swift; sourceTree = "<group>"; };
+		04B570652EBADE0FBAE4F9E5 /* RealtimeTokenCoalescerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeTokenCoalescerTests.swift; sourceTree = "<group>"; };
 		06C864D23789DFC70C7FE0D3 /* MenuBarContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarContentView.swift; sourceTree = "<group>"; };
 		09A53A5FD4196FA12DF76141 /* MeetingChapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingChapter.swift; sourceTree = "<group>"; };
 		0B43D2844894F848F20BFDEB /* MenuBarIconView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarIconView.swift; sourceTree = "<group>"; };
 		0C49EEDF9A5AEED5B941A6AF /* Test.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Test.xcconfig; sourceTree = "<group>"; };
 		118CE8BCA0160E31FD916B10 /* AudioDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioDevice.swift; sourceTree = "<group>"; };
+		1297828B8BD8BEDBAFD9F235 /* RealtimeTokenCoalescer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeTokenCoalescer.swift; sourceTree = "<group>"; };
 		12B40184B3E0CE6E0736EE82 /* NotchManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchManagerTests.swift; sourceTree = "<group>"; };
 		158C39D9362442B65F2948C6 /* RealtimeTranscription.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeTranscription.swift; sourceTree = "<group>"; };
 		18174CC5740A330799589646 /* AppDelegate+MeetingRecording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppDelegate+MeetingRecording.swift"; sourceTree = "<group>"; };
@@ -246,6 +251,7 @@
 		BDE5770AB5E9601E0DB6B878 /* DidunyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DidunyApp.swift; sourceTree = "<group>"; };
 		BECAEC93BAEBC7FB0CE79126 /* Errors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Errors.swift; sourceTree = "<group>"; };
 		BED4AC73DF15E8FB1B784BE2 /* LiveTranscriptStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranscriptStore.swift; sourceTree = "<group>"; };
+		BF436ACD38BA065B33601DBE /* LiveTranscriptStorePerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranscriptStorePerformanceTests.swift; sourceTree = "<group>"; };
 		C1AFB9C5F772A874A404885C /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		C46453045F6E830B4B5B48D4 /* EscapeCancelServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EscapeCancelServiceTests.swift; sourceTree = "<group>"; };
 		C737BE018A4A18E4479FAD1F /* LiveDictationOverlayStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveDictationOverlayStore.swift; sourceTree = "<group>"; };
@@ -416,6 +422,7 @@
 				33AFD13CA942F8BADB2B1CC9 /* PreConnectAudioBuffer.swift */,
 				258680FE2F7ED1EB6DB95757 /* ProtectedLexiconService.swift */,
 				4CDE81820CACD577C91281C9 /* PushToTalkService.swift */,
+				1297828B8BD8BEDBAFD9F235 /* RealtimeTokenCoalescer.swift */,
 				E819431AE3C66AA9B422954A /* RecordingQueueService.swift */,
 				4852162851F73B8352C95E25 /* RemoteConfigService.swift */,
 				44C5A3AF31756F85C9143656 /* ShareableContentCache.swift */,
@@ -603,12 +610,14 @@
 				FB2D4C4C36B3BB89D1A2E8BD /* CloudTranscriptionServiceE2ETests.swift */,
 				C46453045F6E830B4B5B48D4 /* EscapeCancelServiceTests.swift */,
 				22ECCCBC345EE579CFE2AD5F /* InProgressRecordingStoreTests.swift */,
+				BF436ACD38BA065B33601DBE /* LiveTranscriptStorePerformanceTests.swift */,
 				4E5E0CC22FD7FC0DA86702AF /* MeetingChunkStitcherTests.swift */,
 				12B40184B3E0CE6E0736EE82 /* NotchManagerTests.swift */,
 				D34BB7F6DB9091D30035DAA0 /* NotchStateTests.swift */,
 				F6FBC676468A5F7C9F54507E /* PreConnectAudioBufferTests.swift */,
 				7144FB4309E888B25A0048C8 /* ProtectedLexiconServiceTests.swift */,
 				51CA770F4886473BDED207C7 /* PushToTalkServiceTests.swift */,
+				04B570652EBADE0FBAE4F9E5 /* RealtimeTokenCoalescerTests.swift */,
 				44E5C44735AFF2B3983C06A1 /* RecordingModelMigrationTests.swift */,
 				E06685A0367DD0430BCEE035 /* SettingsStorageProviderTests.swift */,
 				C84CF4471CC20033174713CB /* SleepFlushCoordinatorTests.swift */,
@@ -828,6 +837,7 @@
 				9082E75ACDAF59018B93B6DF /* ProtectedLexiconService.swift in Sources */,
 				86207F57859F544F066B0140 /* PushToTalkKey.swift in Sources */,
 				497E932204DB8D119B40EAA5 /* PushToTalkService.swift in Sources */,
+				03BA270D9BB719167A7AA9B3 /* RealtimeTokenCoalescer.swift in Sources */,
 				8FA6B8A6240D6AE7AEA1754C /* RealtimeTranscription.swift in Sources */,
 				E2A1278EF4D20EC10319BBF4 /* Recording.swift in Sources */,
 				572B04F3977C5BF9A6001B21 /* RecordingDetailView.swift in Sources */,
@@ -873,12 +883,14 @@
 				154F9E85CEDA37FE7E88EE36 /* CloudTranscriptionServiceE2ETests.swift in Sources */,
 				03386BD1EB00ACDF8DD60759 /* EscapeCancelServiceTests.swift in Sources */,
 				45F7A5C71CE4990E10BCFCA0 /* InProgressRecordingStoreTests.swift in Sources */,
+				8D4D2E64E0D98B0052939BEF /* LiveTranscriptStorePerformanceTests.swift in Sources */,
 				E7F1B035104E1A79711068B2 /* MeetingChunkStitcherTests.swift in Sources */,
 				007C689901A82C26D1AFD661 /* NotchManagerTests.swift in Sources */,
 				474BEF9A6D5E57064A709DFD /* NotchStateTests.swift in Sources */,
 				2B75C64DA51F46DB68543EB1 /* PreConnectAudioBufferTests.swift in Sources */,
 				DE51034347AC539254418EF9 /* ProtectedLexiconServiceTests.swift in Sources */,
 				533F7EE6501E899BF20CF259 /* PushToTalkServiceTests.swift in Sources */,
+				7A7AA8F88FE669AF3F3D3981 /* RealtimeTokenCoalescerTests.swift in Sources */,
 				9C3AB3F7109D41F8F612797B /* RecordingModelMigrationTests.swift in Sources */,
 				4E980E04C373EE5FBF3D2DC6 /* SettingsStorageProviderTests.swift in Sources */,
 				CF97708F72740E5C035B3479 /* SleepFlushCoordinatorTests.swift in Sources */,

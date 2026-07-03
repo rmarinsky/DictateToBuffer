@@ -53,8 +53,12 @@ extension AppDelegate {
         meetingRealtimeConnectTask = nil
         if appState.liveTranscriptStore != nil || meetingRecorderService.onRealtimeAudioData != nil {
             await realtimeTranscriptionService.disconnect()
+            realtimeTranscriptionService.clearCallbacks()
             meetingRecorderService.onRealtimeAudioData = nil
+            // The transcript window stays open for review — deliver the tail.
+            await meetingTokenCoalescer?.flushNow()
         }
+        meetingTokenCoalescer = nil
 
         // Capture in-progress recording ID before stopRecording() clears it (RLR-M1).
         let cancelInProgressRecordingId = meetingRecorderService.currentRecordingId
@@ -213,7 +217,9 @@ extension AppDelegate {
                     )
                 meetingRealtimeConnectTask?.cancel()
                 meetingRealtimeConnectTask = nil
+                meetingTokenCoalescer = nil
                 await realtimeTranscriptionService.disconnect()
+                realtimeTranscriptionService.clearCallbacks()
                 meetingRecorderService.onRealtimeAudioData = nil
                 await meetingRecorderService.cancelRecording()
                 if let token = meetingActivityToken {
@@ -265,7 +271,9 @@ extension AppDelegate {
             // Abort the in-flight realtime connect — nothing will consume it.
             meetingRealtimeConnectTask?.cancel()
             meetingRealtimeConnectTask = nil
+            meetingTokenCoalescer = nil
             await realtimeTranscriptionService.disconnect()
+            realtimeTranscriptionService.clearCallbacks()
             meetingRecorderService.onRealtimeAudioData = nil
 
             // End App Nap prevention on failed start
@@ -294,11 +302,15 @@ extension AppDelegate {
             rtService?.sendAudioData(pcmData)
         }
 
-        // Wire token callbacks
-        rtService.onTokensReceived = { [weak store] tokens in
-            Task { @MainActor in
-                store?.processTokens(tokens)
-            }
+        // Wire token callbacks. Batches are coalesced to ≤10Hz before touching
+        // the @Observable store — per-message main-actor updates made SwiftUI
+        // re-render for every WS message and lag grew with the meeting.
+        let coalescer = RealtimeTokenCoalescer { [weak store] tokens in
+            store?.processTokens(tokens)
+        }
+        meetingTokenCoalescer = coalescer
+        rtService.onTokensReceived = { [weak coalescer] tokens in
+            coalescer?.add(tokens)
         }
 
         rtService.onConnectionStatusChanged = { [weak store] status in
@@ -391,8 +403,13 @@ extension AppDelegate {
             let finalizeResult = await realtimeTranscriptionService.finalize(profile: .safe)
             didReceiveRealtimeFinalization = finalizeResult.didReceiveFinishedSignal
             await realtimeTranscriptionService.disconnect()
+            realtimeTranscriptionService.clearCallbacks()
             meetingRecorderService.onRealtimeAudioData = nil
+            // Deliver the transcript tail still sitting in the coalescer
+            // before anything reads the store.
+            await meetingTokenCoalescer?.flushNow()
         }
+        meetingTokenCoalescer = nil
 
         // Next meeting start should hit a warm SCShareableContent cache.
         ShareableContentCache.shared.prewarm()
