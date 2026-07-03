@@ -156,6 +156,10 @@ extension AppDelegate {
             return
         }
 
+        // Pre-warm the auth token so a needed refresh overlaps audio setup
+        // instead of sitting inside the realtime connect.
+        Task { _ = await AuthService.shared.getAccessToken() }
+
         // Request microphone permission on-demand
         let micGranted = await PermissionManager.shared.ensureMicrophonePermission(context: .dictation)
         appState.microphonePermissionGranted = micGranted
