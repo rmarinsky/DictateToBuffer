@@ -24,7 +24,7 @@ enum TranscriptionError: LocalizedError {
         case .invalidURL:
             "Invalid API URL"
         case let .usageLimitExceeded(usedHours, limitHours):
-            "Cloud usage limit reached (\(String(format: "%.1f", usedHours))h / \(String(format: "%.0f", limitHours))h). Using local model."
+            "Cloud usage limit reached (\(String(format: "%.1f", usedHours))h / \(String(format: "%.0f", limitHours))h). Upgrade to Diduny Pro or use the local model."
         }
     }
 }
@@ -68,7 +68,7 @@ enum RealtimeTranscriptionError: LocalizedError {
         case let .webSocketError(error):
             "WebSocket error: \(error.localizedDescription)"
         case let .usageLimitExceeded(usedHours, limitHours):
-            "Cloud usage limit reached (\(String(format: "%.1f", usedHours))h / \(String(format: "%.0f", limitHours))h). Using local model."
+            "Cloud usage limit reached (\(String(format: "%.1f", usedHours))h / \(String(format: "%.0f", limitHours))h). Upgrade to Diduny Pro or use the local model."
         }
     }
 }

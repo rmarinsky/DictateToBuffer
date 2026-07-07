@@ -14,13 +14,13 @@ final class UsageService {
 
     var formattedRemaining: String {
         guard let usage = cachedUsage else { return "—" }
-        if usage.isWhitelisted { return "Unlimited" }
+        if usage.isUnlimited { return "Unlimited" }
         guard let remaining = usage.remainingHours else { return "—" }
         return String(format: "%.1fh remaining", remaining)
     }
 
     var usagePercent: Double {
-        guard let usage = cachedUsage, !usage.isWhitelisted,
+        guard let usage = cachedUsage, !usage.isUnlimited,
               let limitMs = usage.limitMs, limitMs > 0
         else { return 0 }
         return Double(usage.usedMs) / Double(limitMs)
@@ -53,12 +53,39 @@ final class UsageService {
 
 struct UsageResponse: Decodable {
     let isWhitelisted: Bool
+    let isUnlimited: Bool
+    let entitlement: String?
     let usedHours: Double
     let limitHours: Double?
     let remainingHours: Double?
     let usedMs: Int
     let limitMs: Int?
     let remainingMs: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case isWhitelisted
+        case isUnlimited
+        case entitlement
+        case usedHours
+        case limitHours
+        case remainingHours
+        case usedMs
+        case limitMs
+        case remainingMs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isWhitelisted = try container.decode(Bool.self, forKey: .isWhitelisted)
+        isUnlimited = try container.decodeIfPresent(Bool.self, forKey: .isUnlimited) ?? isWhitelisted
+        entitlement = try container.decodeIfPresent(String.self, forKey: .entitlement)
+        usedHours = try container.decode(Double.self, forKey: .usedHours)
+        limitHours = try container.decodeIfPresent(Double.self, forKey: .limitHours)
+        remainingHours = try container.decodeIfPresent(Double.self, forKey: .remainingHours)
+        usedMs = try container.decode(Int.self, forKey: .usedMs)
+        limitMs = try container.decodeIfPresent(Int.self, forKey: .limitMs)
+        remainingMs = try container.decodeIfPresent(Int.self, forKey: .remainingMs)
+    }
 }
 
 struct UsageLimitErrorResponse: Decodable {

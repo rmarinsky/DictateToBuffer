@@ -73,13 +73,27 @@ struct SidebarView: View {
         }
     }
 
+    @ViewBuilder
     private var proBadge: some View {
-        Text("PRO")
-            .font(.system(size: 9, weight: .bold))
-            .foregroundColor(Color("ProBadgeText"))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
-            .background(Color("ProBadgeBg"), in: Capsule())
+        if let status = BillingService.shared.cachedStatus, status.hasUnlimitedAccess {
+            Text(sidebarBadgeText(status))
+                .font(.system(size: 9, weight: .bold))
+                .foregroundColor(Color("ProBadgeText"))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(Color("ProBadgeBg"), in: Capsule())
+        }
+    }
+
+    private func sidebarBadgeText(_ status: BillingStatusResponse) -> String {
+        switch status.entitlement {
+        case .grant:
+            "GRANT"
+        case .legacyUnlimited:
+            "LEGACY"
+        default:
+            "PRO"
+        }
     }
 
     // MARK: - Footer CTA
