@@ -12,6 +12,7 @@ struct RemoteConfig: Codable {
         let meetingRealtimeTranscriptionEnabled: Bool?
         let textCleanupEnabled: Bool?
         let escapeCancelEnabled: Bool?
+        let billingEnabled: Bool?
     }
 
     struct Endpoints: Codable {

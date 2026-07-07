@@ -581,7 +581,10 @@ final class AsyncTranscriptionJobService {
     ) throws -> JobSubmission {
         if httpResponse.statusCode == 402 {
             Log.transcription.warning("submitJob: 402 — usage limit exceeded")
-            Task { await UsageService.shared.refresh() }
+            Task {
+                await UsageService.shared.refresh()
+                await BillingService.shared.refresh()
+            }
             if let body = try? JSONDecoder().decode(UsageLimitErrorResponse.self, from: data) {
                 throw TranscriptionError.usageLimitExceeded(
                     usedHours: body.usedHours,
