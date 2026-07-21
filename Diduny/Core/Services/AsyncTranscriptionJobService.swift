@@ -61,27 +61,44 @@ final class AsyncTranscriptionJobService {
 
         let (data, httpResponse) = try await performDataRequest(request)
 
-        // 402: usage limit
-        if httpResponse.statusCode == 402 {
-            Log.transcription.warning("submitJob: 402 — usage limit exceeded")
-            Task { await UsageService.shared.refresh() }
-            if let body = try? JSONDecoder().decode(UsageLimitErrorResponse.self, from: data) {
-                throw TranscriptionError.usageLimitExceeded(
-                    usedHours: body.usedHours, limitHours: body.limitHours
-                )
-            }
-            throw TranscriptionError.usageLimitExceeded(usedHours: 0, limitHours: 0)
+        return try decodeSubmissionResponse(data: data, httpResponse: httpResponse)
+    }
+
+    /// Submits an already prepared audio file without decoding or duplicating it in memory.
+    func submitJob(audioFileURL: URL, config: [String: Any]) async throws -> JobSubmission {
+        guard let url = URL(string: "\(proxyBase)/api/v1/jobs") else {
+            throw TranscriptionError.invalidURL
         }
 
-        guard (200 ... 299).contains(httpResponse.statusCode) else {
-            let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-            Log.transcription.error("submitJob: failed (\(httpResponse.statusCode)): \(errorBody)")
-            throw TranscriptionError.apiError("Job submission failed (\(httpResponse.statusCode)): \(errorBody)")
-        }
+        try await ensureSpeechDetected(at: audioFileURL, context: "submitJob")
 
-        let submission = try JSONDecoder().decode(JobSubmission.self, from: data)
-        Log.transcription.info("submitJob: jobId=\(submission.jobId), status=\(submission.status)")
-        return submission
+        let multipart = try MultipartFormDataFile.create(
+            audioURL: audioFileURL,
+            filename: "recording.m4a",
+            contentType: "audio/mp4",
+            config: config
+        )
+        defer { multipart.remove() }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(
+            "multipart/form-data; boundary=\(multipart.boundary)",
+            forHTTPHeaderField: "Content-Type"
+        )
+        request.setValue(String(multipart.contentLength), forHTTPHeaderField: "Content-Length")
+
+        let sourceSize = fileSize(at: audioFileURL)
+        Log.transcription.info(
+            "submitJob: file-backed audio upload, source=\(sourceSize) bytes, multipart=\(multipart.contentLength) bytes"
+        )
+
+        let (data, httpResponse) = try await AuthService.shared.performUploadWithAuth(
+            request,
+            bodyFileURL: multipart.fileURL,
+            session: longRunningSession
+        )
+        return try decodeSubmissionResponse(data: data, httpResponse: httpResponse)
     }
 
     // MARK: - Stream Job Result (SSE)
@@ -169,7 +186,33 @@ final class AsyncTranscriptionJobService {
         try Task.checkCancellation()
         let preferSpeakerDiarization = shouldPreferSpeakerDiarization(config: config)
         let submission = try await submitJob(audioData: audioData, config: config)
+        return try await waitForResult(
+            submission: submission,
+            preferSpeakerDiarization: preferSpeakerDiarization,
+            onUpdate: onUpdate
+        )
+    }
 
+    func transcribeFileWithRetry(
+        audioFileURL: URL,
+        config: [String: Any],
+        onUpdate: @escaping (JobStatus) -> Void
+    ) async throws -> String {
+        try Task.checkCancellation()
+        let preferSpeakerDiarization = shouldPreferSpeakerDiarization(config: config)
+        let submission = try await submitJob(audioFileURL: audioFileURL, config: config)
+        return try await waitForResult(
+            submission: submission,
+            preferSpeakerDiarization: preferSpeakerDiarization,
+            onUpdate: onUpdate
+        )
+    }
+
+    private func waitForResult(
+        submission: JobSubmission,
+        preferSpeakerDiarization: Bool,
+        onUpdate: @escaping (JobStatus) -> Void
+    ) async throws -> String {
         var sseFailures = 0
         let deadline = Date().addingTimeInterval(maxJobWaitSeconds)
 
@@ -348,6 +391,54 @@ final class AsyncTranscriptionJobService {
             Log.transcription.info("\(context): no speech confidently detected, continuing with jobs")
             return
         }
+    }
+
+    private func ensureSpeechDetected(at audioFileURL: URL, context: String) async throws {
+        let size = fileSize(at: audioFileURL)
+        guard size <= maxAudioBytesForSpeechPrecheck else {
+            Log.transcription.info(
+                "\(context): skipping speech pre-check for large audio file (\(size) bytes)"
+            )
+            return
+        }
+        let data = try await Task.detached(priority: .utility) {
+            try Data(contentsOf: audioFileURL)
+        }.value
+        try await ensureSpeechDetected(data, context: context)
+    }
+
+    private func fileSize(at url: URL) -> Int {
+        let value = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
+        return value ?? 0
+    }
+
+    private func decodeSubmissionResponse(
+        data: Data,
+        httpResponse: HTTPURLResponse
+    ) throws -> JobSubmission {
+        if httpResponse.statusCode == 402 {
+            Log.transcription.warning("submitJob: 402 — usage limit exceeded")
+            Task { await UsageService.shared.refresh() }
+            if let body = try? JSONDecoder().decode(UsageLimitErrorResponse.self, from: data) {
+                throw TranscriptionError.usageLimitExceeded(
+                    usedHours: body.usedHours,
+                    limitHours: body.limitHours
+                )
+            }
+            throw TranscriptionError.usageLimitExceeded(usedHours: 0, limitHours: 0)
+        }
+
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
+            Log.transcription.error("submitJob: failed (\(httpResponse.statusCode)): \(errorBody)")
+            throw TranscriptionError.apiError(
+                "Job submission failed (\(httpResponse.statusCode)): \(errorBody)"
+            )
+        }
+
+        let submission = try JSONDecoder().decode(JobSubmission.self, from: data)
+        Log.transcription.info("submitJob: jobId=\(submission.jobId), status=\(submission.status)")
+        return submission
     }
 
     private func detectAudioFormat(_ data: Data) -> (filename: String, contentType: String) {

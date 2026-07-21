@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 extension AppDelegate {
     func transcribeFile() {
         let panel = NSOpenPanel()
-        panel.title = "Select Audio File to Transcribe"
+        panel.title = "Select Audio or Video File to Transcribe"
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -22,6 +22,7 @@ extension AppDelegate {
             UTType("public.ogg-audio") ?? .audio,
             .mpeg4Movie,
             .movie,
+            .video
         ]
 
         NSApp.activate(ignoringOtherApps: true)
@@ -37,6 +38,11 @@ extension AppDelegate {
 
     private func processFileTranscription(fileURL: URL) async {
         Log.app.info("transcribeFile: BEGIN - \(fileURL.lastPathComponent)")
+        let activityToken = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .idleSystemSleepDisabled],
+            reason: "Transcribing imported media"
+        )
+        defer { ProcessInfo.processInfo.endActivity(activityToken) }
 
         await MainActor.run {
             appState.recordingState = .processing
@@ -44,8 +50,13 @@ extension AppDelegate {
         }
 
         do {
-            let audioData = try await loadAudioData(from: fileURL)
-            Log.app.info("transcribeFile: Loaded \(audioData.count) bytes")
+            NotchManager.shared.showInfo(message: "Preparing audio...", duration: 30)
+            let preparedAudio = try await ImportedMediaAudioPreparer().prepare(sourceURL: fileURL)
+            defer { preparedAudio.removeTemporaryFile() }
+            let fileSize = try? preparedAudio.fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize
+            Log.app.info(
+                "transcribeFile: Prepared audio-only file (\(fileSize ?? 0) bytes)"
+            )
 
             let text: String
             if SettingsStorage.shared.effectiveTranscriptionProvider == .cloud {
@@ -57,7 +68,10 @@ extension AppDelegate {
                     config["language_hints_strict"] = true
                 }
 
-                text = try await asyncJobService.transcribeWithRetry(audioData: audioData, config: config) { status in
+                text = try await asyncJobService.transcribeFileWithRetry(
+                    audioFileURL: preparedAudio.fileURL,
+                    config: config
+                ) { status in
                     Task { @MainActor in
                         switch status {
                         case .queued:
@@ -75,6 +89,7 @@ extension AppDelegate {
                 }
             } else {
                 let service = activeTranscriptionService
+                let audioData = try await loadAudioData(from: preparedAudio.fileURL)
                 text = try await service.transcribe(audioData: audioData)
             }
             Log.app.info("transcribeFile: Transcription received (\(text.count) chars)")
@@ -111,16 +126,11 @@ extension AppDelegate {
                 }
             }
 
-            // Calculate actual audio duration
-            let asset = AVURLAsset(url: fileURL)
-            let duration = try await asset.load(.duration)
-            let durationSeconds = CMTimeGetSeconds(duration)
-
-            // Save to recordings library (copy original file to preserve format)
+            // Save only the derived audio file; the source video never enters the library.
             RecordingsLibraryStorage.shared.saveRecording(
-                audioURL: fileURL,
+                audioURL: preparedAudio.fileURL,
                 type: .fileTranscription,
-                duration: durationSeconds.isFinite ? durationSeconds : 0,
+                duration: preparedAudio.durationSeconds,
                 transcriptionText: text
             )
 

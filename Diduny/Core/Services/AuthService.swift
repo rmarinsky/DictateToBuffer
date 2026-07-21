@@ -193,6 +193,49 @@ final class AuthService {
         return (retryData, retryHTTP)
     }
 
+    /// Performs a file-backed upload with the same one-time 401 refresh policy.
+    /// The body remains on disk for both attempts, avoiding a full in-memory copy.
+    nonisolated func performUploadWithAuth(
+        _ request: URLRequest,
+        bodyFileURL: URL,
+        session: URLSession
+    ) async throws -> (Data, HTTPURLResponse) {
+        func upload(_ sourceRequest: URLRequest) async throws -> (Data, HTTPURLResponse) {
+            var authedRequest = sourceRequest
+            await authenticatedRequest(&authedRequest)
+            let requestId = HTTPLogger.attachRequestId(&authedRequest)
+            HTTPLogger.logRequest(authedRequest, requestId: requestId)
+
+            let startTime = ContinuousClock.now
+            let (data, response) = try await session.upload(for: authedRequest, fromFile: bodyFileURL)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw AuthError.invalidResponse
+            }
+            HTTPLogger.logResponse(
+                data: data,
+                response: httpResponse,
+                requestId: requestId,
+                startTime: startTime
+            )
+            return (data, httpResponse)
+        }
+
+        let firstResult = try await upload(request)
+        guard firstResult.1.statusCode == 401 else {
+            return firstResult
+        }
+
+        Log.app.info("[Auth] Upload received 401 — refreshing Supabase session")
+        do {
+            try await SupabaseService.shared.refreshSession()
+        } catch {
+            Log.app.error("[Auth] Session refresh failed: \(error.localizedDescription)")
+            throw AuthError.notAuthenticated
+        }
+
+        return try await upload(request)
+    }
+
     // MARK: - Refresh (kept for CloudRealtimeService ADR-0004 reconnect path)
 
     /// Explicit session refresh — used by CloudRealtimeService when WS upgrade
