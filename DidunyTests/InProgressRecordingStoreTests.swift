@@ -1,3 +1,4 @@
+import AVFoundation
 @testable import Diduny
 import XCTest
 
@@ -165,5 +166,123 @@ final class InProgressRecordingStoreTests: XCTestCase {
 
         let impossibleDirectory = blockedFile.appendingPathComponent("child")
         XCTAssertThrowsError(try InProgressRecordingStore(baseDirectory: impossibleDirectory))
+    }
+}
+
+@MainActor
+final class InterruptedWAVRecoveryTests: XCTestCase {
+    func test_repairMakesPayloadFromInterruptedAVAudioFileDecodable() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("InterruptedWAVRecoveryTests-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try makeInterruptedWAV(at: url)
+
+        let interruptedFile = try AVAudioFile(forReading: url)
+        XCTAssertEqual(interruptedFile.length, 0)
+
+        XCTAssertTrue(try InterruptedWAVRecovery.repairIfNeeded(at: url))
+
+        let repairedFile = try AVAudioFile(forReading: url)
+        XCTAssertEqual(repairedFile.length, 48000)
+        XCTAssertEqual(
+            try InterruptedWAVRecovery.durationSeconds(at: url),
+            1,
+            accuracy: 0.001
+        )
+    }
+
+    func test_processorPersistsRecoveredAudioBeforeTranscriptionFailure() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RecoveryRecordingProcessorTests-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try makeInterruptedWAV(at: url)
+
+        let recordingID = UUID()
+        let state = RecoveryState(
+            tempFilePath: url.path,
+            startTime: Date(timeIntervalSince1970: 1_753_200_000),
+            recordingType: .voice
+        )
+        var persistedAudio: Data?
+        var persistedDuration: TimeInterval?
+        var statuses: [Recording.ProcessingStatus] = []
+        var didCleanupSource = false
+        let processor = RecoveryRecordingProcessor(
+            save: { audioData, _, duration in
+                persistedAudio = audioData
+                persistedDuration = duration
+                return recordingID
+            },
+            update: { id, status, _, _ in
+                XCTAssertEqual(id, recordingID)
+                statuses.append(status)
+            },
+            cleanupSource: { _ in didCleanupSource = true }
+        )
+
+        do {
+            _ = try await processor.process(state: state) { _, _ in
+                throw RecoveryTestError.transcriptionFailed
+            }
+            XCTFail("Expected transcription to fail")
+        } catch RecoveryTestError.transcriptionFailed {
+            // Expected. The audio must still have been persisted first.
+        }
+
+        XCTAssertNotNil(persistedAudio)
+        XCTAssertEqual(try XCTUnwrap(persistedDuration), 1, accuracy: 0.001)
+        XCTAssertEqual(statuses, [.processing, .failed])
+        XCTAssertTrue(didCleanupSource)
+    }
+
+    private func makeInterruptedWAV(at url: URL) throws {
+        let format = try XCTUnwrap(
+            AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: 48000,
+                channels: 1,
+                interleaved: false
+            )
+        )
+        var file: AVAudioFile? = try AVAudioFile(forWriting: url, settings: format.settings)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 48000))
+        buffer.frameLength = 48000
+        try file?.write(from: buffer)
+        file = nil
+
+        var data = try Data(contentsOf: url)
+        let dataChunkOffset = try XCTUnwrap(findChunk(named: "data", in: data))
+        writeLittleEndian(UInt32(dataChunkOffset), to: &data, at: 4)
+        writeLittleEndian(0, to: &data, at: dataChunkOffset + 4)
+        try data.write(to: url)
+    }
+
+    private func findChunk(named name: String, in data: Data) -> Int? {
+        guard let chunkID = name.data(using: .ascii), chunkID.count == 4 else { return nil }
+        var offset = 12
+        while offset + 8 <= data.count {
+            if data[offset ..< offset + 4] == chunkID {
+                return offset
+            }
+            let size = Int(readLittleEndianUInt32(from: data, at: offset + 4))
+            offset += 8 + size + size % 2
+        }
+        return nil
+    }
+
+    private func readLittleEndianUInt32(from data: Data, at offset: Int) -> UInt32 {
+        data[offset ..< offset + 4].enumerated().reduce(0) { value, byte in
+            value | UInt32(byte.element) << UInt32(byte.offset * 8)
+        }
+    }
+
+    private func writeLittleEndian(_ value: UInt32, to data: inout Data, at offset: Int) {
+        for byteOffset in 0 ..< 4 {
+            data[offset + byteOffset] = UInt8(truncatingIfNeeded: value >> UInt32(byteOffset * 8))
+        }
+    }
+
+    private enum RecoveryTestError: Error {
+        case transcriptionFailed
     }
 }

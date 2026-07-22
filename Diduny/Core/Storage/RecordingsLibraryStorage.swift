@@ -46,9 +46,12 @@ final class RecordingsLibraryStorage {
         sourceFileSizeBytes: Int64? = nil,
         remoteSource: RemoteMediaSourceMetadata? = nil,
         sourceCaptionArtifacts: [TranscriptArtifact]? = nil,
-        generatedTranscriptProvenance: GeneratedTranscriptProvenance? = nil
+        generatedTranscriptProvenance: GeneratedTranscriptProvenance? = nil,
+        createdAt: Date = Date(),
+        recoverySource: RecoverySource? = nil,
+        forceSave: Bool = false
     ) -> UUID? {
-        guard shouldSaveRecording(type: type) else { return nil }
+        guard forceSave || shouldSaveRecording(type: type) else { return nil }
 
         let recordingID = id ?? UUID()
         let fileExtension = detectedAudioFileExtension(for: audioData)
@@ -69,7 +72,7 @@ final class RecordingsLibraryStorage {
         }
         let recording = Recording(
             id: recordingID,
-            createdAt: Date(),
+            createdAt: createdAt,
             type: type,
             audioFileName: fileName,
             durationSeconds: duration,
@@ -79,6 +82,7 @@ final class RecordingsLibraryStorage {
             processedAt: transcriptionText != nil ? Date() : nil,
             sourceDevice: sourceDevice,
             translationTargetLanguageCode: translationTargetLanguageCode,
+            recoverySource: recoverySource,
             sourceFileName: sourceFileName,
             sourceFileSizeBytes: sourceFileSizeBytes,
             remoteSource: remoteSource,
@@ -87,8 +91,18 @@ final class RecordingsLibraryStorage {
         )
 
         recordings.insert(recording, at: 0)
-        saveMetadata()
-        pruneExpiredRecordingsIfEnabled()
+        if forceSave {
+            guard saveMetadataSynchronously() else {
+                recordings.removeAll { $0.id == recordingID }
+                try? fileManager.removeItem(at: fileURL)
+                return nil
+            }
+        } else {
+            saveMetadata()
+        }
+        if !forceSave {
+            pruneExpiredRecordingsIfEnabled()
+        }
         Log.app.info("Recording saved: \(type.rawValue), \(audioData.count) bytes")
         return recordingID
     }
@@ -108,9 +122,12 @@ final class RecordingsLibraryStorage {
         sourceFileSizeBytes: Int64? = nil,
         remoteSource: RemoteMediaSourceMetadata? = nil,
         sourceCaptionArtifacts: [TranscriptArtifact]? = nil,
-        generatedTranscriptProvenance: GeneratedTranscriptProvenance? = nil
+        generatedTranscriptProvenance: GeneratedTranscriptProvenance? = nil,
+        createdAt: Date = Date(),
+        recoverySource: RecoverySource? = nil,
+        forceSave: Bool = false
     ) -> UUID? {
-        guard shouldSaveRecording(type: type) else { return nil }
+        guard forceSave || shouldSaveRecording(type: type) else { return nil }
 
         let recordingID = id ?? UUID()
         let ext = audioURL.pathExtension.isEmpty ? "wav" : audioURL.pathExtension
@@ -140,7 +157,7 @@ final class RecordingsLibraryStorage {
 
         let recording = Recording(
             id: recordingID,
-            createdAt: Date(),
+            createdAt: createdAt,
             type: type,
             audioFileName: fileName,
             durationSeconds: duration,
@@ -150,6 +167,7 @@ final class RecordingsLibraryStorage {
             processedAt: transcriptionText != nil ? Date() : nil,
             sourceDevice: sourceDevice,
             translationTargetLanguageCode: translationTargetLanguageCode,
+            recoverySource: recoverySource,
             sourceFileName: sourceFileName,
             sourceFileSizeBytes: sourceFileSizeBytes,
             remoteSource: remoteSource,
@@ -158,8 +176,18 @@ final class RecordingsLibraryStorage {
         )
 
         recordings.insert(recording, at: 0)
-        saveMetadata()
-        pruneExpiredRecordingsIfEnabled()
+        if forceSave {
+            guard saveMetadataSynchronously() else {
+                recordings.removeAll { $0.id == recordingID }
+                try? fileManager.removeItem(at: destURL)
+                return nil
+            }
+        } else {
+            saveMetadata()
+        }
+        if !forceSave {
+            pruneExpiredRecordingsIfEnabled()
+        }
         Log.app.info("Recording saved from file: \(type.rawValue), \(fileSize) bytes")
         return recordingID
     }
@@ -360,6 +388,19 @@ final class RecordingsLibraryStorage {
             } catch {
                 Log.app.error("Failed to save recordings metadata: \(error.localizedDescription)")
             }
+        }
+    }
+
+    private func saveMetadataSynchronously() -> Bool {
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(recordings)
+            try data.write(to: metadataURL, options: .atomic)
+            return true
+        } catch {
+            Log.app.error("Failed to save recovered recording metadata: \(error.localizedDescription)")
+            return false
         }
     }
 

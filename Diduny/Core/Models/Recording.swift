@@ -37,11 +37,6 @@ struct Recording: Identifiable, Codable, Equatable {
     /// stop; intended to drive the "Recovered" badge in the library and the
     /// detail-view notice. Once set it is preserved (never cleared), including
     /// across `RecordingsLibraryStorage.replaceStoredAudioFile`.
-    ///
-    /// NOTE: no production save path sets this yet — `saveRecording(...)` doesn't
-    /// accept it and `recoverRecording(from:)` transcribes then discards without
-    /// creating a library entry. So in practice this is currently always nil.
-    /// TODO: populate it when the recovery-save-to-library flow is implemented.
     var recoverySource: RecoverySource?
     /// Original Finder name for explicitly imported media. Optional so metadata
     /// written by older releases remains decodable.

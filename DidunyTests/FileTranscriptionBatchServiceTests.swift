@@ -767,7 +767,8 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
     }
 
     func test_addWhileProcessingAppendsToTheRunningBatch() async throws {
-        let transcriber = BatchTestTranscriber(delay: .milliseconds(250))
+        let transcriber = BatchTestTranscriber(waitsForRelease: true)
+        defer { transcriber.releaseAll() }
         let service = FileTranscriptionBatchService(
             preparer: BatchTestPreparer(),
             transcriber: transcriber,
@@ -782,6 +783,7 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         service.add(urls: [URL(fileURLWithPath: "/tmp/second.mov")])
         service.startIfNeeded()
         try await waitUntil { transcriber.maximumConcurrentCount == 2 }
+        transcriber.releaseAll()
         try await waitUntil { !service.isProcessing && service.finishedCount == 2 }
 
         XCTAssertEqual(Set(transcriber.transcribedFileNames), Set(["first.m4a", "second.m4a"]))
@@ -1066,17 +1068,21 @@ private final class BatchTestTranscriber: FileTranscriptionBatchTranscribing {
     private let delay: Duration
     private let preflightErrorMessage: String?
     private let progressUpdates: [JobProgressUpdate]
+    private let waitsForRelease: Bool
+    private var releaseContinuations: [CheckedContinuation<Void, Never>] = []
 
     init(
         delay: Duration = .milliseconds(20),
         preflightError: String? = nil,
         failureCount: Int = 0,
-        progressUpdates: [JobProgressUpdate] = []
+        progressUpdates: [JobProgressUpdate] = [],
+        waitsForRelease: Bool = false
     ) {
         self.delay = delay
         preflightErrorMessage = preflightError
         remainingFailures = failureCount
         self.progressUpdates = progressUpdates
+        self.waitsForRelease = waitsForRelease
     }
 
     func preflightError(for _: FileTranscriptionSettingsSnapshot) -> String? {
@@ -1097,12 +1103,22 @@ private final class BatchTestTranscriber: FileTranscriptionBatchTranscribing {
             onUpdate(update)
             try await Task.sleep(for: .milliseconds(10))
         }
-        try await Task.sleep(for: delay)
+        if waitsForRelease {
+            await withCheckedContinuation { releaseContinuations.append($0) }
+        } else {
+            try await Task.sleep(for: delay)
+        }
         if remainingFailures > 0 {
             remainingFailures -= 1
             throw BatchTestError.transcriptionFailed
         }
         return "Transcript for \(audioFileURL.lastPathComponent)"
+    }
+
+    func releaseAll() {
+        let continuations = releaseContinuations
+        releaseContinuations.removeAll()
+        continuations.forEach { $0.resume() }
     }
 }
 
