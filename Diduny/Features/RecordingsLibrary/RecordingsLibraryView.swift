@@ -127,6 +127,17 @@ struct RecordingsLibraryView: View {
                 .font(.title2.bold())
             Spacer()
             Button {
+                BatchTranscriptionWindowController.shared.selectFilesForNewBatch()
+            } label: {
+                Label("Transcribe Files…", systemImage: "waveform.badge.plus")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .keyboardShortcut("o", modifiers: [.command, .shift])
+            .help("Select audio or video files to transcribe (⇧⌘O)")
+            .accessibilityIdentifier("Transcribe files")
+
+            Button {
                 toggleSelectionMode()
             } label: {
                 Label(isSelectionMode ? "Done" : "Select", systemImage: isSelectionMode ? "checkmark.circle" : "checklist")

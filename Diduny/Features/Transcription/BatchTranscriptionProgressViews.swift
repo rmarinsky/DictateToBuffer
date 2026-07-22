@@ -56,6 +56,7 @@ struct BatchTranscriptionRow: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
+        .background(duplicateRowBackground)
         .contentShape(Rectangle())
         .sheet(isPresented: $isShowingTranscript) {
             if let text = item.transcriptionText {
@@ -122,6 +123,10 @@ struct BatchTranscriptionRow: View {
 
     private var statusColor: Color {
         item.status.terminalColor ?? .secondary
+    }
+
+    private var duplicateRowBackground: Color {
+        item.status == .duplicate ? Color.blue.opacity(0.08) : .clear
     }
 }
 
