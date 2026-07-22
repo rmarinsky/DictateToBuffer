@@ -119,6 +119,18 @@ enum JobStatus: String {
     case queued, uploading, processing, finalizing, completed, error
 }
 
+struct JobProgressUpdate: Equatable {
+    let status: JobStatus
+    let fractionCompleted: Double?
+
+    init(status: JobStatus, progressPercent: Int? = nil) {
+        self.status = status
+        fractionCompleted = progressPercent.map {
+            min(max(Double($0) / 100, 0), 1)
+        }
+    }
+}
+
 enum DiarizedTranscriptFormatter {
     private struct Segment {
         var speaker: String?

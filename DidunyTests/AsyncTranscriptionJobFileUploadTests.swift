@@ -22,4 +22,15 @@ final class AsyncTranscriptionJobFileUploadTests: XCTestCase {
             "audio/mpeg"
         )
     }
+
+    func test_statusPayloadDecodesExactServerProgress() throws {
+        let update = try XCTUnwrap(
+            AsyncTranscriptionJobService.progressUpdate(
+                fromStatusPayload: #"{"status":"processing","progress":42}"#
+            )
+        )
+
+        XCTAssertEqual(update.status, .processing)
+        XCTAssertEqual(try XCTUnwrap(update.fractionCompleted), 0.42, accuracy: 0.001)
+    }
 }

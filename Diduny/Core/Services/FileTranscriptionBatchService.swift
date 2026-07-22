@@ -46,11 +46,19 @@ struct BatchTranscriptionItem: Identifiable, Equatable {
     var transcriptionText: String?
     var recordingID: UUID?
     var errorMessage: String?
+    var progressFraction: Double?
+    var startedAt: Date?
+    var finishedAt: Date?
 
     init(id: UUID = UUID(), sourceURL: URL) {
         self.id = id
         self.sourceURL = sourceURL
         status = .queued
+    }
+
+    func elapsedTime(at date: Date) -> TimeInterval? {
+        guard let startedAt else { return nil }
+        return max(0, (finishedAt ?? date).timeIntervalSince(startedAt))
     }
 }
 
@@ -65,7 +73,7 @@ protocol FileTranscriptionBatchTranscribing: AnyObject {
     func transcribe(
         audioFileURL: URL,
         settings: FileTranscriptionSettingsSnapshot,
-        onUpdate: @escaping (JobStatus) -> Void
+        onUpdate: @escaping (JobProgressUpdate) -> Void
     ) async throws -> String
 }
 
@@ -117,6 +125,11 @@ final class FileTranscriptionBatchService {
     var progress: Double {
         guard !items.isEmpty else { return 0 }
         return Double(finishedCount) / Double(items.count)
+    }
+
+    var currentItem: BatchTranscriptionItem? {
+        guard let currentItemID else { return nil }
+        return items.first(where: { $0.id == currentItemID })
     }
 
     private let preparer: FileTranscriptionBatchPreparing
@@ -193,6 +206,9 @@ final class FileTranscriptionBatchService {
             items[index].status = .queued
             items[index].errorMessage = nil
             items[index].transcriptionText = nil
+            items[index].progressFraction = nil
+            items[index].startedAt = nil
+            items[index].finishedAt = nil
         }
         startIfNeeded()
     }
@@ -254,6 +270,7 @@ final class FileTranscriptionBatchService {
 
         do {
             try Task.checkCancellation()
+            markStarted(itemID)
 
             let storedAudioURL = recordingID.flatMap {
                 recordingStore.audioFileURL(recordingID: $0)
@@ -264,7 +281,6 @@ final class FileTranscriptionBatchService {
             } else {
                 update(itemID) {
                     $0.status = .preparing
-                    $0.errorMessage = nil
                 }
 
                 let preparedAudio = try await preparer.prepare(
@@ -295,9 +311,9 @@ final class FileTranscriptionBatchService {
             let text = try await transcriber.transcribe(
                 audioFileURL: audioURL,
                 settings: settings
-            ) { [weak self] status in
+            ) { [weak self] progressUpdate in
                 Task { @MainActor in
-                    self?.apply(jobStatus: status, to: itemID)
+                    self?.apply(progressUpdate: progressUpdate, to: itemID)
                 }
             }
             try Task.checkCancellation()
@@ -307,6 +323,8 @@ final class FileTranscriptionBatchService {
             }
             update(itemID) {
                 $0.status = .completed
+                $0.progressFraction = 1
+                $0.finishedAt = Date()
                 $0.transcriptionText = text
                 $0.errorMessage = nil
             }
@@ -316,6 +334,7 @@ final class FileTranscriptionBatchService {
             }
             update(itemID) {
                 $0.status = .cancelled
+                $0.finishedAt = Date()
                 $0.errorMessage = nil
             }
         } catch {
@@ -325,6 +344,7 @@ final class FileTranscriptionBatchService {
             }
             update(itemID) {
                 $0.status = .failed
+                $0.finishedAt = Date()
                 $0.errorMessage = message
             }
         }
@@ -332,10 +352,19 @@ final class FileTranscriptionBatchService {
         temporaryAudio?.removeTemporaryFile()
     }
 
-    private func apply(jobStatus: JobStatus, to itemID: UUID) {
+    private func markStarted(_ itemID: UUID) {
+        update(itemID) {
+            $0.startedAt = Date()
+            $0.finishedAt = nil
+            $0.progressFraction = nil
+            $0.errorMessage = nil
+        }
+    }
+
+    private func apply(progressUpdate: JobProgressUpdate, to itemID: UUID) {
         update(itemID) { item in
             guard !item.status.isTerminal else { return }
-            switch jobStatus {
+            switch progressUpdate.status {
             case .queued:
                 item.status = .queued
             case .uploading:
@@ -349,6 +378,7 @@ final class FileTranscriptionBatchService {
             case .error:
                 item.status = .failed
             }
+            item.progressFraction = progressUpdate.fractionCompleted
         }
     }
 
@@ -384,7 +414,7 @@ private final class LiveFileTranscriptionBatchTranscriber: FileTranscriptionBatc
     func transcribe(
         audioFileURL: URL,
         settings: FileTranscriptionSettingsSnapshot,
-        onUpdate: @escaping (JobStatus) -> Void
+        onUpdate: @escaping (JobProgressUpdate) -> Void
     ) async throws -> String {
         switch settings.provider {
         case .cloud:
@@ -396,10 +426,10 @@ private final class LiveFileTranscriptionBatchTranscriber: FileTranscriptionBatc
             return try await AsyncTranscriptionJobService().transcribeFileWithRetry(
                 audioFileURL: audioFileURL,
                 config: config,
-                onUpdate: onUpdate
+                onProgressUpdate: onUpdate
             )
         case .local:
-            onUpdate(.processing)
+            onUpdate(JobProgressUpdate(status: .processing))
             let audioData = try await Task.detached(priority: .utility) {
                 try Data(contentsOf: audioFileURL, options: .mappedIfSafe)
             }.value

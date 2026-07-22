@@ -55,7 +55,7 @@ final class BatchTranscriptionWindowController {
     private func makeWindow() {
         let hostingView = NSHostingView(rootView: BatchTranscriptionView())
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 760, height: 540),
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 650),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -66,7 +66,7 @@ final class BatchTranscriptionWindowController {
         window.styleMask.insert(.fullSizeContentView)
         window.isMovableByWindowBackground = true
         window.contentView = hostingView
-        window.contentMinSize = NSSize(width: 620, height: 420)
+        window.contentMinSize = NSSize(width: 680, height: 520)
         window.isReleasedWhenClosed = false
         window.collectionBehavior.insert(.moveToActiveSpace)
         window.setFrameAutosaveName("diduny.transcription-batch")
@@ -183,8 +183,16 @@ private struct BatchTranscriptionView: View {
             }
 
             if !service.items.isEmpty {
-                ProgressView(value: service.progress)
-                    .progressViewStyle(.linear)
+                batchOverview
+            }
+
+            if let currentItem = service.currentItem {
+                CurrentFileProgressView(
+                    item: currentItem,
+                    position: currentPosition,
+                    totalCount: service.items.count
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             if let error = service.batchError {
@@ -207,6 +215,26 @@ private struct BatchTranscriptionView: View {
         .padding(.top, 38)
         .padding(.bottom, 16)
         .background(.bar)
+    }
+
+    private var batchOverview: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Text("Overall progress")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Text("\(service.finishedCount) of \(service.items.count) files")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Text(BatchProgressFormatter.percent(service.progress))
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .frame(width: 38, alignment: .trailing)
+            }
+            ProgressView(value: service.progress)
+                .progressViewStyle(.linear)
+        }
+        .padding(12)
+        .background(Color(.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 9))
     }
 
     @ViewBuilder
@@ -286,163 +314,11 @@ private struct BatchTranscriptionView: View {
         }
         return "\(service.completedCount) of \(service.items.count) completed"
     }
-}
 
-private struct BatchTranscriptionRow: View {
-    let item: BatchTranscriptionItem
-    let service: FileTranscriptionBatchService
-    @State private var isShowingTranscript = false
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: mediaIcon)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(iconColor)
-                .frame(width: 28, height: 28)
-                .background(iconColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 7))
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(item.sourceURL.lastPathComponent)
-                    .font(.system(size: 13, weight: .medium))
-                    .lineLimit(1)
-                HStack(spacing: 6) {
-                    Text(statusLabel)
-                        .font(.system(size: 11))
-                        .foregroundStyle(statusColor)
-                    if let duration = item.durationSeconds {
-                        Text("·")
-                            .foregroundStyle(.tertiary)
-                        Text(format(duration: duration))
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                if let error = item.errorMessage {
-                    Text(error)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.red)
-                        .lineLimit(2)
-                }
-            }
-
-            Spacer(minLength: 10)
-
-            switch item.status {
-            case .preparing, .uploading, .processing, .finalizing:
-                ProgressView()
-                    .controlSize(.small)
-            case .failed, .cancelled:
-                Button("Retry") {
-                    service.retry(ids: [item.id])
-                }
-                .controlSize(.small)
-            case .completed:
-                if let text = item.transcriptionText, !text.isEmpty {
-                    Button("Transcript") {
-                        isShowingTranscript = true
-                    }
-                    .controlSize(.small)
-                }
-                if let recordingID = item.recordingID {
-                    Button("Recordings") {
-                        MainWindowController.shared.showRecording(id: recordingID)
-                    }
-                    .controlSize(.small)
-                }
-            case .queued:
-                EmptyView()
-            }
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        .contentShape(Rectangle())
-        .sheet(isPresented: $isShowingTranscript) {
-            if let text = item.transcriptionText {
-                BatchTranscriptView(fileName: item.sourceURL.lastPathComponent, text: text)
-            }
-        }
-    }
-
-    private var mediaIcon: String {
-        let type = try? item.sourceURL.resourceValues(forKeys: [.contentTypeKey]).contentType
-        return type?.conforms(to: .video) == true ? "film" : "waveform"
-    }
-
-    private var iconColor: Color {
-        switch item.status {
-        case .completed: .green
-        case .failed: .red
-        case .cancelled: .secondary
-        default: Color("BrandAccentDeep")
-        }
-    }
-
-    private var statusColor: Color {
-        switch item.status {
-        case .completed: .green
-        case .failed: .red
-        case .cancelled: .secondary
-        default: .secondary
-        }
-    }
-
-    private var statusLabel: String {
-        switch item.status {
-        case .queued: "Queued"
-        case .preparing: "Preparing audio…"
-        case .uploading: "Uploading…"
-        case .processing: "Transcribing…"
-        case .finalizing: "Finishing…"
-        case .completed: "Completed"
-        case .failed: "Failed"
-        case .cancelled: "Cancelled"
-        }
-    }
-
-    private func format(duration: TimeInterval) -> String {
-        let total = max(0, Int(duration))
-        let hours = total / 3600
-        let minutes = (total % 3600) / 60
-        let seconds = total % 60
-        return hours > 0
-            ? String(format: "%d:%02d:%02d", hours, minutes, seconds)
-            : String(format: "%d:%02d", minutes, seconds)
-    }
-}
-
-private struct BatchTranscriptView: View {
-    @Environment(\.dismiss) private var dismiss
-
-    let fileName: String
-    let text: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Transcript")
-                        .font(.title2.bold())
-                    Text(fileName)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Close") {
-                    dismiss()
-                }
-                .keyboardShortcut(.cancelAction)
-            }
-
-            ScrollView {
-                Text(text)
-                    .font(.body)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(14)
-            .background(Color(.textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-        }
-        .padding(20)
-        .frame(minWidth: 560, idealWidth: 680, minHeight: 420, idealHeight: 520)
+    private var currentPosition: Int {
+        guard let currentItemID = service.currentItemID,
+              let index = service.items.firstIndex(where: { $0.id == currentItemID })
+        else { return 0 }
+        return index + 1
     }
 }

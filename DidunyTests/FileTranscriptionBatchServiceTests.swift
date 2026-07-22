@@ -200,6 +200,59 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertEqual(completionSoundCount, 1)
     }
 
+    func test_activeItemExposesExactServerProgressWithoutInventingAggregateProgress() async throws {
+        let transcriber = BatchTestTranscriber(
+            delay: .milliseconds(500),
+            progressUpdates: [JobProgressUpdate(status: .processing, progressPercent: 40)]
+        )
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: transcriber,
+            recordingStore: BatchTestRecordingStore(),
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+        let firstURL = URL(fileURLWithPath: "/tmp/first.mov")
+
+        service.beginBatch(urls: [firstURL, URL(fileURLWithPath: "/tmp/second.mov")])
+        try await waitUntil {
+            service.items.first?.progressFraction == 0.4
+                && service.currentItemID == service.items.first?.id
+        }
+
+        XCTAssertEqual(service.progress, 0, accuracy: 0.001)
+        XCTAssertNotNil(service.items.first?.startedAt)
+        XCTAssertNil(service.items.first?.finishedAt)
+
+        service.cancelAll()
+        try await waitUntil { !service.isProcessing }
+    }
+
+    func test_statusWithoutProgressClearsPreviousServerPercentage() async throws {
+        let transcriber = BatchTestTranscriber(
+            delay: .milliseconds(500),
+            progressUpdates: [
+                JobProgressUpdate(status: .processing, progressPercent: 40),
+                JobProgressUpdate(status: .finalizing)
+            ]
+        )
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: transcriber,
+            recordingStore: BatchTestRecordingStore(),
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+
+        service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/progress.mov")])
+        try await waitUntil { service.items.first?.status == .finalizing }
+
+        XCTAssertNil(service.items.first?.progressFraction)
+
+        service.cancelAll()
+        try await waitUntil { !service.isProcessing }
+    }
+
     private func waitUntil(
         timeout: Duration = .seconds(3),
         condition: @escaping @MainActor () -> Bool
@@ -255,15 +308,18 @@ private final class BatchTestTranscriber: FileTranscriptionBatchTranscribing {
     private var remainingFailures: Int
     private let delay: Duration
     private let preflightErrorMessage: String?
+    private let progressUpdates: [JobProgressUpdate]
 
     init(
         delay: Duration = .milliseconds(20),
         preflightError: String? = nil,
-        failureCount: Int = 0
+        failureCount: Int = 0,
+        progressUpdates: [JobProgressUpdate] = []
     ) {
         self.delay = delay
         preflightErrorMessage = preflightError
         remainingFailures = failureCount
+        self.progressUpdates = progressUpdates
     }
 
     func preflightError(for _: FileTranscriptionSettingsSnapshot) -> String? {
@@ -273,13 +329,17 @@ private final class BatchTestTranscriber: FileTranscriptionBatchTranscribing {
     func transcribe(
         audioFileURL: URL,
         settings: FileTranscriptionSettingsSnapshot,
-        onUpdate _: @escaping (JobStatus) -> Void
+        onUpdate: @escaping (JobProgressUpdate) -> Void
     ) async throws -> String {
         transcribedFileNames.append(audioFileURL.lastPathComponent)
         receivedSettings.append(settings)
         concurrentCount += 1
         maximumConcurrentCount = max(maximumConcurrentCount, concurrentCount)
         defer { concurrentCount -= 1 }
+        for update in progressUpdates {
+            onUpdate(update)
+            try await Task.sleep(for: .milliseconds(10))
+        }
         try await Task.sleep(for: delay)
         if remainingFailures > 0 {
             remainingFailures -= 1
