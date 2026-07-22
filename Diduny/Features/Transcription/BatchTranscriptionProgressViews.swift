@@ -5,6 +5,7 @@ struct BatchTranscriptionRow: View {
     let item: BatchTranscriptionItem
     let service: FileTranscriptionBatchService
     @State private var isShowingTranscript = false
+    @State private var isShowingCaptions = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -16,7 +17,7 @@ struct BatchTranscriptionRow: View {
                     .background(iconColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 7))
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(item.sourceURL.lastPathComponent)
+                    Text(item.displayName)
                         .font(.system(size: 13, weight: .medium))
                         .lineLimit(1)
                     HStack(spacing: 6) {
@@ -36,6 +37,12 @@ struct BatchTranscriptionRow: View {
                             metadataSeparator
                             Text(BatchProgressFormatter.percent(fraction))
                                 .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                        if let downloaded = item.downloadedBytes {
+                            metadataSeparator
+                            Text(ByteCountFormatter.string(fromByteCount: downloaded, countStyle: .file))
+                                .font(.system(size: 11, design: .monospaced))
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -63,12 +70,21 @@ struct BatchTranscriptionRow: View {
                 BatchTranscriptView(fileName: item.sourceURL.lastPathComponent, text: text)
             }
         }
+        .sheet(isPresented: $isShowingCaptions) {
+            if let artifact = item.sourceCaptionArtifacts.first {
+                BatchTranscriptView(
+                    title: artifact.provenance.displayName,
+                    fileName: item.displayName,
+                    text: artifact.text
+                )
+            }
+        }
     }
 
     @ViewBuilder
     private var rowActions: some View {
         switch item.status {
-        case .failed, .cancelled:
+        case .failed, .cancelled, .partialResult:
             Button("Retry") {
                 service.retry(ids: [item.id])
             }
@@ -88,12 +104,30 @@ struct BatchTranscriptionRow: View {
                 }
                 .controlSize(.small)
             }
-        case .queued, .preparing, .uploading, .processing, .finalizing:
+        case .authorizationPaused:
+            Button("Retry Authorization") {
+                service.retryAuthorization()
+            }
+            .controlSize(.small)
+        case .queued, .checkingLink, .checkingDuplicate, .retrievingCaptions,
+             .downloading, .preparing, .uploading, .processing, .finalizing:
             if service.isActive(item.id) {
                 ProgressView()
                     .controlSize(.small)
                     .accessibilityLabel("Processing \(item.sourceURL.lastPathComponent)")
             }
+        }
+
+        if let artifact = item.sourceCaptionArtifacts.first {
+            CopyTranscriptButton(
+                text: artifact.text,
+                label: "Copy Captions",
+                controlSize: .small
+            )
+            Button("Captions") {
+                isShowingCaptions = true
+            }
+            .controlSize(.small)
         }
     }
 
@@ -115,6 +149,7 @@ struct BatchTranscriptionRow: View {
     }
 
     private var mediaIcon: String {
+        if item.remoteSource != nil { return "play.rectangle" }
         let type = try? item.sourceURL.resourceValues(forKeys: [.contentTypeKey]).contentType
         return type?.conforms(to: .video) == true ? "film" : "waveform"
     }
@@ -178,7 +213,9 @@ private extension BatchTranscriptionItem.Status {
     var terminalColor: Color? {
         switch self {
         case .completed: .green
+        case .partialResult: .orange
         case .duplicate: .blue
+        case .authorizationPaused: .orange
         case .failed: .red
         case .cancelled: .secondary
         default: nil
@@ -188,12 +225,18 @@ private extension BatchTranscriptionItem.Status {
     var displayName: String {
         switch self {
         case .queued: "Queued"
+        case .checkingLink: "Checking link…"
+        case .checkingDuplicate: "Checking duplicate…"
+        case .retrievingCaptions: "Retrieving captions…"
+        case .downloading: "Downloading audio…"
         case .preparing: "Preparing audio…"
         case .uploading: "Uploading…"
         case .processing: "Transcribing…"
         case .finalizing: "Finishing…"
         case .completed: "Completed"
+        case .partialResult: "Partial result"
         case .duplicate: "Duplicate · Transcript reused"
+        case .authorizationPaused: "Authorization paused"
         case .failed: "Failed"
         case .cancelled: "Cancelled"
         }
@@ -203,6 +246,7 @@ private extension BatchTranscriptionItem.Status {
 private struct BatchTranscriptView: View {
     @Environment(\.dismiss) private var dismiss
 
+    var title = "Transcript"
     let fileName: String
     let text: String
 
@@ -210,7 +254,7 @@ private struct BatchTranscriptView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Transcript")
+                    Text(title)
                         .font(.title2.bold())
                     Text(fileName)
                         .font(.system(size: 12))
@@ -240,6 +284,7 @@ private struct BatchTranscriptView: View {
 
 private struct CopyTranscriptButton: View {
     let text: String
+    var label = "Copy"
     var controlSize: ControlSize = .regular
 
     @State private var copiedAt: Date?
@@ -249,7 +294,7 @@ private struct CopyTranscriptButton: View {
             copyTranscript()
         } label: {
             Label(
-                copiedAt == nil ? "Copy" : "Copied",
+                copiedAt == nil ? label : "Copied",
                 systemImage: copiedAt == nil ? "doc.on.doc" : "checkmark"
             )
         }
@@ -267,6 +312,15 @@ private struct CopyTranscriptButton: View {
             try? await Task.sleep(for: .seconds(2))
             guard copiedAt == timestamp else { return }
             copiedAt = nil
+        }
+    }
+}
+
+private extension TranscriptArtifact.Provenance {
+    var displayName: String {
+        switch self {
+        case .youtubeAuthored: "YouTube captions · Authored"
+        case .youtubeAutomatic: "YouTube captions · Automatic"
         }
     }
 }

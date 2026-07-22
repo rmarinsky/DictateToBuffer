@@ -70,6 +70,9 @@ final class RecordingModelMigrationTests: XCTestCase {
         let recordings = try iso8601.decode([Recording].self, from: data)
         XCTAssertNil(recordings[0].sourceFileName)
         XCTAssertNil(recordings[0].sourceFileSizeBytes)
+        XCTAssertNil(recordings[0].remoteSource)
+        XCTAssertNil(recordings[0].sourceCaptionArtifacts)
+        XCTAssertNil(recordings[0].generatedTranscriptProvenance)
     }
 
     func test_legacyJSON_originalFieldsIntact() throws {
@@ -114,6 +117,44 @@ final class RecordingModelMigrationTests: XCTestCase {
         XCTAssertNil(decoded.transcriptionText)
     }
 
+    func test_roundTrip_preservesRemoteSourceAndSeparateTranscriptArtifacts() throws {
+        let remoteSource = try RemoteMediaSourceMetadata(
+            provider: YouTubeRemoteMediaSource.provider,
+            mediaID: "dQw4w9WgXcQ",
+            canonicalURL: XCTUnwrap(URL(string: "https://www.youtube.com/watch?v=dQw4w9WgXcQ")),
+            title: "A video",
+            channelName: "A channel"
+        )
+        let captions = TranscriptArtifact(
+            text: "Source caption text",
+            languageCode: "uk",
+            provenance: .youtubeAutomatic
+        )
+        let generated = GeneratedTranscriptProvenance(provider: "cloud")
+        let original = Recording(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            type: .fileTranscription,
+            audioFileName: "remote.m4a",
+            durationSeconds: 120,
+            fileSizeBytes: 42,
+            status: .transcribed,
+            transcriptionText: "Generated transcript",
+            sourceDevice: nil,
+            remoteSource: remoteSource,
+            sourceCaptionArtifacts: [captions],
+            generatedTranscriptProvenance: generated
+        )
+
+        let data = try iso8601Encoder.encode([original])
+        let decoded = try iso8601.decode([Recording].self, from: data)[0]
+
+        XCTAssertEqual(decoded.remoteSource, remoteSource)
+        XCTAssertEqual(decoded.sourceCaptionArtifacts, [captions])
+        XCTAssertEqual(decoded.generatedTranscriptProvenance, generated)
+        XCTAssertEqual(decoded.transcriptionText, "Generated transcript")
+    }
+
     func test_roundTrip_nilRecoverySource_normalStop() throws {
         let original = Recording(
             id: UUID(),
@@ -150,14 +191,14 @@ final class RecordingModelMigrationTests: XCTestCase {
             transcriptionText: "Imported transcript",
             sourceDevice: nil,
             sourceFileName: "Product walkthrough.mov",
-            sourceFileSizeBytes: 81_920
+            sourceFileSizeBytes: 81920
         )
 
         let data = try iso8601Encoder.encode([original])
         let decoded = try iso8601.decode([Recording].self, from: data)[0]
 
         XCTAssertEqual(decoded.sourceFileName, "Product walkthrough.mov")
-        XCTAssertEqual(decoded.sourceFileSizeBytes, 81_920)
+        XCTAssertEqual(decoded.sourceFileSizeBytes, 81920)
     }
 
     func test_interruptedProcessingResetsToUnprocessedAfterLoad() {

@@ -86,7 +86,7 @@ final class RecordingQueueService {
 
         processingTask = Task { [weak self] in
             guard let self else { return }
-            await self.processPendingItems()
+            await processPendingItems()
         }
     }
 
@@ -124,7 +124,8 @@ final class RecordingQueueService {
             return
         }
 
-        let audioURL = await storage.optimizeStoredRecordingIfNeeded(id: item.id) ?? storage.audioFileURL(for: recording)
+        let audioURL = await storage.optimizeStoredRecordingIfNeeded(id: item.id) ?? storage
+            .audioFileURL(for: recording)
         guard FileManager.default.fileExists(atPath: audioURL.path) else {
             storage.updateRecording(id: item.id, status: .failed, error: "Audio file not found")
             return
@@ -205,6 +206,14 @@ final class RecordingQueueService {
                 error: nil,
                 translationTargetLanguageCode: translationTargetLanguageCode
             )
+            if recording.remoteSource != nil, status == .transcribed {
+                storage.updateRemoteArtifacts(
+                    id: item.id,
+                    generatedTranscriptProvenance: GeneratedTranscriptProvenance(
+                        provider: provider.rawValue
+                    )
+                )
+            }
             currentJobStatus = nil
             Log.app.info("Queue processed recording \(item.id): \(status.rawValue)")
         } catch is CancellationError {
@@ -319,7 +328,8 @@ final class RecordingQueueService {
                 let targetLanguage = item.targetLanguage
                     ?? SettingsStorage.shared.defaultTranslationLanguagePair.languageB
                 if targetLanguage != "en",
-                   item.targetLanguage != nil || !SettingsStorage.shared.defaultTranslationLanguagePair.contains("en") {
+                   item.targetLanguage != nil || !SettingsStorage.shared.defaultTranslationLanguagePair.contains("en")
+                {
                     return "Local Whisper can translate to English only. Switch Translation Provider to Cloud or choose English."
                 }
             }

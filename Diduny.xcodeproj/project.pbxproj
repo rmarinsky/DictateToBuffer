@@ -134,6 +134,7 @@
 		E5A43EA1048E2701A2B0498B /* RecordingRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30A4F862A41E4EC48E5CAEFB /* RecordingRowView.swift */; };
 		E6C0A2BB2B96403F5AD765B3 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = 2E72BE3A05C906A8B16DBE4E /* KeyboardShortcuts */; };
 		E7F1B035104E1A79711068B2 /* MeetingChunkStitcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E5E0CC22FD7FC0DA86702AF /* MeetingChunkStitcherTests.swift */; };
+		B1C2D3E4F5061728394A5B6C /* RemoteMediaService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5C /* RemoteMediaService.swift */; };
 		E8268E59FC06679FC0BABA3D /* RecordingsLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2217BBA473011B6506284B3 /* RecordingsLibraryView.swift */; };
 		E90C0EBCE28E780D183A2C0E /* WhisperModelUnloadPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14415E4A90B0A80E5B44F3B /* WhisperModelUnloadPolicy.swift */; };
 		E936FF3D499BC2EFB6DC0A14 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65DFFB871345DD916879CEBD /* SidebarView.swift */; };
@@ -251,6 +252,7 @@
 		A71FCAF64D600F8EFA8B20A2 /* WhisperModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperModelManager.swift; sourceTree = "<group>"; };
 		A90DC34399C728FB2BD9C292 /* AuthServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthServiceTests.swift; sourceTree = "<group>"; };
 		A93C5FD49F98345A448E9EA7 /* FileTranscriptionBatchServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTranscriptionBatchServiceTests.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718293A4B5C /* RemoteMediaService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteMediaService.swift; sourceTree = "<group>"; };
 		AB584F0BDA9252D1D71CE50D /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
 		ABB1662505C3C86F87F1DC06 /* RecordingsLibraryFilterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingsLibraryFilterTests.swift; sourceTree = "<group>"; };
 		AD2ACAB35CBF5F436D5D5AA5 /* ImportedMediaAudioPreparer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportedMediaAudioPreparer.swift; sourceTree = "<group>"; };
@@ -439,6 +441,7 @@
 				792A94C41C191C4A22150F2F /* DeviceLevelMonitor.swift */,
 				8A2A0045FAC17572590BE16F /* EscapeCancelService.swift */,
 				2A8D2B8A37BF978AE7F1A12A /* FileTranscriptionBatchService.swift */,
+				A1B2C3D4E5F60718293A4B5C /* RemoteMediaService.swift */,
 				0491E26240E167BDB5DCACEE /* HotkeyService.swift */,
 				AD2ACAB35CBF5F436D5D5AA5 /* ImportedMediaAudioPreparer.swift */,
 				893211B2A0981542B494E03B /* MeetingChunkStitcher.swift */,
@@ -703,6 +706,7 @@
 				96B8F1370A2B9909FCC713D8 /* Sources */,
 				93DD7B7138C10B14622DCB91 /* Resources */,
 				B26474A90B8D0C0AC9DBBCF4 /* Frameworks */,
+				C1D2E3F40516273849A5B6C7 /* Bundle Remote Media Runtime */,
 			);
 			buildRules = (
 			);
@@ -795,6 +799,34 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		C1D2E3F40516273849A5B6C7 /* Bundle Remote Media Runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/scripts/prepare-remote-media-runtime.sh",
+			);
+			name = "Bundle Remote Media Runtime";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/RemoteMediaRuntime/yt-dlp_macos",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/RemoteMediaRuntime/deno",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/RemoteMediaRuntime/yt-dlp-LICENSE.txt",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/RemoteMediaRuntime/yt-dlp-THIRD-PARTY-LICENSES.txt",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/RemoteMediaRuntime/deno-LICENSE.md",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"${SRCROOT}/scripts/prepare-remote-media-runtime.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		96B8F1370A2B9909FCC713D8 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -831,6 +863,7 @@
 				F6597F7A3262A493D769B85B /* Errors.swift in Sources */,
 				6E95C33622E89CBD05C763D5 /* EscapeCancelService.swift in Sources */,
 				F5673AA35E4619FFC4D9AFA0 /* FileTranscriptionBatchService.swift in Sources */,
+				B1C2D3E4F5061728394A5B6C /* RemoteMediaService.swift in Sources */,
 				E4DA7F7432AC5A880F8D5CE8 /* GeneralSettingsView.swift in Sources */,
 				57FF194266BABFA6EA107750 /* HTTPLogger.swift in Sources */,
 				48D234DA0A725C503B5DEA75 /* HistoryPaletteView.swift in Sources */,

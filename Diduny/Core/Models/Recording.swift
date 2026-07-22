@@ -12,7 +12,7 @@ struct RecordingDeviceInfo: Codable, Equatable {
 
 /// Describes how a recording entered the library via a non-normal stop path.
 /// `nil` on `Recording.recoverySource` means the recording was stopped normally.
-enum RecoverySource: String, Codable, Sendable {
+enum RecoverySource: String, Codable {
     /// The recording was assembled from an orphaned in-progress session directory
     /// (e.g. after a crash, force-quit, or sleep interruption).
     case orphanedSession
@@ -49,6 +49,13 @@ struct Recording: Identifiable, Codable, Equatable {
     /// Byte size of the original imported media. Combined with `sourceFileName`
     /// to avoid treating unrelated same-named files as duplicates.
     var sourceFileSizeBytes: Int64?
+    /// Canonical provider identity for recordings acquired from a remote source.
+    /// Optional so recordings written before URL transcription remain decodable.
+    var remoteSource: RemoteMediaSourceMetadata?
+    /// Provider captions stay separate from Diduny's generated transcript.
+    var sourceCaptionArtifacts: [TranscriptArtifact]?
+    /// Identifies which Diduny provider produced `transcriptionText`.
+    var generatedTranscriptProvenance: GeneratedTranscriptProvenance?
 
     /// Nested to avoid conflict with RecoveryState.RecordingType
     enum RecordingType: String, Codable, CaseIterable {

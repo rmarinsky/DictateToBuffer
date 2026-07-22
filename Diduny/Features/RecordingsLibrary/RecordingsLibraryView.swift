@@ -12,6 +12,7 @@ struct RecordingsLibraryView: View {
     @State private var recordingToDelete: Recording? = nil
     @State private var isSelectionMode = false
     @State private var selectedRecordingIds = Set<UUID>()
+    @State private var recordingToRetranscribe: Recording?
 
     enum RecordingTypeFilter: String, CaseIterable {
         case all = "All"
@@ -117,6 +118,25 @@ struct RecordingsLibraryView: View {
         } message: {
             Text("Delete \(selectedRecordingIds.count) selected recordings? This cannot be undone.")
         }
+        .alert(
+            "Transcribe Again?",
+            isPresented: Binding(
+                get: { recordingToRetranscribe != nil },
+                set: { if !$0 { recordingToRetranscribe = nil } }
+            )
+        ) {
+            Button("Replace Generated Transcript", role: .destructive) {
+                if let recordingToRetranscribe {
+                    queueService.enqueue([recordingToRetranscribe.id], action: .transcribe)
+                }
+                recordingToRetranscribe = nil
+            }
+            Button("Cancel", role: .cancel) {
+                recordingToRetranscribe = nil
+            }
+        } message: {
+            Text("This replaces the generated transcript. Source captions and YouTube identity stay unchanged.")
+        }
     }
 
     // MARK: - Header
@@ -138,9 +158,22 @@ struct RecordingsLibraryView: View {
             .accessibilityIdentifier("Transcribe files")
 
             Button {
+                BatchTranscriptionWindowController.shared.selectYouTubeURLsForNewBatch()
+            } label: {
+                Label("Transcribe YouTube URLs…", systemImage: "play.rectangle.on.rectangle")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .keyboardShortcut("u", modifiers: [.command, .shift])
+            .help("Transcribe YouTube URLs (⇧⌘U)")
+
+            Button {
                 toggleSelectionMode()
             } label: {
-                Label(isSelectionMode ? "Done" : "Select", systemImage: isSelectionMode ? "checkmark.circle" : "checklist")
+                Label(
+                    isSelectionMode ? "Done" : "Select",
+                    systemImage: isSelectionMode ? "checkmark.circle" : "checklist"
+                )
             }
             .labelStyle(.titleAndIcon)
             .buttonStyle(.bordered)
@@ -169,7 +202,10 @@ struct RecordingsLibraryView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(Color(.quaternaryLabelColor).opacity(0.1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(
+                Color(.quaternaryLabelColor).opacity(0.1),
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
         }
     }
 
@@ -243,7 +279,7 @@ struct RecordingsLibraryView: View {
                         isSelected: selectedRecordingIds.contains(recording.id),
                         onToggleSelection: { toggleSelection(for: recording) }
                     )
-                        .contextMenu { recordingContextMenu(for: recording) }
+                    .contextMenu { recordingContextMenu(for: recording) }
                     if index < filteredRecordings.count - 1 {
                         Divider()
                             .padding(.horizontal, 16)
@@ -273,7 +309,7 @@ struct RecordingsLibraryView: View {
 
     @ViewBuilder
     private func recordingContextMenu(for recording: Recording) -> some View {
-        Button("Transcribe") {
+        Button(recording.remoteSource == nil ? "Transcribe" : "Transcribe Again…") {
             transcribe(recording)
         }
         .disabled(recording.status == .processing)
@@ -317,7 +353,13 @@ struct RecordingsLibraryView: View {
     }
 
     private func transcribe(_ recording: Recording) {
-        queueService.enqueue([recording.id], action: .transcribe)
+        if recording.remoteSource != nil,
+           !(recording.transcriptionText?.isEmpty ?? true)
+        {
+            recordingToRetranscribe = recording
+        } else {
+            queueService.enqueue([recording.id], action: .transcribe)
+        }
     }
 
     private func requestDelete(_ recording: Recording) {

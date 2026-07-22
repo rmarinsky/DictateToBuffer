@@ -43,7 +43,10 @@ final class RecordingsLibraryStorage {
         sourceDevice: RecordingDeviceInfo? = nil,
         translationTargetLanguageCode: String? = nil,
         sourceFileName: String? = nil,
-        sourceFileSizeBytes: Int64? = nil
+        sourceFileSizeBytes: Int64? = nil,
+        remoteSource: RemoteMediaSourceMetadata? = nil,
+        sourceCaptionArtifacts: [TranscriptArtifact]? = nil,
+        generatedTranscriptProvenance: GeneratedTranscriptProvenance? = nil
     ) -> UUID? {
         guard shouldSaveRecording(type: type) else { return nil }
 
@@ -77,7 +80,10 @@ final class RecordingsLibraryStorage {
             sourceDevice: sourceDevice,
             translationTargetLanguageCode: translationTargetLanguageCode,
             sourceFileName: sourceFileName,
-            sourceFileSizeBytes: sourceFileSizeBytes
+            sourceFileSizeBytes: sourceFileSizeBytes,
+            remoteSource: remoteSource,
+            sourceCaptionArtifacts: sourceCaptionArtifacts,
+            generatedTranscriptProvenance: generatedTranscriptProvenance
         )
 
         recordings.insert(recording, at: 0)
@@ -99,7 +105,10 @@ final class RecordingsLibraryStorage {
         sourceDevice: RecordingDeviceInfo? = nil,
         translationTargetLanguageCode: String? = nil,
         sourceFileName: String? = nil,
-        sourceFileSizeBytes: Int64? = nil
+        sourceFileSizeBytes: Int64? = nil,
+        remoteSource: RemoteMediaSourceMetadata? = nil,
+        sourceCaptionArtifacts: [TranscriptArtifact]? = nil,
+        generatedTranscriptProvenance: GeneratedTranscriptProvenance? = nil
     ) -> UUID? {
         guard shouldSaveRecording(type: type) else { return nil }
 
@@ -142,7 +151,10 @@ final class RecordingsLibraryStorage {
             sourceDevice: sourceDevice,
             translationTargetLanguageCode: translationTargetLanguageCode,
             sourceFileName: sourceFileName,
-            sourceFileSizeBytes: sourceFileSizeBytes
+            sourceFileSizeBytes: sourceFileSizeBytes,
+            remoteSource: remoteSource,
+            sourceCaptionArtifacts: sourceCaptionArtifacts,
+            generatedTranscriptProvenance: generatedTranscriptProvenance
         )
 
         recordings.insert(recording, at: 0)
@@ -208,6 +220,25 @@ final class RecordingsLibraryStorage {
         }
         if status == .transcribed || status == .translated {
             recordings[index].processedAt = Date()
+        }
+        saveMetadata()
+    }
+
+    func updateRemoteArtifacts(
+        id: UUID,
+        remoteSource: RemoteMediaSourceMetadata? = nil,
+        sourceCaptionArtifacts: [TranscriptArtifact]? = nil,
+        generatedTranscriptProvenance: GeneratedTranscriptProvenance? = nil
+    ) {
+        guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
+        if let remoteSource {
+            recordings[index].remoteSource = remoteSource
+        }
+        if let sourceCaptionArtifacts {
+            recordings[index].sourceCaptionArtifacts = sourceCaptionArtifacts
+        }
+        if let generatedTranscriptProvenance {
+            recordings[index].generatedTranscriptProvenance = generatedTranscriptProvenance
         }
         saveMetadata()
     }
@@ -332,7 +363,6 @@ final class RecordingsLibraryStorage {
         }
     }
 
-
     private func shouldSaveRecording(type: Recording.RecordingType) -> Bool {
         let policy = SettingsStorage.shared.historyRetentionPolicy(for: type)
         guard policy.savesNewRecordings else {
@@ -385,7 +415,10 @@ final class RecordingsLibraryStorage {
                 translationTargetLanguageCode: recording.translationTargetLanguageCode,
                 recoverySource: recording.recoverySource,
                 sourceFileName: recording.sourceFileName,
-                sourceFileSizeBytes: recording.sourceFileSizeBytes
+                sourceFileSizeBytes: recording.sourceFileSizeBytes,
+                remoteSource: recording.remoteSource,
+                sourceCaptionArtifacts: recording.sourceCaptionArtifacts,
+                generatedTranscriptProvenance: recording.generatedTranscriptProvenance
             )
             saveMetadata()
 

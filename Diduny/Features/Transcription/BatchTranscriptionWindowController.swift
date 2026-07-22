@@ -7,6 +7,7 @@ final class BatchTranscriptionWindowController {
     static let shared = BatchTranscriptionWindowController()
 
     private var window: NSWindow?
+    private var urlImportWindow: NSWindow?
     private var windowDelegate: BatchTranscriptionWindowDelegate?
 
     var isVisible: Bool {
@@ -27,6 +28,33 @@ final class BatchTranscriptionWindowController {
         service.add(urls: urls)
         service.startIfNeeded()
         showWindow()
+    }
+
+    func selectYouTubeURLsForNewBatch() {
+        presentYouTubeURLImporter(startsNewBatch: true)
+    }
+
+    func addYouTubeURLs() {
+        presentYouTubeURLImporter(startsNewBatch: false)
+    }
+
+    func openYouTubeInSelectedChrome() {
+        guard let profileID = SettingsStorage.shared.selectedChromeProfileID,
+              let chromeURL = NSWorkspace.shared.urlForApplication(
+                  withBundleIdentifier: "com.google.Chrome"
+              ),
+              let youtubeURL = URL(string: "https://www.youtube.com/")
+        else { return }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.arguments = [
+            "--profile-directory=\(profileID)",
+            youtubeURL.absoluteString
+        ]
+        NSWorkspace.shared.openApplication(
+            at: chromeURL,
+            configuration: configuration
+        )
     }
 
     func showWindow() {
@@ -77,6 +105,39 @@ final class BatchTranscriptionWindowController {
         }
         window.delegate = windowDelegate
         self.window = window
+    }
+
+    private func presentYouTubeURLImporter(startsNewBatch: Bool) {
+        showWindow()
+        guard urlImportWindow == nil, let window else { return }
+
+        let importView = YouTubeURLImportView(
+            onCancel: { [weak self] in self?.dismissYouTubeURLImporter() },
+            onSubmit: { [weak self] sources, profileID in
+                SettingsStorage.shared.selectedChromeProfileID = profileID
+                SettingsStorage.shared.remoteMediaRightsAcknowledged = true
+                let service = FileTranscriptionBatchService.shared
+                if startsNewBatch {
+                    service.beginBatch(remoteSources: sources)
+                } else {
+                    service.add(remoteSources: sources)
+                    service.startIfNeeded()
+                }
+                self?.dismissYouTubeURLImporter()
+            }
+        )
+        let sheet = NSWindow(contentViewController: NSHostingController(rootView: importView))
+        sheet.title = "Transcribe YouTube URLs"
+        sheet.styleMask = [.titled, .closable]
+        sheet.contentMinSize = NSSize(width: 560, height: 430)
+        urlImportWindow = sheet
+        window.beginSheet(sheet)
+    }
+
+    private func dismissYouTubeURLImporter() {
+        guard let sheet = urlImportWindow else { return }
+        window?.endSheet(sheet)
+        urlImportWindow = nil
     }
 }
 
@@ -180,6 +241,14 @@ private struct BatchTranscriptionView: View {
                 }
                 .keyboardShortcut("o", modifiers: .command)
                 .help("Add audio or video files (⌘O)")
+
+                Button {
+                    BatchTranscriptionWindowController.shared.addYouTubeURLs()
+                } label: {
+                    Label("Add URLs", systemImage: "link.badge.plus")
+                }
+                .keyboardShortcut("u", modifiers: .command)
+                .help("Add YouTube URLs (⌘U)")
             }
 
             if let error = service.batchError {
@@ -189,8 +258,32 @@ private struct BatchTranscriptionView: View {
                     Text(error)
                         .font(.system(size: 12))
                     Spacer()
+                    if service.isAuthorizationPaused {
+                        Menu("Chrome Profile") {
+                            ForEach(ChromeProfileStore.discover()) { profile in
+                                Button {
+                                    SettingsStorage.shared.selectedChromeProfileID = profile.id
+                                } label: {
+                                    if SettingsStorage.shared.selectedChromeProfileID == profile.id {
+                                        Label(profile.name, systemImage: "checkmark")
+                                    } else {
+                                        Text(profile.name)
+                                    }
+                                }
+                            }
+                        }
+                        .controlSize(.small)
+                        Button("Open YouTube") {
+                            BatchTranscriptionWindowController.shared.openYouTubeInSelectedChrome()
+                        }
+                        .controlSize(.small)
+                    }
                     Button("Try Again") {
-                        service.startIfNeeded()
+                        if service.isAuthorizationPaused {
+                            service.retryAuthorization()
+                        } else {
+                            service.startIfNeeded()
+                        }
                     }
                     .controlSize(.small)
                 }
@@ -284,5 +377,122 @@ private struct BatchTranscriptionView: View {
             return "\(service.completedCount) available · \(service.duplicateCount) duplicates reused"
         }
         return "\(service.completedCount) of \(service.items.count) completed"
+    }
+}
+
+private struct YouTubeURLImportView: View {
+    let onCancel: () -> Void
+    let onSubmit: ([YouTubeRemoteMediaSource], String) -> Void
+
+    private let profiles: [ChromeProfile]
+    @State private var rawURLs = ""
+    @State private var selectedProfileID: String
+    @State private var rightsAcknowledged: Bool
+    @State private var validationMessage: String?
+
+    init(
+        onCancel: @escaping () -> Void,
+        onSubmit: @escaping ([YouTubeRemoteMediaSource], String) -> Void
+    ) {
+        self.onCancel = onCancel
+        self.onSubmit = onSubmit
+        let profiles = ChromeProfileStore.discover()
+        self.profiles = profiles
+        let storedProfile = SettingsStorage.shared.selectedChromeProfileID
+        _selectedProfileID = State(
+            initialValue: profiles.contains(where: { $0.id == storedProfile })
+                ? storedProfile ?? ""
+                : profiles.first?.id ?? ""
+        )
+        _rightsAcknowledged = State(
+            initialValue: SettingsStorage.shared.remoteMediaRightsAcknowledged
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Transcribe YouTube URLs")
+                    .font(.title2.bold())
+                Text("Add individual videos or Shorts, one URL per line.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+
+            TextEditor(text: $rawURLs)
+                .font(.system(size: 13, design: .monospaced))
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .background(Color(.textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color(.separatorColor), lineWidth: 0.5)
+                }
+                .frame(minHeight: 150)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Picker("Chrome profile", selection: $selectedProfileID) {
+                    ForEach(profiles) { profile in
+                        Text(profile.name).tag(profile.id)
+                    }
+                }
+                .disabled(profiles.isEmpty)
+
+                Label(
+                    "Chrome keeps your YouTube session. Diduny remembers only the selected profile and never stores Google credentials.",
+                    systemImage: "hand.raised"
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            }
+
+            if !SettingsStorage.shared.remoteMediaRightsAcknowledged {
+                Toggle(
+                    "I own this content or have permission to transcribe it.",
+                    isOn: $rightsAcknowledged
+                )
+                .toggleStyle(.checkbox)
+            }
+
+            if profiles.isEmpty {
+                Text("No Google Chrome profiles were found. Open Chrome once, then try again.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+            } else if let validationMessage {
+                Text(validationMessage)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.red)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button("Add to Batch", action: submit)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(
+                        rawURLs.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            || selectedProfileID.isEmpty
+                            || !rightsAcknowledged
+                    )
+            }
+        }
+        .padding(20)
+        .frame(width: 560, height: 430)
+    }
+
+    private func submit() {
+        do {
+            let sources = try YouTubeRemoteMediaSource.normalizeBatch(rawURLs)
+            guard !sources.isEmpty else {
+                validationMessage = "Add at least one YouTube video URL."
+                return
+            }
+            validationMessage = nil
+            onSubmit(sources, selectedProfileID)
+        } catch {
+            validationMessage = error.localizedDescription
+        }
     }
 }

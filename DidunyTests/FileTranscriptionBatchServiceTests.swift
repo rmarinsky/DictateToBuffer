@@ -1,6 +1,280 @@
 @testable import Diduny
 import XCTest
 
+final class YouTubeRemoteMediaSourceTests: XCTestCase {
+    func test_normalize_acceptsWatchShareShortsAndParameterizedURLs() throws {
+        let urls = [
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://youtu.be/dQw4w9WgXcQ?t=42",
+            "https://youtube.com/shorts/dQw4w9WgXcQ?feature=share",
+            "https://m.youtube.com/watch?list=PL123&v=dQw4w9WgXcQ"
+        ]
+
+        let sources = try urls.map(YouTubeRemoteMediaSource.normalize)
+
+        XCTAssertEqual(Set(sources.map(\.mediaID)), ["dQw4w9WgXcQ"])
+        XCTAssertEqual(
+            Set(sources.map(\.canonicalURL.absoluteString)),
+            ["https://www.youtube.com/watch?v=dQw4w9WgXcQ"]
+        )
+    }
+
+    func test_normalize_rejectsPlaylistOtherProviderAndMalformedVideoID() {
+        XCTAssertThrowsError(try YouTubeRemoteMediaSource.normalize("https://youtube.com/playlist?list=PL123"))
+        XCTAssertThrowsError(try YouTubeRemoteMediaSource.normalize("https://vimeo.com/123456"))
+        XCTAssertThrowsError(try YouTubeRemoteMediaSource.normalize("https://youtu.be/not-valid"))
+    }
+
+    func test_normalizeBatch_removesRepeatedCanonicalVideoIDs() throws {
+        let sources = try YouTubeRemoteMediaSource.normalizeBatch(
+            """
+            https://youtu.be/dQw4w9WgXcQ
+            https://youtube.com/watch?v=dQw4w9WgXcQ&t=10
+            https://youtube.com/shorts/aqz-KE-bpKQ
+            """
+        )
+
+        XCTAssertEqual(sources.map(\.mediaID), ["dQw4w9WgXcQ", "aqz-KE-bpKQ"])
+    }
+
+    func test_captionSelection_prefersAuthoredOriginalLanguageThenAutomatic() {
+        let authored = RemoteCaptionTrack(
+            languageCode: "uk",
+            displayName: "Ukrainian",
+            kind: .authored
+        )
+        let automatic = RemoteCaptionTrack(
+            languageCode: "uk-orig",
+            displayName: "Ukrainian (auto-generated)",
+            kind: .automatic
+        )
+
+        XCTAssertEqual(
+            RemoteCaptionTrack.preferred(
+                authored: [authored],
+                automatic: [automatic],
+                originalLanguageCode: "uk"
+            ),
+            authored
+        )
+        XCTAssertEqual(
+            RemoteCaptionTrack.preferred(
+                authored: [],
+                automatic: [automatic],
+                originalLanguageCode: "uk"
+            ),
+            automatic
+        )
+        XCTAssertNil(
+            RemoteCaptionTrack.preferred(
+                authored: [
+                    RemoteCaptionTrack(
+                        languageCode: "de",
+                        displayName: "German",
+                        kind: .authored
+                    )
+                ],
+                automatic: [],
+                originalLanguageCode: "uk"
+            )
+        )
+        XCTAssertNil(
+            RemoteCaptionTrack.preferred(
+                authored: [authored],
+                automatic: [automatic],
+                originalLanguageCode: nil
+            )
+        )
+    }
+
+    func test_extractorFailureClassificationDistinguishesPrivateVideoFromExpiredSession() {
+        XCTAssertEqual(
+            BundledRemoteMediaExtractor.classifyFailure(Data("Private video".utf8)),
+            .sourceUnavailable
+        )
+        XCTAssertEqual(
+            BundledRemoteMediaExtractor.classifyFailure(Data("Sign in to confirm".utf8)),
+            .authorizationRequired
+        )
+    }
+
+    func test_metadataDecoder_selectsCompatibleAudioOnlyFormatAndOriginalCaptions() throws {
+        let json = """
+        {
+          "id": "dQw4w9WgXcQ",
+          "title": "A video",
+          "uploader": "A channel",
+          "duration": 125.5,
+          "original_language": "uk",
+          "is_live": false,
+          "availability": "public",
+          "formats": [
+            {"format_id":"video","ext":"mp4","acodec":"none","vcodec":"avc1","tbr":900},
+            {"format_id":"audio-low","ext":"m4a","acodec":"mp4a.40.2","vcodec":"none","abr":64},
+            {"format_id":"audio-best","ext":"m4a","acodec":"mp4a.40.2","vcodec":"none","abr":128}
+          ],
+          "subtitles": {"uk":[{"name":"Ukrainian","ext":"vtt"}]},
+          "automatic_captions": {"uk-orig":[{"name":"Ukrainian (auto-generated)","ext":"vtt"}]}
+        }
+        """
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+
+        let metadata = try RemoteMediaMetadata.decodeYTDLPJSON(Data(json.utf8), expectedSource: source)
+
+        XCTAssertEqual(metadata.source.title, "A video")
+        XCTAssertEqual(metadata.source.channelName, "A channel")
+        XCTAssertEqual(metadata.audioFormatID, "audio-best")
+        XCTAssertEqual(metadata.preferredCaption?.kind, .authored)
+        XCTAssertEqual(metadata.durationSeconds, 125.5, accuracy: 0.001)
+    }
+
+    func test_metadataDecoder_rejectsLiveAndMissingAudioOnlyFormats() throws {
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+        let liveJSON = """
+        {"id":"dQw4w9WgXcQ","title":"Live","duration":1,"is_live":true,"formats":[]}
+        """
+        let videoOnlyJSON = """
+        {"id":"dQw4w9WgXcQ","title":"Video","duration":1,"is_live":false,
+         "formats":[{"format_id":"video","ext":"mp4","acodec":"none","vcodec":"avc1"}]}
+        """
+
+        XCTAssertThrowsError(try RemoteMediaMetadata.decodeYTDLPJSON(Data(liveJSON.utf8), expectedSource: source)) {
+            XCTAssertEqual($0 as? RemoteMediaExtractorError, .unsupportedLiveStream)
+        }
+        XCTAssertThrowsError(try RemoteMediaMetadata.decodeYTDLPJSON(
+            Data(videoOnlyJSON.utf8),
+            expectedSource: source
+        )) {
+            XCTAssertEqual($0 as? RemoteMediaExtractorError, .noAudioOnlyStream)
+        }
+    }
+
+    func test_webVTTParser_removesTimingMarkupAndRepeatedCaptionFrames() {
+        let vtt = """
+        WEBVTT
+
+        00:00:00.000 --> 00:00:01.000
+        <c>Привіт</c>
+
+        00:00:01.000 --> 00:00:02.000
+        <c>Привіт</c>
+
+        00:00:02.000 --> 00:00:03.000
+        світе
+        """
+
+        XCTAssertEqual(WebVTTTranscriptParser.parse(vtt), "Привіт\nсвіте")
+    }
+
+    func test_chromeProfileDiscovery_returnsOnlyExistingProfileDirectories() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DidunyChromeProfiles-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("Default"),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("Profile 2"),
+            withIntermediateDirectories: true
+        )
+        let localState = """
+        {"profile":{"info_cache":{
+          "Default":{"name":"Roman"},
+          "Profile 2":{"name":"Work"},
+          "Profile 9":{"name":"Deleted"}
+        }}}
+        """
+        try Data(localState.utf8).write(to: root.appendingPathComponent("Local State"))
+
+        let profiles = ChromeProfileStore.discover(in: root)
+
+        XCTAssertEqual(profiles.map(\.id), ["Default", "Profile 2"])
+        XCTAssertEqual(profiles.map(\.name), ["Roman", "Work"])
+    }
+
+    func test_runtimeArguments_useSelectedChromeProfileBundledDenoAndExactAudioFormat() throws {
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+        let profile = ChromeProfile(id: "Profile 2", name: "Work")
+        let denoURL = URL(fileURLWithPath: "/Applications/Diduny.app/Contents/Resources/deno")
+
+        let metadata = BundledRemoteMediaExtractor.metadataArguments(
+            source: source,
+            profile: profile,
+            denoURL: denoURL
+        )
+        let download = BundledRemoteMediaExtractor.downloadArguments(
+            source: source,
+            profile: profile,
+            denoURL: denoURL,
+            audioFormatID: "audio-best",
+            outputTemplate: "/tmp/source.%(ext)s"
+        )
+
+        XCTAssertTrue(metadata.contains("chrome:Profile 2"))
+        XCTAssertTrue(metadata.contains("deno:\(denoURL.path)"))
+        XCTAssertTrue(metadata.contains("--dump-single-json"))
+        XCTAssertTrue(download.contains("audio-best"))
+        XCTAssertTrue(download.contains("--no-playlist"))
+        XCTAssertFalse(download.contains(where: { $0.contains("bestvideo") }))
+    }
+
+    func test_remoteDuplicateMatcher_prefersProviderIdentityAndSupportsLegacyTitleDurationFallback() throws {
+        let source = try RemoteMediaSourceMetadata(
+            provider: YouTubeRemoteMediaSource.provider,
+            mediaID: "dQw4w9WgXcQ",
+            canonicalURL: XCTUnwrap(URL(string: "https://www.youtube.com/watch?v=dQw4w9WgXcQ")),
+            title: "A Useful Video",
+            channelName: "Channel"
+        )
+        let exact = makeRemoteRecording(
+            sourceFileName: "different.mov",
+            duration: 10,
+            remoteSource: source
+        )
+        var legacy = makeRemoteRecording(
+            sourceFileName: "A Useful Video.mp4",
+            duration: 121.4,
+            remoteSource: nil
+        )
+
+        XCTAssertTrue(RemoteRecordingDuplicateMatcher.matches(exact, metadata: source, durationSeconds: 999))
+        XCTAssertTrue(RemoteRecordingDuplicateMatcher.matches(legacy, metadata: source, durationSeconds: 120))
+        XCTAssertFalse(RemoteRecordingDuplicateMatcher.matches(legacy, metadata: source, durationSeconds: 124))
+
+        legacy.status = .failed
+        legacy.transcriptionText = nil
+        legacy.sourceCaptionArtifacts = [
+            TranscriptArtifact(
+                text: "Reusable captions",
+                languageCode: "en",
+                provenance: .youtubeAuthored
+            )
+        ]
+        XCTAssertTrue(RemoteRecordingDuplicateMatcher.matches(legacy, metadata: source, durationSeconds: 120))
+    }
+
+    private func makeRemoteRecording(
+        sourceFileName: String,
+        duration: TimeInterval,
+        remoteSource: RemoteMediaSourceMetadata?
+    ) -> Recording {
+        Recording(
+            id: UUID(),
+            createdAt: Date(),
+            type: .fileTranscription,
+            audioFileName: "audio.m4a",
+            durationSeconds: duration,
+            fileSizeBytes: 10,
+            status: .translated,
+            transcriptionText: "Existing",
+            sourceDevice: nil,
+            sourceFileName: sourceFileName,
+            remoteSource: remoteSource
+        )
+    }
+}
+
 @MainActor
 final class FileTranscriptionBatchServiceTests: XCTestCase {
     func test_add_skipsDuplicateURLsWithinActiveBatch() {
@@ -16,6 +290,291 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         service.add(urls: [first, first, URL(fileURLWithPath: "/tmp/second.mp3")])
 
         XCTAssertEqual(service.items.map(\.sourceURL), [first, URL(fileURLWithPath: "/tmp/second.mp3")])
+    }
+
+    func test_addRemoteSources_skipsRepeatedCanonicalVideoIDs() throws {
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(),
+            recordingStore: BatchTestRecordingStore(),
+            remoteExtractor: BatchTestRemoteExtractor(),
+            chromeProfile: { ChromeProfile(id: "Default", name: "Roman") },
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+
+        service.add(remoteSources: [source, source])
+
+        XCTAssertEqual(service.items.count, 1)
+        XCTAssertEqual(service.items.first?.remoteSource?.mediaID, "dQw4w9WgXcQ")
+    }
+
+    func test_remoteAuthorizationPausesWholeBatchAndExplicitRetryCompletes() async throws {
+        let extractor = BatchTestRemoteExtractor(metadataAuthorizationFailureCount: 1)
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(),
+            recordingStore: BatchTestRecordingStore(),
+            remoteExtractor: extractor,
+            chromeProfile: { ChromeProfile(id: "Default", name: "Roman") },
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+        let first = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+        let second = try YouTubeRemoteMediaSource.normalize("https://youtu.be/aqz-KE-bpKQ")
+
+        service.beginBatch(remoteSources: [first, second])
+        try await waitUntil {
+            !service.isProcessing
+                && service.items.allSatisfy { $0.status == .authorizationPaused }
+        }
+
+        XCTAssertEqual(extractor.downloadCallCount, 0)
+        service.retryAuthorization()
+        try await waitUntil { !service.isProcessing && service.completedCount == 2 }
+
+        XCTAssertEqual(service.items.map(\.status), [.completed, .completed])
+        XCTAssertGreaterThanOrEqual(extractor.metadataCallCount, 3)
+    }
+
+    func test_stopBatchDuringRemotePreflightMarksItemsCancelledWithoutAcquisition() async throws {
+        let extractor = BatchTestRemoteExtractor(metadataDelay: .milliseconds(500))
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(),
+            recordingStore: BatchTestRecordingStore(),
+            remoteExtractor: extractor,
+            chromeProfile: { ChromeProfile(id: "Default", name: "Roman") },
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+
+        service.beginBatch(remoteSources: [source])
+        try await waitUntil { service.items.first?.status == .checkingLink }
+        service.cancelAll()
+        try await waitUntil { !service.isProcessing }
+
+        XCTAssertEqual(service.items.first?.status, .cancelled)
+        XCTAssertEqual(extractor.downloadCallCount, 0)
+    }
+
+    func test_stopBatchCancelsMetadataRequestsWaitingForPermit() async throws {
+        let extractor = BatchTestRemoteExtractor(metadataDelay: .milliseconds(500))
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(),
+            recordingStore: BatchTestRecordingStore(),
+            remoteExtractor: extractor,
+            chromeProfile: { ChromeProfile(id: "Default", name: "Roman") },
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+        let ids = ["dQw4w9WgXcQ", "aqz-KE-bpKQ", "M7lc1UVf-VE", "jNQXAC9IVRw"]
+        let sources = try ids.map {
+            try YouTubeRemoteMediaSource.normalize("https://youtu.be/\($0)")
+        }
+
+        service.beginBatch(remoteSources: sources)
+        try await waitUntil { extractor.metadataCallCount == 3 }
+        service.cancelAll()
+        try await waitUntil { !service.isProcessing }
+        try await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(extractor.metadataCallCount, 3)
+        XCTAssertEqual(extractor.downloadCallCount, 0)
+        XCTAssertTrue(service.items.allSatisfy { $0.status == .cancelled })
+    }
+
+    func test_remoteCaptionSurvivesGeneratedTranscriptFailureAsPartialResult() async throws {
+        let caption = TranscriptArtifact(
+            text: "Provider captions",
+            languageCode: "uk",
+            provenance: .youtubeAuthored
+        )
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(failureCount: 1),
+            recordingStore: BatchTestRecordingStore(),
+            remoteExtractor: BatchTestRemoteExtractor(caption: caption),
+            chromeProfile: { ChromeProfile(id: "Default", name: "Roman") },
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+
+        service.beginBatch(remoteSources: [source])
+        try await waitUntil { !service.isProcessing && service.finishedCount == 1 }
+
+        XCTAssertEqual(service.items.first?.status, .partialResult)
+        XCTAssertEqual(service.items.first?.sourceCaptionArtifacts, [caption])
+        XCTAssertNil(service.items.first?.transcriptionText)
+    }
+
+    func test_remoteCaptionRetryDoesNotRegenerateCompletedTranscript() async throws {
+        let caption = TranscriptArtifact(
+            text: "Provider captions",
+            languageCode: "uk",
+            provenance: .youtubeAuthored
+        )
+        let extractor = BatchTestRemoteExtractor(
+            caption: caption,
+            captionFailureCount: 1
+        )
+        let transcriber = BatchTestTranscriber()
+        let store = BatchTestRecordingStore(storesRemoteAudio: true)
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: transcriber,
+            recordingStore: store,
+            remoteExtractor: extractor,
+            chromeProfile: { ChromeProfile(id: "Default", name: "Roman") },
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+
+        service.beginBatch(remoteSources: [source])
+        try await waitUntil { !service.isProcessing && service.finishedCount == 1 }
+        XCTAssertEqual(service.items.first?.status, .partialResult)
+        XCTAssertNotNil(service.items.first?.transcriptionText)
+
+        service.retryFailed()
+        try await waitUntil { !service.isProcessing && service.completedCount == 1 }
+
+        XCTAssertEqual(transcriber.transcribedFileNames.count, 1)
+        XCTAssertEqual(service.items.first?.sourceCaptionArtifacts, [caption])
+        XCTAssertEqual(store.updatedCaptionArtifacts, [caption])
+    }
+
+    func test_remoteAcquisitionNeverExceedsTwoConcurrentDownloads() async throws {
+        let extractor = BatchTestRemoteExtractor(downloadDelay: .milliseconds(80))
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(delay: .milliseconds(80)),
+            recordingStore: BatchTestRecordingStore(),
+            remoteExtractor: extractor,
+            chromeProfile: { ChromeProfile(id: "Default", name: "Roman") },
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+        let ids = ["dQw4w9WgXcQ", "aqz-KE-bpKQ", "M7lc1UVf-VE", "jNQXAC9IVRw"]
+        let sources = try ids.map {
+            try YouTubeRemoteMediaSource.normalize("https://youtu.be/\($0)")
+        }
+
+        service.beginBatch(remoteSources: sources)
+        try await waitUntil { !service.isProcessing && service.completedCount == 4 }
+
+        XCTAssertEqual(extractor.maximumConcurrentDownloadCount, 2)
+    }
+
+    func test_addRemoteSource_reusesProviderIdentityWithoutAcquisition() throws {
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+        let recordingID = UUID()
+        let extractor = BatchTestRemoteExtractor()
+        let caption = TranscriptArtifact(
+            text: "Existing captions",
+            languageCode: "en",
+            provenance: .youtubeAuthored
+        )
+        let store = BatchTestRecordingStore(
+            remoteDuplicate: BatchTranscriptionDuplicate(
+                recordingID: recordingID,
+                transcriptionText: "Existing transcript",
+                durationSeconds: 90,
+                sourceCaptionArtifacts: [caption]
+            ),
+            matchingRemoteMediaID: source.mediaID
+        )
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(),
+            recordingStore: store,
+            remoteExtractor: extractor,
+            chromeProfile: { ChromeProfile(id: "Default", name: "Roman") },
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+
+        service.beginBatch(remoteSources: [source])
+
+        XCTAssertEqual(service.items.first?.status, .duplicate)
+        XCTAssertEqual(service.items.first?.recordingID, recordingID)
+        XCTAssertEqual(extractor.metadataCallCount, 0)
+    }
+
+    func test_remoteDuplicateWithMissingCaptionsRetrievesOnlyCaptionArtifact() async throws {
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+        let caption = TranscriptArtifact(
+            text: "New captions",
+            languageCode: "en",
+            provenance: .youtubeAuthored
+        )
+        let recordingID = UUID()
+        let extractor = BatchTestRemoteExtractor(caption: caption)
+        let transcriber = BatchTestTranscriber()
+        let store = BatchTestRecordingStore(
+            remoteDuplicate: BatchTranscriptionDuplicate(
+                recordingID: recordingID,
+                transcriptionText: "Existing transcript",
+                durationSeconds: 90
+            ),
+            matchingRemoteMediaID: source.mediaID
+        )
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: transcriber,
+            recordingStore: store,
+            remoteExtractor: extractor,
+            chromeProfile: { ChromeProfile(id: "Default", name: "Roman") },
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+
+        service.beginBatch(remoteSources: [source])
+        try await waitUntil { !service.isProcessing && service.completedCount == 1 }
+
+        XCTAssertTrue(transcriber.transcribedFileNames.isEmpty)
+        XCTAssertEqual(extractor.downloadCallCount, 0)
+        XCTAssertEqual(service.items.first?.transcriptionText, "Existing transcript")
+        XCTAssertEqual(service.items.first?.sourceCaptionArtifacts, [caption])
+        XCTAssertEqual(store.updatedCaptionArtifacts, [caption])
+    }
+
+    func test_captionOnlyDuplicateWithoutStoredAudioIsReacquired() async throws {
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+        let caption = TranscriptArtifact(
+            text: "Existing captions",
+            languageCode: "en",
+            provenance: .youtubeAuthored
+        )
+        let extractor = BatchTestRemoteExtractor()
+        let store = BatchTestRecordingStore(
+            remoteDuplicate: BatchTranscriptionDuplicate(
+                recordingID: UUID(),
+                transcriptionText: nil,
+                durationSeconds: 90,
+                sourceCaptionArtifacts: [caption]
+            ),
+            matchingRemoteMediaID: source.mediaID
+        )
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(),
+            recordingStore: store,
+            remoteExtractor: extractor,
+            chromeProfile: { ChromeProfile(id: "Default", name: "Roman") },
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+
+        service.beginBatch(remoteSources: [source])
+        try await waitUntil { !service.isProcessing && service.completedCount == 1 }
+
+        XCTAssertEqual(extractor.downloadCallCount, 1)
+        XCTAssertNotNil(service.items.first?.transcriptionText)
     }
 
     func test_cloudBatchProcessesUpToThreeFilesConcurrentlyAndCompletesOnce() async throws {
@@ -42,7 +601,10 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
 
         XCTAssertEqual(service.items.map(\.status), [.completed, .completed, .completed, .completed])
         XCTAssertEqual(transcriber.maximumConcurrentCount, 3)
-        XCTAssertEqual(Set(transcriber.transcribedFileNames), Set(["first.m4a", "second.m4a", "third.m4a", "fourth.m4a"]))
+        XCTAssertEqual(
+            Set(transcriber.transcribedFileNames),
+            Set(["first.m4a", "second.m4a", "third.m4a", "fourth.m4a"])
+        )
         XCTAssertEqual(completionSoundCount, 1)
     }
 
@@ -398,6 +960,103 @@ private final class BatchTestPreparer: FileTranscriptionBatchPreparing {
 }
 
 @MainActor
+private final class BatchTestRemoteExtractor: RemoteMediaExtracting {
+    private var remainingAuthorizationFailures: Int
+    private var remainingCaptionFailures: Int
+    private let caption: TranscriptArtifact?
+    private let metadataDelay: Duration
+    private let downloadDelay: Duration
+    private(set) var metadataCallCount = 0
+    private(set) var downloadCallCount = 0
+    private(set) var maximumConcurrentDownloadCount = 0
+    private var concurrentDownloadCount = 0
+
+    init(
+        metadataAuthorizationFailureCount: Int = 0,
+        caption: TranscriptArtifact? = nil,
+        captionFailureCount: Int = 0,
+        metadataDelay: Duration = .zero,
+        downloadDelay: Duration = .zero
+    ) {
+        remainingAuthorizationFailures = metadataAuthorizationFailureCount
+        remainingCaptionFailures = captionFailureCount
+        self.caption = caption
+        self.metadataDelay = metadataDelay
+        self.downloadDelay = downloadDelay
+    }
+
+    func metadata(
+        for source: YouTubeRemoteMediaSource,
+        profile _: ChromeProfile
+    ) async throws -> RemoteMediaMetadata {
+        metadataCallCount += 1
+        if metadataDelay > .zero {
+            try await Task.sleep(for: metadataDelay)
+        }
+        if remainingAuthorizationFailures > 0 {
+            remainingAuthorizationFailures -= 1
+            throw RemoteMediaExtractorError.authorizationRequired
+        }
+        return RemoteMediaMetadata(
+            source: RemoteMediaSourceMetadata(
+                provider: YouTubeRemoteMediaSource.provider,
+                mediaID: source.mediaID,
+                canonicalURL: source.canonicalURL,
+                title: "Video \(source.mediaID)",
+                channelName: "Channel"
+            ),
+            durationSeconds: 60,
+            audioFormatID: "audio",
+            estimatedAudioBytes: 1024,
+            preferredCaption: caption.map {
+                RemoteCaptionTrack(
+                    languageCode: $0.languageCode,
+                    displayName: $0.languageCode,
+                    kind: $0.provenance == .youtubeAuthored ? .authored : .automatic
+                )
+            }
+        )
+    }
+
+    func retrieveCaption(
+        for _: YouTubeRemoteMediaSource,
+        metadata _: RemoteMediaMetadata,
+        profile _: ChromeProfile
+    ) async throws -> TranscriptArtifact? {
+        if remainingCaptionFailures > 0 {
+            remainingCaptionFailures -= 1
+            throw BatchTestError.captionFailed
+        }
+        return caption
+    }
+
+    func downloadAudio(
+        for source: YouTubeRemoteMediaSource,
+        metadata _: RemoteMediaMetadata,
+        profile _: ChromeProfile,
+        onProgress: @escaping @Sendable (RemoteDownloadProgress) -> Void
+    ) async throws -> RemoteDownloadedAudio {
+        downloadCallCount += 1
+        concurrentDownloadCount += 1
+        maximumConcurrentDownloadCount = max(
+            maximumConcurrentDownloadCount,
+            concurrentDownloadCount
+        )
+        defer { concurrentDownloadCount -= 1 }
+        if downloadDelay > .zero {
+            try await Task.sleep(for: downloadDelay)
+        }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DidunyRemoteBatchTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileURL = directory.appendingPathComponent("\(source.mediaID).m4a")
+        try Data("remote audio".utf8).write(to: fileURL)
+        onProgress(RemoteDownloadProgress(downloadedBytes: 12, totalBytes: 12))
+        return RemoteDownloadedAudio(fileURL: fileURL, temporaryDirectory: directory)
+    }
+}
+
+@MainActor
 private final class BatchTestTranscriber: FileTranscriptionBatchTranscribing {
     private(set) var transcribedFileNames: [String] = []
     private(set) var receivedSettings: [FileTranscriptionSettingsSnapshot] = []
@@ -451,13 +1110,24 @@ private final class BatchTestTranscriber: FileTranscriptionBatchTranscribing {
 private final class BatchTestRecordingStore: FileTranscriptionBatchRecordingStoring {
     private let duplicate: BatchTranscriptionDuplicate?
     private let matchingSourceIdentity: ImportedMediaIdentity?
+    private let remoteDuplicate: BatchTranscriptionDuplicate?
+    private let matchingRemoteMediaID: String?
+    private let storesRemoteAudio: Bool
+    private var storedAudioURLs: [UUID: URL] = [:]
+    private(set) var updatedCaptionArtifacts: [TranscriptArtifact] = []
 
     init(
         duplicate: BatchTranscriptionDuplicate? = nil,
-        matchingSourceIdentity: ImportedMediaIdentity? = nil
+        matchingSourceIdentity: ImportedMediaIdentity? = nil,
+        remoteDuplicate: BatchTranscriptionDuplicate? = nil,
+        matchingRemoteMediaID: String? = nil,
+        storesRemoteAudio: Bool = false
     ) {
         self.duplicate = duplicate
         self.matchingSourceIdentity = matchingSourceIdentity
+        self.remoteDuplicate = remoteDuplicate
+        self.matchingRemoteMediaID = matchingRemoteMediaID
+        self.storesRemoteAudio = storesRemoteAudio
     }
 
     func completedDuplicate(sourceIdentity: ImportedMediaIdentity) -> BatchTranscriptionDuplicate? {
@@ -465,6 +1135,11 @@ private final class BatchTestRecordingStore: FileTranscriptionBatchRecordingStor
             return nil
         }
         return duplicate
+    }
+
+    func completedDuplicate(remoteProvider _: String, mediaID: String) -> BatchTranscriptionDuplicate? {
+        guard matchingRemoteMediaID == nil || matchingRemoteMediaID == mediaID else { return nil }
+        return remoteDuplicate
     }
 
     func savePreparedAudio(
@@ -475,8 +1150,27 @@ private final class BatchTestRecordingStore: FileTranscriptionBatchRecordingStor
         nil
     }
 
-    func audioFileURL(recordingID _: UUID) -> URL? {
-        nil
+    func savePreparedAudio(
+        at audioURL: URL,
+        durationSeconds _: TimeInterval,
+        remoteMetadata _: RemoteMediaSourceMetadata,
+        sourceCaptionArtifacts _: [TranscriptArtifact]
+    ) -> UUID? {
+        guard storesRemoteAudio else { return nil }
+        let recordingID = UUID()
+        let storedURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DidunyStoredRemote-\(recordingID.uuidString).m4a")
+        try? FileManager.default.copyItem(at: audioURL, to: storedURL)
+        storedAudioURLs[recordingID] = storedURL
+        return recordingID
+    }
+
+    func audioFileURL(recordingID: UUID) -> URL? {
+        storedAudioURLs[recordingID]
+    }
+
+    func updateSourceCaptionArtifacts(recordingID _: UUID, artifacts: [TranscriptArtifact]) {
+        updatedCaptionArtifacts = artifacts
     }
 
     func markProcessing(recordingID _: UUID) {}
@@ -488,6 +1182,7 @@ private final class BatchTestRecordingStore: FileTranscriptionBatchRecordingStor
 private enum BatchTestError: Error {
     case preparationFailed
     case transcriptionFailed
+    case captionFailed
 }
 
 private extension FileTranscriptionSettingsSnapshot {
