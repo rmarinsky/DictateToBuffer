@@ -46,6 +46,9 @@ struct Recording: Identifiable, Codable, Equatable {
     /// Original Finder name for explicitly imported media. Optional so metadata
     /// written by older releases remains decodable.
     var sourceFileName: String?
+    /// Byte size of the original imported media. Combined with `sourceFileName`
+    /// to avoid treating unrelated same-named files as duplicates.
+    var sourceFileSizeBytes: Int64?
 
     /// Nested to avoid conflict with RecoveryState.RecordingType
     enum RecordingType: String, Codable, CaseIterable {

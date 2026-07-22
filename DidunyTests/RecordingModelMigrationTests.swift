@@ -69,6 +69,7 @@ final class RecordingModelMigrationTests: XCTestCase {
         let data = try XCTUnwrap(legacyJSON.data(using: .utf8))
         let recordings = try iso8601.decode([Recording].self, from: data)
         XCTAssertNil(recordings[0].sourceFileName)
+        XCTAssertNil(recordings[0].sourceFileSizeBytes)
     }
 
     func test_legacyJSON_originalFieldsIntact() throws {
@@ -148,13 +149,15 @@ final class RecordingModelMigrationTests: XCTestCase {
             status: .transcribed,
             transcriptionText: "Imported transcript",
             sourceDevice: nil,
-            sourceFileName: "Product walkthrough.mov"
+            sourceFileName: "Product walkthrough.mov",
+            sourceFileSizeBytes: 81_920
         )
 
         let data = try iso8601Encoder.encode([original])
         let decoded = try iso8601.decode([Recording].self, from: data)[0]
 
         XCTAssertEqual(decoded.sourceFileName, "Product walkthrough.mov")
+        XCTAssertEqual(decoded.sourceFileSizeBytes, 81_920)
     }
 
     func test_interruptedProcessingResetsToUnprocessedAfterLoad() {

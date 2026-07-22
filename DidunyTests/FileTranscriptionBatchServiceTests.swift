@@ -66,16 +66,21 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertEqual(transcriber.maximumConcurrentCount, 1)
     }
 
-    func test_add_reusesCompletedImportedRecordingAsDuplicate() {
+    func test_add_reusesCompletedImportedRecordingAsDuplicate() throws {
         let recordingID = UUID()
         let preparer = BatchTestPreparer()
         let transcriber = BatchTestTranscriber()
+        let sourceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("already-done-\(UUID().uuidString).mov")
+        try Data("source video".utf8).write(to: sourceURL)
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
         let store = BatchTestRecordingStore(
             duplicate: BatchTranscriptionDuplicate(
                 recordingID: recordingID,
                 transcriptionText: "Existing transcript",
                 durationSeconds: 125
-            )
+            ),
+            matchingSourceIdentity: ImportedMediaIdentity(sourceURL: sourceURL)
         )
         let service = FileTranscriptionBatchService(
             preparer: preparer,
@@ -85,7 +90,7 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
             playCompletionSound: {}
         )
 
-        service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/already-done.mov")])
+        service.beginBatch(urls: [sourceURL])
 
         XCTAssertEqual(service.items.first?.status, .duplicate)
         XCTAssertEqual(service.items.first?.recordingID, recordingID)
@@ -94,6 +99,44 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertTrue(preparer.preparedSourceNames.isEmpty)
         XCTAssertTrue(transcriber.transcribedFileNames.isEmpty)
         XCTAssertFalse(service.isProcessing)
+    }
+
+    func test_add_doesNotReuseSameNameWithDifferentSourceSize() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DidunyDuplicateTests-\(UUID().uuidString)")
+        let firstURL = root.appendingPathComponent("first").appendingPathComponent("shared.mov")
+        let secondURL = root.appendingPathComponent("second").appendingPathComponent("shared.mov")
+        try FileManager.default.createDirectory(
+            at: firstURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: secondURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("first".utf8).write(to: firstURL)
+        try Data("different-size".utf8).write(to: secondURL)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = BatchTestRecordingStore(
+            duplicate: BatchTranscriptionDuplicate(
+                recordingID: UUID(),
+                transcriptionText: "Existing transcript",
+                durationSeconds: 125
+            ),
+            matchingSourceIdentity: ImportedMediaIdentity(sourceURL: firstURL)
+        )
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(),
+            recordingStore: store,
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+
+        service.add(urls: [firstURL, secondURL])
+
+        XCTAssertEqual(service.items.map(\.status), [.duplicate, .queued])
     }
 
     func test_failedFileDoesNotStopRemainingBatch() async throws {
@@ -405,19 +448,27 @@ private final class BatchTestTranscriber: FileTranscriptionBatchTranscribing {
 @MainActor
 private final class BatchTestRecordingStore: FileTranscriptionBatchRecordingStoring {
     private let duplicate: BatchTranscriptionDuplicate?
+    private let matchingSourceIdentity: ImportedMediaIdentity?
 
-    init(duplicate: BatchTranscriptionDuplicate? = nil) {
+    init(
+        duplicate: BatchTranscriptionDuplicate? = nil,
+        matchingSourceIdentity: ImportedMediaIdentity? = nil
+    ) {
         self.duplicate = duplicate
+        self.matchingSourceIdentity = matchingSourceIdentity
     }
 
-    func completedDuplicate(sourceFileName _: String) -> BatchTranscriptionDuplicate? {
-        duplicate
+    func completedDuplicate(sourceIdentity: ImportedMediaIdentity) -> BatchTranscriptionDuplicate? {
+        if let matchingSourceIdentity, matchingSourceIdentity != sourceIdentity {
+            return nil
+        }
+        return duplicate
     }
 
     func savePreparedAudio(
         at _: URL,
         durationSeconds _: TimeInterval,
-        sourceFileName _: String
+        sourceIdentity _: ImportedMediaIdentity
     ) -> UUID? {
         nil
     }

@@ -42,7 +42,8 @@ final class RecordingsLibraryStorage {
         transcriptionText: String? = nil,
         sourceDevice: RecordingDeviceInfo? = nil,
         translationTargetLanguageCode: String? = nil,
-        sourceFileName: String? = nil
+        sourceFileName: String? = nil,
+        sourceFileSizeBytes: Int64? = nil
     ) -> UUID? {
         guard shouldSaveRecording(type: type) else { return nil }
 
@@ -75,7 +76,8 @@ final class RecordingsLibraryStorage {
             processedAt: transcriptionText != nil ? Date() : nil,
             sourceDevice: sourceDevice,
             translationTargetLanguageCode: translationTargetLanguageCode,
-            sourceFileName: sourceFileName
+            sourceFileName: sourceFileName,
+            sourceFileSizeBytes: sourceFileSizeBytes
         )
 
         recordings.insert(recording, at: 0)
@@ -96,7 +98,8 @@ final class RecordingsLibraryStorage {
         transcriptionText: String? = nil,
         sourceDevice: RecordingDeviceInfo? = nil,
         translationTargetLanguageCode: String? = nil,
-        sourceFileName: String? = nil
+        sourceFileName: String? = nil,
+        sourceFileSizeBytes: Int64? = nil
     ) -> UUID? {
         guard shouldSaveRecording(type: type) else { return nil }
 
@@ -138,7 +141,8 @@ final class RecordingsLibraryStorage {
             processedAt: transcriptionText != nil ? Date() : nil,
             sourceDevice: sourceDevice,
             translationTargetLanguageCode: translationTargetLanguageCode,
-            sourceFileName: sourceFileName
+            sourceFileName: sourceFileName,
+            sourceFileSizeBytes: sourceFileSizeBytes
         )
 
         recordings.insert(recording, at: 0)
@@ -380,7 +384,8 @@ final class RecordingsLibraryStorage {
                 sourceDevice: recording.sourceDevice,
                 translationTargetLanguageCode: recording.translationTargetLanguageCode,
                 recoverySource: recording.recoverySource,
-                sourceFileName: recording.sourceFileName
+                sourceFileName: recording.sourceFileName,
+                sourceFileSizeBytes: recording.sourceFileSizeBytes
             )
             saveMetadata()
 

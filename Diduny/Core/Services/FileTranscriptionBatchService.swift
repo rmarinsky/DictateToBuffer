@@ -18,6 +18,17 @@ struct FileTranscriptionSettingsSnapshot {
     }
 }
 
+struct ImportedMediaIdentity: Equatable {
+    let fileName: String
+    let fileSizeBytes: Int64?
+
+    init(sourceURL: URL) {
+        fileName = sourceURL.lastPathComponent
+        let size = try? sourceURL.resourceValues(forKeys: [.fileSizeKey]).fileSize
+        fileSizeBytes = size.flatMap(Int64.init)
+    }
+}
+
 struct BatchTranscriptionItem: Identifiable, Equatable {
     enum Status: Equatable {
         case queued
@@ -42,6 +53,7 @@ struct BatchTranscriptionItem: Identifiable, Equatable {
 
     let id: UUID
     let sourceURL: URL
+    let sourceIdentity: ImportedMediaIdentity
     var durationSeconds: TimeInterval?
     var status: Status
     var transcriptionText: String?
@@ -54,6 +66,7 @@ struct BatchTranscriptionItem: Identifiable, Equatable {
     init(id: UUID = UUID(), sourceURL: URL) {
         self.id = id
         self.sourceURL = sourceURL
+        sourceIdentity = ImportedMediaIdentity(sourceURL: sourceURL)
         status = .queued
     }
 
@@ -86,11 +99,11 @@ protocol FileTranscriptionBatchTranscribing: AnyObject {
 
 @MainActor
 protocol FileTranscriptionBatchRecordingStoring: AnyObject {
-    func completedDuplicate(sourceFileName: String) -> BatchTranscriptionDuplicate?
+    func completedDuplicate(sourceIdentity: ImportedMediaIdentity) -> BatchTranscriptionDuplicate?
     func savePreparedAudio(
         at audioURL: URL,
         durationSeconds: TimeInterval,
-        sourceFileName: String
+        sourceIdentity: ImportedMediaIdentity
     ) -> UUID?
     func audioFileURL(recordingID: UUID) -> URL?
     func markProcessing(recordingID: UUID)
@@ -197,7 +210,7 @@ final class FileTranscriptionBatchService {
 
             var item = BatchTranscriptionItem(sourceURL: standardizedURL)
             if let duplicate = recordingStore.completedDuplicate(
-                sourceFileName: standardizedURL.lastPathComponent
+                sourceIdentity: item.sourceIdentity
             ) {
                 item.status = .duplicate
                 item.durationSeconds = duplicate.durationSeconds
@@ -368,7 +381,7 @@ final class FileTranscriptionBatchService {
                 recordingID = recordingStore.savePreparedAudio(
                     at: preparedAudio.fileURL,
                     durationSeconds: preparedAudio.durationSeconds,
-                    sourceFileName: items[initialIndex].sourceURL.lastPathComponent
+                    sourceIdentity: items[initialIndex].sourceIdentity
                 )
                 if let recordingID {
                     update(itemID) { $0.recordingID = recordingID }
@@ -517,11 +530,13 @@ private final class LiveFileTranscriptionBatchTranscriber: FileTranscriptionBatc
 private final class LiveFileTranscriptionBatchRecordingStore: FileTranscriptionBatchRecordingStoring {
     private let storage = RecordingsLibraryStorage.shared
 
-    func completedDuplicate(sourceFileName: String) -> BatchTranscriptionDuplicate? {
+    func completedDuplicate(sourceIdentity: ImportedMediaIdentity) -> BatchTranscriptionDuplicate? {
+        guard let sourceFileSizeBytes = sourceIdentity.fileSizeBytes else { return nil }
         guard let recording = storage.recordings.first(where: {
             $0.type == .fileTranscription
                 && $0.status == .transcribed
-                && $0.sourceFileName?.localizedCaseInsensitiveCompare(sourceFileName) == .orderedSame
+                && $0.sourceFileName?.localizedCaseInsensitiveCompare(sourceIdentity.fileName) == .orderedSame
+                && $0.sourceFileSizeBytes == sourceFileSizeBytes
                 && !($0.transcriptionText?.isEmpty ?? true)
         }), let transcriptionText = recording.transcriptionText
         else { return nil }
@@ -536,13 +551,14 @@ private final class LiveFileTranscriptionBatchRecordingStore: FileTranscriptionB
     func savePreparedAudio(
         at audioURL: URL,
         durationSeconds: TimeInterval,
-        sourceFileName: String
+        sourceIdentity: ImportedMediaIdentity
     ) -> UUID? {
         storage.saveRecording(
             audioURL: audioURL,
             type: .fileTranscription,
             duration: durationSeconds,
-            sourceFileName: sourceFileName
+            sourceFileName: sourceIdentity.fileName,
+            sourceFileSizeBytes: sourceIdentity.fileSizeBytes
         )
     }
 
