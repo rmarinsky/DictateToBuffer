@@ -130,6 +130,28 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertEqual(service.items.map(\.status), [.completed, .completed])
     }
 
+    func test_addAfterProcessingAppendsWithoutClearingFinishedRows() async throws {
+        let transcriber = BatchTestTranscriber()
+        var completionSoundCount = 0
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: transcriber,
+            recordingStore: BatchTestRecordingStore(),
+            settingsSnapshot: { .testValue },
+            playCompletionSound: { completionSoundCount += 1 }
+        )
+
+        service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/first.mov")])
+        try await waitUntil { !service.isProcessing && service.completedCount == 1 }
+        service.add(urls: [URL(fileURLWithPath: "/tmp/second.mov")])
+        service.startIfNeeded()
+        try await waitUntil { !service.isProcessing && service.completedCount == 2 }
+
+        XCTAssertEqual(service.items.map(\.sourceURL.lastPathComponent), ["first.mov", "second.mov"])
+        XCTAssertEqual(service.items.map(\.status), [.completed, .completed])
+        XCTAssertEqual(completionSoundCount, 1)
+    }
+
     func test_completedItemRemovesTemporaryPreparedAudio() async throws {
         let outputDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("DidunyBatchTests-\(UUID().uuidString)")
@@ -148,6 +170,34 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputDirectory.appendingPathComponent("first.m4a").path))
         try? FileManager.default.removeItem(at: outputDirectory)
+    }
+
+    func test_retryUsesInitialSettingsSnapshotAndPlaysSoundOnlyOnce() async throws {
+        var snapshot = FileTranscriptionSettingsSnapshot.testValue
+        let transcriber = BatchTestTranscriber(failureCount: 1)
+        var completionSoundCount = 0
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: transcriber,
+            recordingStore: BatchTestRecordingStore(),
+            settingsSnapshot: { snapshot },
+            playCompletionSound: { completionSoundCount += 1 }
+        )
+
+        service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/first.mov")])
+        try await waitUntil { !service.isProcessing && service.failedCount == 1 }
+        snapshot = FileTranscriptionSettingsSnapshot(
+            provider: .local,
+            languageHints: ["de"],
+            localModelName: "changed-model"
+        )
+
+        service.retryFailed()
+        try await waitUntil { !service.isProcessing && service.completedCount == 1 }
+
+        XCTAssertEqual(transcriber.receivedSettings.map(\.provider), [.cloud, .cloud])
+        XCTAssertEqual(transcriber.receivedSettings.map(\.languageHints), [[], []])
+        XCTAssertEqual(completionSoundCount, 1)
     }
 
     private func waitUntil(
@@ -199,17 +249,21 @@ private final class BatchTestPreparer: FileTranscriptionBatchPreparing {
 
 private final class BatchTestTranscriber: FileTranscriptionBatchTranscribing {
     private(set) var transcribedFileNames: [String] = []
+    private(set) var receivedSettings: [FileTranscriptionSettingsSnapshot] = []
     private(set) var maximumConcurrentCount = 0
     private var concurrentCount = 0
+    private var remainingFailures: Int
     private let delay: Duration
     private let preflightErrorMessage: String?
 
     init(
         delay: Duration = .milliseconds(20),
-        preflightError: String? = nil
+        preflightError: String? = nil,
+        failureCount: Int = 0
     ) {
         self.delay = delay
         preflightErrorMessage = preflightError
+        remainingFailures = failureCount
     }
 
     func preflightError(for _: FileTranscriptionSettingsSnapshot) -> String? {
@@ -218,14 +272,19 @@ private final class BatchTestTranscriber: FileTranscriptionBatchTranscribing {
 
     func transcribe(
         audioFileURL: URL,
-        settings _: FileTranscriptionSettingsSnapshot,
+        settings: FileTranscriptionSettingsSnapshot,
         onUpdate _: @escaping (JobStatus) -> Void
     ) async throws -> String {
         transcribedFileNames.append(audioFileURL.lastPathComponent)
+        receivedSettings.append(settings)
         concurrentCount += 1
         maximumConcurrentCount = max(maximumConcurrentCount, concurrentCount)
         defer { concurrentCount -= 1 }
         try await Task.sleep(for: delay)
+        if remainingFailures > 0 {
+            remainingFailures -= 1
+            throw BatchTestError.transcriptionFailed
+        }
         return "Transcript for \(audioFileURL.lastPathComponent)"
     }
 }
@@ -252,6 +311,7 @@ private final class BatchTestRecordingStore: FileTranscriptionBatchRecordingStor
 
 private enum BatchTestError: Error {
     case preparationFailed
+    case transcriptionFailed
 }
 
 private extension FileTranscriptionSettingsSnapshot {

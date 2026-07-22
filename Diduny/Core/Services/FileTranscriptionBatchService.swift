@@ -126,6 +126,8 @@ final class FileTranscriptionBatchService {
     private let playCompletionSound: @MainActor () -> Void
 
     private var processingTask: Task<Void, Never>?
+    private var activeSettingsSnapshot: FileTranscriptionSettingsSnapshot?
+    private var hasPlayedCompletionSound = false
 
     init(
         preparer: FileTranscriptionBatchPreparing,
@@ -144,6 +146,8 @@ final class FileTranscriptionBatchService {
     func beginBatch(urls: [URL]) {
         if !isProcessing, items.allSatisfy(\.status.isTerminal) {
             items.removeAll()
+            activeSettingsSnapshot = nil
+            hasPlayedCompletionSound = false
         }
         add(urls: urls)
         startIfNeeded()
@@ -168,12 +172,13 @@ final class FileTranscriptionBatchService {
               items.contains(where: { $0.status == .queued })
         else { return }
 
-        let snapshot = settingsSnapshot()
+        let snapshot = activeSettingsSnapshot ?? settingsSnapshot()
         if let error = transcriber.preflightError(for: snapshot) {
             batchError = error
             return
         }
 
+        activeSettingsSnapshot = snapshot
         batchError = nil
         isProcessing = true
         processingTask = Task { [weak self] in
@@ -207,6 +212,10 @@ final class FileTranscriptionBatchService {
         guard !isProcessing else { return }
         items.removeAll(where: { $0.status.isTerminal })
         batchError = nil
+        if items.isEmpty {
+            activeSettingsSnapshot = nil
+            hasPlayedCompletionSound = false
+        }
     }
 
     private func processQueuedItems(settings: FileTranscriptionSettingsSnapshot) async {
@@ -219,15 +228,15 @@ final class FileTranscriptionBatchService {
             processingTask = nil
             currentItemID = nil
             isProcessing = false
-            if !Task.isCancelled,
-               !items.isEmpty,
-               items.allSatisfy(\.status.isTerminal) {
+            let finishedBatch = !items.isEmpty && items.allSatisfy(\.status.isTerminal)
+            if !Task.isCancelled, finishedBatch, !hasPlayedCompletionSound {
+                hasPlayedCompletionSound = true
                 playCompletionSound()
             }
         }
 
-        while !Task.isCancelled,
-              let itemID = items.first(where: { $0.status == .queued })?.id {
+        while !Task.isCancelled {
+            guard let itemID = items.first(where: { $0.status == .queued })?.id else { break }
             currentItemID = itemID
             await process(itemID: itemID, settings: settings)
         }
@@ -246,8 +255,10 @@ final class FileTranscriptionBatchService {
         do {
             try Task.checkCancellation()
 
-            if let recordingID,
-               let storedAudioURL = recordingStore.audioFileURL(recordingID: recordingID) {
+            let storedAudioURL = recordingID.flatMap {
+                recordingStore.audioFileURL(recordingID: $0)
+            }
+            if let recordingID, let storedAudioURL {
                 audioURL = storedAudioURL
                 recordingStore.markProcessing(recordingID: recordingID)
             } else {
@@ -323,6 +334,7 @@ final class FileTranscriptionBatchService {
 
     private func apply(jobStatus: JobStatus, to itemID: UUID) {
         update(itemID) { item in
+            guard !item.status.isTerminal else { return }
             switch jobStatus {
             case .queued:
                 item.status = .queued

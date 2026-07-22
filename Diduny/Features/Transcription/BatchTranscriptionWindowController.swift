@@ -23,7 +23,9 @@ final class BatchTranscriptionWindowController {
 
     func addFiles() {
         guard let urls = ImportedMediaPicker.selectFiles(), !urls.isEmpty else { return }
-        FileTranscriptionBatchService.shared.beginBatch(urls: urls)
+        let service = FileTranscriptionBatchService.shared
+        service.add(urls: urls)
+        service.startIfNeeded()
         showWindow()
     }
 
@@ -140,7 +142,8 @@ private struct BatchTranscriptionView: View {
                 return ImportedMediaPicker.allowedContentTypes.contains(where: { type.conforms(to: $0) })
             }
             guard !supported.isEmpty else { return false }
-            service.beginBatch(urls: supported)
+            service.add(urls: supported)
+            service.startIfNeeded()
             return true
         } isTargeted: { targeted in
             withAnimation(.easeOut(duration: 0.15)) {
@@ -288,6 +291,7 @@ private struct BatchTranscriptionView: View {
 private struct BatchTranscriptionRow: View {
     let item: BatchTranscriptionItem
     let service: FileTranscriptionBatchService
+    @State private var isShowingTranscript = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -334,13 +338,10 @@ private struct BatchTranscriptionRow: View {
                 .controlSize(.small)
             case .completed:
                 if let text = item.transcriptionText, !text.isEmpty {
-                    Button {
-                        ClipboardService.shared.copy(text: text)
-                    } label: {
-                        Image(systemName: "doc.on.doc")
+                    Button("Transcript") {
+                        isShowingTranscript = true
                     }
-                    .buttonStyle(.borderless)
-                    .help("Copy transcript")
+                    .controlSize(.small)
                 }
                 if let recordingID = item.recordingID {
                     Button("Recordings") {
@@ -355,6 +356,11 @@ private struct BatchTranscriptionRow: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .contentShape(Rectangle())
+        .sheet(isPresented: $isShowingTranscript) {
+            if let text = item.transcriptionText {
+                BatchTranscriptView(fileName: item.sourceURL.lastPathComponent, text: text)
+            }
+        }
     }
 
     private var mediaIcon: String {
@@ -401,5 +407,42 @@ private struct BatchTranscriptionRow: View {
         return hours > 0
             ? String(format: "%d:%02d:%02d", hours, minutes, seconds)
             : String(format: "%d:%02d", minutes, seconds)
+    }
+}
+
+private struct BatchTranscriptView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let fileName: String
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Transcript")
+                        .font(.title2.bold())
+                    Text(fileName)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Close") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+            }
+
+            ScrollView {
+                Text(text)
+                    .font(.body)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(14)
+            .background(Color(.textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .padding(20)
+        .frame(minWidth: 560, idealWidth: 680, minHeight: 420, idealHeight: 520)
     }
 }

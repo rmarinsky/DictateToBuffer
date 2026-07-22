@@ -261,7 +261,9 @@ final class RecordingsLibraryStorage {
     private func loadAndPruneAsync() async {
         let url = metadataURL
         let recDir = recordingsDir
-        let result = await Task.detached(priority: .utility) { () -> (recordings: [Recording], resetInterrupted: Bool)? in
+        let result = await Task.detached(
+            priority: .utility
+        ) { () -> (recordings: [Recording], resetInterrupted: Bool)? in
             guard let data = try? Data(contentsOf: url) else { return nil }
             do {
                 let decoder = JSONDecoder()
