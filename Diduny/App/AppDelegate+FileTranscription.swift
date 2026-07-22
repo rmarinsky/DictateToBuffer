@@ -10,4 +10,8 @@ extension AppDelegate {
             BatchTranscriptionWindowController.shared.selectFilesForNewBatch()
         }
     }
+
+    func transcribeURL() {
+        BatchTranscriptionWindowController.shared.selectYouTubeURLsForNewBatch()
+    }
 }

@@ -10,6 +10,7 @@ struct MenuBarContentView: View {
     var onToggleMeetingRecording: @MainActor () -> Void
     var onToggleMeetingTranslationRecording: @MainActor () -> Void
     var onTranscribeFiles: @MainActor () -> Void
+    var onTranscribeURL: @MainActor () -> Void
     var onOpenMainWindow: @MainActor (MainSection) -> Void
     var onCheckForUpdates: @MainActor () -> Void
 
@@ -97,6 +98,10 @@ struct MenuBarContentView: View {
             }
 
             Button(transcribeFilesTitle, action: onTranscribeFiles)
+                .disabled(appState.recordingState == .processing)
+
+            Button("Transcribe URL…", action: onTranscribeURL)
+                .keyboardShortcut("u", modifiers: [.command, .shift])
                 .disabled(appState.recordingState == .processing)
 
             Button("Recordings") {

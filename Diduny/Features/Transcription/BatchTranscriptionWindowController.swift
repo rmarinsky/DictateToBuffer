@@ -39,11 +39,15 @@ final class BatchTranscriptionWindowController {
     }
 
     func openYouTubeInSelectedChrome() {
-        guard let profileID = SettingsStorage.shared.selectedChromeProfileID,
-              let chromeURL = NSWorkspace.shared.urlForApplication(
-                  withBundleIdentifier: "com.google.Chrome"
-              ),
-              let youtubeURL = URL(string: "https://www.youtube.com/")
+        guard let profileID = SettingsStorage.shared.selectedChromeProfileID else { return }
+        openYouTubeInChrome(profileID: profileID)
+    }
+
+    func openYouTubeInChrome(profileID: String) {
+        guard let chromeURL = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: "com.google.Chrome"
+        ),
+            let youtubeURL = URL(string: "https://www.youtube.com/")
         else { return }
 
         let configuration = NSWorkspace.OpenConfiguration()
@@ -445,6 +449,15 @@ private struct YouTubeURLImportView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
             }
+
+            Button {
+                BatchTranscriptionWindowController.shared.openYouTubeInChrome(
+                    profileID: selectedProfileID
+                )
+            } label: {
+                Label("Open YouTube in Selected Profile", systemImage: "safari")
+            }
+            .disabled(selectedProfileID.isEmpty)
 
             if !SettingsStorage.shared.remoteMediaRightsAcknowledged {
                 Toggle(
