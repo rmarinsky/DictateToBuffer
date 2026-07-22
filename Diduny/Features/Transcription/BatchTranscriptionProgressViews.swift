@@ -86,7 +86,11 @@ struct BatchTranscriptionRow: View {
                 .controlSize(.small)
             }
         case .queued, .preparing, .uploading, .processing, .finalizing:
-            EmptyView()
+            if service.isActive(item.id) {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Processing \(item.sourceURL.lastPathComponent)")
+            }
         }
     }
 
