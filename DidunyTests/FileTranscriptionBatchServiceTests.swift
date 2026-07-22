@@ -219,6 +219,41 @@ final class YouTubeRemoteMediaSourceTests: XCTestCase {
         XCTAssertFalse(download.contains(where: { $0.contains("bestvideo") }))
     }
 
+    @MainActor
+    func test_metadataFallsBackToPublicAccessWhenChromeCookieDatabaseIsUnreadable() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DidunyRemoteFallback-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let executable = root.appendingPathComponent("fake-yt-dlp")
+        let script = """
+        #!/bin/sh
+        case " $* " in
+          *" --cookies-from-browser "*)
+            echo "ERROR: no such table: meta" >&2
+            exit 1
+            ;;
+        esac
+        printf '%s\\n' '{"id":"dQw4w9WgXcQ","title":"Public video","duration":1,"formats":[{"format_id":"audio","ext":"m4a","acodec":"mp4a.40.2","vcodec":"none"}]}'
+        """
+        try Data(script.utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let extractor = BundledRemoteMediaExtractor(
+            ytDLPURL: executable,
+            denoURL: executable,
+            temporaryDirectory: root
+        )
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+
+        let metadata = try await extractor.metadata(
+            for: source,
+            profile: ChromeProfile(id: "Profile 1", name: "Personal")
+        )
+
+        XCTAssertEqual(metadata.source.title, "Public video")
+        XCTAssertEqual(metadata.audioFormatID, "audio")
+    }
+
     func test_remoteDuplicateMatcher_prefersProviderIdentityAndSupportsLegacyTitleDurationFallback() throws {
         let source = try RemoteMediaSourceMetadata(
             provider: YouTubeRemoteMediaSource.provider,
@@ -272,6 +307,36 @@ final class YouTubeRemoteMediaSourceTests: XCTestCase {
             sourceFileName: sourceFileName,
             remoteSource: remoteSource
         )
+    }
+}
+
+@MainActor
+final class YouTubeRemoteMediaE2ETests: XCTestCase {
+    func test_examplePublicURLsRetrieveAudioWithSelectedChromeProfile() async throws {
+        guard ProcessInfo.processInfo.environment["DIDUNY_YOUTUBE_E2E"] == "1" else {
+            throw XCTSkip("Set DIDUNY_YOUTUBE_E2E=1 to run live YouTube acquisition")
+        }
+        let profileID = ProcessInfo.processInfo.environment["DIDUNY_CHROME_PROFILE"] ?? "Profile 1"
+        let profile = ChromeProfile(id: profileID, name: profileID)
+        let extractor = BundledRemoteMediaExtractor()
+        let urls = [
+            "https://www.youtube.com/watch?v=434cG4g5KLE",
+            "https://youtu.be/Zdk_YgK0i58"
+        ]
+
+        for rawURL in urls {
+            let source = try YouTubeRemoteMediaSource.normalize(rawURL)
+            let metadata = try await extractor.metadata(for: source, profile: profile)
+            let downloaded = try await extractor.downloadAudio(
+                for: source,
+                metadata: metadata,
+                profile: profile,
+                onProgress: { _ in }
+            )
+            defer { downloaded.removeTemporaryFiles() }
+            let values = try downloaded.fileURL.resourceValues(forKeys: [.fileSizeKey])
+            XCTAssertGreaterThan(values.fileSize ?? 0, 0, rawURL)
+        }
     }
 }
 

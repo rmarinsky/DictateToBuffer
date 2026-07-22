@@ -89,6 +89,7 @@ if [[ "${CODE_SIGNING_ALLOWED:-YES}" != "NO" && -n "${EXPANDED_CODE_SIGN_IDENTIT
     # carry our Team ID. Keep this exception helper-scoped; the app and Deno retain
     # normal hardened-runtime library validation.
     readonly TASK_YTDLP_ENTITLEMENTS="${TASK_CACHE_ROOT}/yt-dlp-entitlements.plist"
+    readonly TASK_DENO_ENTITLEMENTS="${TASK_CACHE_ROOT}/deno-entitlements.plist"
     /usr/bin/plutil -create xml1 "${TASK_YTDLP_ENTITLEMENTS}"
     /usr/bin/plutil -insert 'com\.apple\.security\.cs\.disable-library-validation' \
         -bool true \
@@ -99,9 +100,20 @@ if [[ "${CODE_SIGNING_ALLOWED:-YES}" != "NO" && -n "${EXPANDED_CODE_SIGN_IDENTIT
         --entitlements "${TASK_YTDLP_ENTITLEMENTS}" \
         --sign "${EXPANDED_CODE_SIGN_IDENTITY}" \
         "${TASK_DESTINATION}/yt-dlp_macos"
-    /usr/bin/codesign --force --options runtime --sign "${EXPANDED_CODE_SIGN_IDENTITY}" "${TASK_DESTINATION}/deno"
+    # Deno embeds V8. Hardened runtime must explicitly allow its JIT or macOS
+    # terminates the helper when V8 reserves executable memory.
+    /usr/bin/plutil -create xml1 "${TASK_DENO_ENTITLEMENTS}"
+    /usr/bin/plutil -insert 'com\.apple\.security\.cs\.allow-jit' \
+        -bool true \
+        "${TASK_DENO_ENTITLEMENTS}"
+    /usr/bin/codesign \
+        --force \
+        --options runtime \
+        --entitlements "${TASK_DENO_ENTITLEMENTS}" \
+        --sign "${EXPANDED_CODE_SIGN_IDENTITY}" \
+        "${TASK_DESTINATION}/deno"
 
-    # Fail the build if either signed helper cannot start under the hardened runtime.
+    # Fail the build if the signed helpers cannot execute their real runtime paths.
     "${TASK_DESTINATION}/yt-dlp_macos" --version >/dev/null
-    "${TASK_DESTINATION}/deno" --version >/dev/null
+    [[ "$("${TASK_DESTINATION}/deno" eval 'console.log(6 * 7)')" == "42" ]]
 fi

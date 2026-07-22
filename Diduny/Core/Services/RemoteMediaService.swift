@@ -666,7 +666,8 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
     private func run(
         executableURL: URL,
         arguments: [String],
-        onProgress: (@Sendable (RemoteDownloadProgress) -> Void)? = nil
+        onProgress: (@Sendable (RemoteDownloadProgress) -> Void)? = nil,
+        allowsPublicFallback: Bool = true
     ) async throws -> ProcessResult {
         let processTemporaryDirectory = temporaryDirectory
             .appendingPathComponent("diduny-extractor-\(UUID().uuidString)", isDirectory: true)
@@ -729,6 +730,20 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
             let error = await errorTask.value
             try Task.checkCancellation()
             guard terminationStatus == 0 else {
+                if allowsPublicFallback,
+                   Self.isBrowserCookieDatabaseFailure(error),
+                   let publicArguments = Self.removingBrowserSession(from: arguments)
+                {
+                    Log.app.warning(
+                        "Selected Chrome profile cookies are unavailable; retrying public YouTube access"
+                    )
+                    return try await run(
+                        executableURL: executableURL,
+                        arguments: publicArguments,
+                        onProgress: onProgress,
+                        allowsPublicFallback: false
+                    )
+                }
                 let failure = Self.classifyFailure(error)
                 Log.app.error(
                     "Remote media extractor failed with status \(terminationStatus, privacy: .public), category \(String(describing: failure), privacy: .public)"
@@ -741,6 +756,24 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
                 process.terminate()
             }
         }
+    }
+
+    private nonisolated static func isBrowserCookieDatabaseFailure(_ data: Data) -> Bool {
+        let message = String(data: data, encoding: .utf8)?.lowercased() ?? ""
+        return message.contains("no such table: meta")
+            || message.contains("no such table: cookies")
+            || message.contains("could not copy chrome cookie database")
+            || message.contains("failed to load cookies")
+            || message.contains("cookie") && message.contains("failed to decrypt")
+    }
+
+    private nonisolated static func removingBrowserSession(from arguments: [String]) -> [String]? {
+        guard let optionIndex = arguments.firstIndex(of: "--cookies-from-browser"),
+              arguments.indices.contains(optionIndex + 1)
+        else { return nil }
+        var result = arguments
+        result.removeSubrange(optionIndex ... optionIndex + 1)
+        return result
     }
 
     private nonisolated static func readAll(
