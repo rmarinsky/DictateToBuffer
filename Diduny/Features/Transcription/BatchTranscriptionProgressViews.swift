@@ -1,58 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct CurrentFileProgressView: View {
-    let item: BatchTranscriptionItem
-    let position: Int
-    let totalCount: Int
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Label("Current file", systemImage: "waveform")
-                    .font(.system(size: 12, weight: .semibold))
-                Spacer()
-                Text("\(position) of \(totalCount)")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-
-            Text(item.sourceURL.lastPathComponent)
-                .font(.system(size: 13, weight: .medium))
-                .lineLimit(1)
-                .help(item.sourceURL.lastPathComponent)
-
-            HStack(spacing: 6) {
-                Text(item.status.displayName)
-                    .foregroundStyle(.secondary)
-                Text("·")
-                    .foregroundStyle(.tertiary)
-                ElapsedTimeText(item: item, prefix: "Elapsed ")
-                Spacer()
-                if let fraction = item.progressFraction {
-                    Text(BatchProgressFormatter.percent(fraction))
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                }
-            }
-            .font(.system(size: 11))
-
-            if let fraction = item.progressFraction {
-                ProgressView(value: fraction)
-                    .progressViewStyle(.linear)
-            } else {
-                ProgressView()
-                    .progressViewStyle(.linear)
-            }
-        }
-        .padding(12)
-        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
-        .overlay(
-            RoundedRectangle(cornerRadius: 9)
-                .strokeBorder(Color.accentColor.opacity(0.16), lineWidth: 0.5)
-        )
-    }
-}
-
 struct BatchTranscriptionRow: View {
     let item: BatchTranscriptionItem
     let service: FileTranscriptionBatchService
@@ -124,7 +72,7 @@ struct BatchTranscriptionRow: View {
                 service.retry(ids: [item.id])
             }
             .controlSize(.small)
-        case .completed:
+        case .completed, .duplicate:
             if let text = item.transcriptionText, !text.isEmpty {
                 Button("Transcript") {
                     isShowingTranscript = true
@@ -149,28 +97,14 @@ struct BatchTranscriptionRow: View {
 
     @ViewBuilder
     private var rowProgress: some View {
-        if shouldShowIndeterminateProgress {
-            ProgressView()
+        if service.isActive(item.id),
+           !item.status.isTerminal,
+           let progressFraction = item.progressFraction
+        {
+            ProgressView(value: progressFraction)
                 .progressViewStyle(.linear)
-        } else {
-            ProgressView(value: rowProgressFraction)
-                .progressViewStyle(.linear)
-                .tint(progressColor)
+                .tint(.accentColor)
         }
-    }
-
-    private var shouldShowIndeterminateProgress: Bool {
-        service.currentItemID == item.id
-            && !item.status.isTerminal
-            && item.progressFraction == nil
-    }
-
-    private var rowProgressFraction: Double {
-        item.status == .completed ? 1 : (item.progressFraction ?? 0)
-    }
-
-    private var progressColor: Color {
-        item.status.terminalColor ?? .accentColor
     }
 
     private var mediaIcon: String {
@@ -233,6 +167,7 @@ private extension BatchTranscriptionItem.Status {
     var terminalColor: Color? {
         switch self {
         case .completed: .green
+        case .duplicate: .blue
         case .failed: .red
         case .cancelled: .secondary
         default: nil
@@ -247,6 +182,7 @@ private extension BatchTranscriptionItem.Status {
         case .processing: "Transcribing…"
         case .finalizing: "Finishing…"
         case .completed: "Completed"
+        case .duplicate: "Duplicate · Transcript reused"
         case .failed: "Failed"
         case .cancelled: "Cancelled"
         }

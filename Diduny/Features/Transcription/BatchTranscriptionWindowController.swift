@@ -55,7 +55,7 @@ final class BatchTranscriptionWindowController {
     private func makeWindow() {
         let hostingView = NSHostingView(rootView: BatchTranscriptionView())
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 800, height: 650),
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 560),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -66,7 +66,7 @@ final class BatchTranscriptionWindowController {
         window.styleMask.insert(.fullSizeContentView)
         window.isMovableByWindowBackground = true
         window.contentView = hostingView
-        window.contentMinSize = NSSize(width: 680, height: 520)
+        window.contentMinSize = NSSize(width: 680, height: 420)
         window.isReleasedWhenClosed = false
         window.collectionBehavior.insert(.moveToActiveSpace)
         window.setFrameAutosaveName("diduny.transcription-batch")
@@ -182,19 +182,6 @@ private struct BatchTranscriptionView: View {
                 .help("Add audio or video files (⌘O)")
             }
 
-            if !service.items.isEmpty {
-                batchOverview
-            }
-
-            if let currentItem = service.currentItem {
-                CurrentFileProgressView(
-                    item: currentItem,
-                    position: currentPosition,
-                    totalCount: service.items.count
-                )
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-
             if let error = service.batchError {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -217,26 +204,6 @@ private struct BatchTranscriptionView: View {
         .background(.bar)
     }
 
-    private var batchOverview: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                Text("Overall progress")
-                    .font(.system(size: 12, weight: .semibold))
-                Spacer()
-                Text("\(service.finishedCount) of \(service.items.count) files")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                Text(BatchProgressFormatter.percent(service.progress))
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .frame(width: 38, alignment: .trailing)
-            }
-            ProgressView(value: service.progress)
-                .progressViewStyle(.linear)
-        }
-        .padding(12)
-        .background(Color(.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 9))
-    }
-
     @ViewBuilder
     private var content: some View {
         if service.items.isEmpty {
@@ -247,7 +214,7 @@ private struct BatchTranscriptionView: View {
                     .foregroundStyle(.secondary)
                 Text("Drop audio or video files here")
                     .font(.headline)
-                Text("Diduny extracts audio locally and transcribes files one at a time.")
+                Text("Diduny extracts audio locally before transcription.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 Button("Choose Files…") {
@@ -307,18 +274,15 @@ private struct BatchTranscriptionView: View {
     private var summaryText: String {
         guard !service.items.isEmpty else { return "No files selected" }
         if service.isProcessing {
-            return "\(service.finishedCount) of \(service.items.count) finished · processing sequentially"
+            let noun = service.activeCount == 1 ? "file" : "files"
+            return "\(service.finishedCount) of \(service.items.count) finished · \(service.activeCount) \(noun) processing"
         }
         if service.failedCount > 0 {
             return "\(service.completedCount) completed · \(service.failedCount) failed"
         }
+        if service.duplicateCount > 0 {
+            return "\(service.completedCount) available · \(service.duplicateCount) duplicates reused"
+        }
         return "\(service.completedCount) of \(service.items.count) completed"
-    }
-
-    private var currentPosition: Int {
-        guard let currentItemID = service.currentItemID,
-              let index = service.items.firstIndex(where: { $0.id == currentItemID })
-        else { return 0 }
-        return index + 1
     }
 }

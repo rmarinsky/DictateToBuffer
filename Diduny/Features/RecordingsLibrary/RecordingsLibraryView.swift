@@ -17,20 +17,29 @@ struct RecordingsLibraryView: View {
         case all = "All"
         case meetings = "Meetings"
         case voiceNotes = "Voice notes"
+        case files = "Files"
+
+        func matches(_ recordingType: Recording.RecordingType) -> Bool {
+            switch self {
+            case .all:
+                true
+            case .meetings:
+                recordingType.isMeetingLike
+            case .voiceNotes:
+                recordingType == .voice || recordingType == .translation
+            case .files:
+                recordingType == .fileTranscription
+            }
+        }
     }
 
     private var filteredRecordings: [Recording] {
         storage.recordings.filter { recording in
-            let matchesFilter: Bool
-            switch filter {
-            case .all: matchesFilter = true
-            case .meetings: matchesFilter = recording.type.isMeetingLike
-            case .voiceNotes: matchesFilter = !recording.type.isMeetingLike
-            }
-            guard matchesFilter else { return false }
+            guard filter.matches(recording.type) else { return false }
             guard !searchText.isEmpty else { return true }
             let query = searchText.lowercased()
             return recording.type.displayName.lowercased().contains(query)
+                || (recording.sourceFileName?.lowercased().contains(query) ?? false)
                 || (recording.transcriptionText?.lowercased().contains(query) ?? false)
         }
     }

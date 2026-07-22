@@ -18,7 +18,7 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertEqual(service.items.map(\.sourceURL), [first, URL(fileURLWithPath: "/tmp/second.mp3")])
     }
 
-    func test_start_processesFilesSequentiallyAndCompletesOnce() async throws {
+    func test_cloudBatchProcessesUpToThreeFilesConcurrentlyAndCompletesOnce() async throws {
         let preparer = BatchTestPreparer()
         let transcriber = BatchTestTranscriber()
         let store = BatchTestRecordingStore()
@@ -33,15 +33,67 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
 
         service.add(urls: [
             URL(fileURLWithPath: "/tmp/first.mov"),
+            URL(fileURLWithPath: "/tmp/second.mp4"),
+            URL(fileURLWithPath: "/tmp/third.mp4"),
+            URL(fileURLWithPath: "/tmp/fourth.mp4")
+        ])
+        service.startIfNeeded()
+        try await waitUntil { !service.isProcessing && service.finishedCount == 4 }
+
+        XCTAssertEqual(service.items.map(\.status), [.completed, .completed, .completed, .completed])
+        XCTAssertEqual(transcriber.maximumConcurrentCount, 3)
+        XCTAssertEqual(Set(transcriber.transcribedFileNames), Set(["first.m4a", "second.m4a", "third.m4a", "fourth.m4a"]))
+        XCTAssertEqual(completionSoundCount, 1)
+    }
+
+    func test_localBatchProcessesOneFileAtATime() async throws {
+        let transcriber = BatchTestTranscriber(delay: .milliseconds(80))
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: transcriber,
+            recordingStore: BatchTestRecordingStore(),
+            settingsSnapshot: { .localTestValue },
+            playCompletionSound: {}
+        )
+
+        service.add(urls: [
+            URL(fileURLWithPath: "/tmp/first.mov"),
             URL(fileURLWithPath: "/tmp/second.mp4")
         ])
         service.startIfNeeded()
         try await waitUntil { !service.isProcessing && service.finishedCount == 2 }
 
-        XCTAssertEqual(service.items.map(\.status), [.completed, .completed])
         XCTAssertEqual(transcriber.maximumConcurrentCount, 1)
-        XCTAssertEqual(transcriber.transcribedFileNames, ["first.m4a", "second.m4a"])
-        XCTAssertEqual(completionSoundCount, 1)
+    }
+
+    func test_add_reusesCompletedImportedRecordingAsDuplicate() {
+        let recordingID = UUID()
+        let preparer = BatchTestPreparer()
+        let transcriber = BatchTestTranscriber()
+        let store = BatchTestRecordingStore(
+            duplicate: BatchTranscriptionDuplicate(
+                recordingID: recordingID,
+                transcriptionText: "Existing transcript",
+                durationSeconds: 125
+            )
+        )
+        let service = FileTranscriptionBatchService(
+            preparer: preparer,
+            transcriber: transcriber,
+            recordingStore: store,
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+
+        service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/already-done.mov")])
+
+        XCTAssertEqual(service.items.first?.status, .duplicate)
+        XCTAssertEqual(service.items.first?.recordingID, recordingID)
+        XCTAssertEqual(service.items.first?.transcriptionText, "Existing transcript")
+        XCTAssertEqual(service.items.first?.durationSeconds, 125)
+        XCTAssertTrue(preparer.preparedSourceNames.isEmpty)
+        XCTAssertTrue(transcriber.transcribedFileNames.isEmpty)
+        XCTAssertFalse(service.isProcessing)
     }
 
     func test_failedFileDoesNotStopRemainingBatch() async throws {
@@ -110,7 +162,7 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
     }
 
     func test_addWhileProcessingAppendsToTheRunningBatch() async throws {
-        let transcriber = BatchTestTranscriber(delay: .milliseconds(80))
+        let transcriber = BatchTestTranscriber(delay: .milliseconds(250))
         let service = FileTranscriptionBatchService(
             preparer: BatchTestPreparer(),
             transcriber: transcriber,
@@ -124,9 +176,10 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         try await waitUntil { service.items.first?.status == .uploading }
         service.add(urls: [URL(fileURLWithPath: "/tmp/second.mov")])
         service.startIfNeeded()
+        try await waitUntil { transcriber.maximumConcurrentCount == 2 }
         try await waitUntil { !service.isProcessing && service.finishedCount == 2 }
 
-        XCTAssertEqual(transcriber.transcribedFileNames, ["first.m4a", "second.m4a"])
+        XCTAssertEqual(Set(transcriber.transcribedFileNames), Set(["first.m4a", "second.m4a"]))
         XCTAssertEqual(service.items.map(\.status), [.completed, .completed])
     }
 
@@ -217,7 +270,7 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         service.beginBatch(urls: [firstURL, URL(fileURLWithPath: "/tmp/second.mov")])
         try await waitUntil {
             service.items.first?.progressFraction == 0.4
-                && service.currentItemID == service.items.first?.id
+                && service.items.first.map { service.isActive($0.id) } == true
         }
 
         XCTAssertEqual(service.progress, 0, accuracy: 0.001)
@@ -351,6 +404,16 @@ private final class BatchTestTranscriber: FileTranscriptionBatchTranscribing {
 
 @MainActor
 private final class BatchTestRecordingStore: FileTranscriptionBatchRecordingStoring {
+    private let duplicate: BatchTranscriptionDuplicate?
+
+    init(duplicate: BatchTranscriptionDuplicate? = nil) {
+        self.duplicate = duplicate
+    }
+
+    func completedDuplicate(sourceFileName _: String) -> BatchTranscriptionDuplicate? {
+        duplicate
+    }
+
     func savePreparedAudio(
         at _: URL,
         durationSeconds _: TimeInterval,
@@ -379,5 +442,11 @@ private extension FileTranscriptionSettingsSnapshot {
         provider: .cloud,
         languageHints: [],
         localModelName: ""
+    )
+
+    static let localTestValue = FileTranscriptionSettingsSnapshot(
+        provider: .local,
+        languageHints: [],
+        localModelName: "test-model"
     )
 }

@@ -26,12 +26,13 @@ struct BatchTranscriptionItem: Identifiable, Equatable {
         case processing
         case finalizing
         case completed
+        case duplicate
         case failed
         case cancelled
 
         var isTerminal: Bool {
             switch self {
-            case .completed, .failed, .cancelled:
+            case .completed, .duplicate, .failed, .cancelled:
                 true
             default:
                 false
@@ -62,6 +63,12 @@ struct BatchTranscriptionItem: Identifiable, Equatable {
     }
 }
 
+struct BatchTranscriptionDuplicate: Equatable {
+    let recordingID: UUID
+    let transcriptionText: String
+    let durationSeconds: TimeInterval
+}
+
 protocol FileTranscriptionBatchPreparing: AnyObject {
     func prepare(sourceURL: URL) async throws -> ImportedMediaAudioPreparer.PreparedAudio
 }
@@ -79,6 +86,7 @@ protocol FileTranscriptionBatchTranscribing: AnyObject {
 
 @MainActor
 protocol FileTranscriptionBatchRecordingStoring: AnyObject {
+    func completedDuplicate(sourceFileName: String) -> BatchTranscriptionDuplicate?
     func savePreparedAudio(
         at audioURL: URL,
         durationSeconds: TimeInterval,
@@ -94,6 +102,8 @@ protocol FileTranscriptionBatchRecordingStoring: AnyObject {
 @Observable
 @MainActor
 final class FileTranscriptionBatchService {
+    static let cloudConcurrencyLimit = 3
+
     static let shared = FileTranscriptionBatchService(
         preparer: ImportedMediaAudioPreparer(),
         transcriber: LiveFileTranscriptionBatchTranscriber(),
@@ -107,7 +117,7 @@ final class FileTranscriptionBatchService {
 
     private(set) var items: [BatchTranscriptionItem] = []
     private(set) var isProcessing = false
-    private(set) var currentItemID: UUID?
+    private(set) var activeItemIDs: Set<UUID> = []
     private(set) var batchError: String?
 
     var finishedCount: Int {
@@ -115,7 +125,11 @@ final class FileTranscriptionBatchService {
     }
 
     var completedCount: Int {
-        items.count(where: { $0.status == .completed })
+        items.count(where: { $0.status == .completed || $0.status == .duplicate })
+    }
+
+    var duplicateCount: Int {
+        items.count(where: { $0.status == .duplicate })
     }
 
     var failedCount: Int {
@@ -127,9 +141,12 @@ final class FileTranscriptionBatchService {
         return Double(finishedCount) / Double(items.count)
     }
 
-    var currentItem: BatchTranscriptionItem? {
-        guard let currentItemID else { return nil }
-        return items.first(where: { $0.id == currentItemID })
+    var activeCount: Int {
+        activeItemIDs.count
+    }
+
+    func isActive(_ itemID: UUID) -> Bool {
+        activeItemIDs.contains(itemID)
     }
 
     private let preparer: FileTranscriptionBatchPreparing
@@ -141,6 +158,7 @@ final class FileTranscriptionBatchService {
     private var processingTask: Task<Void, Never>?
     private var activeSettingsSnapshot: FileTranscriptionSettingsSnapshot?
     private var hasPlayedCompletionSound = false
+    private var schedulerContinuation: CheckedContinuation<Void, Never>?
 
     init(
         preparer: FileTranscriptionBatchPreparing,
@@ -169,6 +187,7 @@ final class FileTranscriptionBatchService {
     func add(urls: [URL]) {
         let existingURLs = Set(items.map(\.sourceURL.standardizedFileURL))
         var addedURLs = Set<URL>()
+        let initialItemCount = items.count
 
         for url in urls {
             let standardizedURL = url.standardizedFileURL
@@ -176,7 +195,20 @@ final class FileTranscriptionBatchService {
                   addedURLs.insert(standardizedURL).inserted
             else { continue }
 
-            items.append(BatchTranscriptionItem(sourceURL: standardizedURL))
+            var item = BatchTranscriptionItem(sourceURL: standardizedURL)
+            if let duplicate = recordingStore.completedDuplicate(
+                sourceFileName: standardizedURL.lastPathComponent
+            ) {
+                item.status = .duplicate
+                item.durationSeconds = duplicate.durationSeconds
+                item.transcriptionText = duplicate.transcriptionText
+                item.recordingID = duplicate.recordingID
+            }
+            items.append(item)
+        }
+
+        if items.count > initialItemCount {
+            wakeScheduler()
         }
     }
 
@@ -222,6 +254,7 @@ final class FileTranscriptionBatchService {
             items[index].status = .cancelled
         }
         processingTask?.cancel()
+        wakeScheduler()
     }
 
     func clearFinished() {
@@ -242,20 +275,60 @@ final class FileTranscriptionBatchService {
         defer {
             ProcessInfo.processInfo.endActivity(activityToken)
             processingTask = nil
-            currentItemID = nil
+            activeItemIDs.removeAll()
             isProcessing = false
             let finishedBatch = !items.isEmpty && items.allSatisfy(\.status.isTerminal)
             if !Task.isCancelled, finishedBatch, !hasPlayedCompletionSound {
                 hasPlayedCompletionSound = true
                 playCompletionSound()
             }
+            if !Task.isCancelled, items.contains(where: { $0.status == .queued }) {
+                startIfNeeded()
+            }
         }
 
-        while !Task.isCancelled {
-            guard let itemID = items.first(where: { $0.status == .queued })?.id else { break }
-            currentItemID = itemID
-            await process(itemID: itemID, settings: settings)
+        let concurrencyLimit = settings.provider == .cloud ? Self.cloudConcurrencyLimit : 1
+        await withTaskGroup(of: Void.self) { group in
+            while !Task.isCancelled {
+                while activeItemIDs.count < concurrencyLimit,
+                      let itemID = nextQueuedItemID()
+                {
+                    activeItemIDs.insert(itemID)
+                    group.addTask { [weak self] in
+                        await self?.process(itemID: itemID, settings: settings)
+                        await self?.didFinishProcessing(itemID)
+                    }
+                }
+
+                guard !activeItemIDs.isEmpty else { break }
+                await waitForSchedulerEvent()
+            }
+
+            group.cancelAll()
         }
+    }
+
+    private func didFinishProcessing(_ itemID: UUID) {
+        activeItemIDs.remove(itemID)
+        wakeScheduler()
+    }
+
+    private func waitForSchedulerEvent() async {
+        await withCheckedContinuation { continuation in
+            schedulerContinuation = continuation
+        }
+    }
+
+    private func wakeScheduler() {
+        let continuation = schedulerContinuation
+        schedulerContinuation = nil
+        continuation?.resume()
+    }
+
+    private func nextQueuedItemID() -> UUID? {
+        items.first(where: {
+            $0.status == .queued && !activeItemIDs.contains($0.id)
+        })?.id
     }
 
     private func process(
@@ -443,6 +516,22 @@ private final class LiveFileTranscriptionBatchTranscriber: FileTranscriptionBatc
 @MainActor
 private final class LiveFileTranscriptionBatchRecordingStore: FileTranscriptionBatchRecordingStoring {
     private let storage = RecordingsLibraryStorage.shared
+
+    func completedDuplicate(sourceFileName: String) -> BatchTranscriptionDuplicate? {
+        guard let recording = storage.recordings.first(where: {
+            $0.type == .fileTranscription
+                && $0.status == .transcribed
+                && $0.sourceFileName?.localizedCaseInsensitiveCompare(sourceFileName) == .orderedSame
+                && !($0.transcriptionText?.isEmpty ?? true)
+        }), let transcriptionText = recording.transcriptionText
+        else { return nil }
+
+        return BatchTranscriptionDuplicate(
+            recordingID: recording.id,
+            transcriptionText: transcriptionText,
+            durationSeconds: recording.durationSeconds
+        )
+    }
 
     func savePreparedAudio(
         at audioURL: URL,
