@@ -12,7 +12,7 @@ struct DidunyApp: App {
                 onToggleTranslationRecording: { appDelegate.toggleTranslationRecording() },
                 onToggleMeetingRecording: { appDelegate.toggleMeetingRecording() },
                 onToggleMeetingTranslationRecording: { appDelegate.toggleMeetingTranslationRecording() },
-                onTranscribeFile: { appDelegate.transcribeFile() },
+                onTranscribeFiles: { appDelegate.transcribeFiles() },
                 onOpenMainWindow: { section in appDelegate.openMainWindow(section: section) },
                 onCheckForUpdates: { appDelegate.updaterManager.checkForUpdates() }
             )

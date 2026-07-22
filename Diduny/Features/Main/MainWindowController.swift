@@ -8,6 +8,7 @@ final class MainWindowController {
     static let shared = MainWindowController()
 
     var requestedSection: MainSection? = nil
+    var requestedRecordingID: UUID?
 
     private var window: NSWindow?
     private var windowDelegate: MainWindowDelegate?
@@ -38,6 +39,11 @@ final class MainWindowController {
             guard self?.isVisible != true else { return }
             self?.presentWindow()
         }
+    }
+
+    func showRecording(id: UUID) {
+        requestedRecordingID = id
+        showWindow(section: .recordings)
     }
 
     func closeWindow() {

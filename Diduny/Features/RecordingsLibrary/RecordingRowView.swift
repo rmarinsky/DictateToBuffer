@@ -168,7 +168,7 @@ struct RecordingRowView: View {
         case .translation: return "Translation — \(time)"
         case .meeting: return "Meeting — \(time)"
         case .meetingTranslation: return "Meeting translation — \(time)"
-        case .fileTranscription: return "File — \(time)"
+        case .fileTranscription: return recording.sourceFileName ?? "File — \(time)"
         }
     }
 

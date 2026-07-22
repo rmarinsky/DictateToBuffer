@@ -75,6 +75,15 @@ struct RecordingsLibraryView: View {
             RecordingDetailView(recording: recording)
                 .frame(minWidth: 640, idealWidth: 700, minHeight: 500)
         }
+        .onAppear {
+            openRequestedRecordingIfAvailable()
+        }
+        .onChange(of: MainWindowController.shared.requestedRecordingID) {
+            openRequestedRecordingIfAvailable()
+        }
+        .onChange(of: storage.recordings) {
+            openRequestedRecordingIfAvailable()
+        }
         .alert("Delete Recording", isPresented: $showDeleteConfirmation) {
             Button("Delete", role: .destructive) {
                 if let r = recordingToDelete {
@@ -228,6 +237,16 @@ struct RecordingsLibraryView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(Color(.separatorColor), lineWidth: 0.5)
         )
+    }
+
+    private func openRequestedRecordingIfAvailable() {
+        let controller = MainWindowController.shared
+        guard let id = controller.requestedRecordingID,
+              let recording = storage.recordings.first(where: { $0.id == id })
+        else { return }
+
+        selectedRecording = recording
+        controller.requestedRecordingID = nil
     }
 
     // MARK: - Context Menu

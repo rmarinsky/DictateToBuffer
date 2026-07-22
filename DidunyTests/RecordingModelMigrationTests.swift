@@ -65,6 +65,12 @@ final class RecordingModelMigrationTests: XCTestCase {
         XCTAssertNil(recordings[0].translationTargetLanguageCode)
     }
 
+    func test_legacyJSON_sourceFileNameIsNil() throws {
+        let data = try XCTUnwrap(legacyJSON.data(using: .utf8))
+        let recordings = try iso8601.decode([Recording].self, from: data)
+        XCTAssertNil(recordings[0].sourceFileName)
+    }
+
     func test_legacyJSON_originalFieldsIntact() throws {
         let data = try XCTUnwrap(legacyJSON.data(using: .utf8))
         let recording = try iso8601.decode([Recording].self, from: data)[0]
@@ -129,6 +135,59 @@ final class RecordingModelMigrationTests: XCTestCase {
 
         XCTAssertEqual(decoded.status, .transcribed)
         XCTAssertNil(decoded.recoverySource)
+    }
+
+    func test_roundTrip_importedSourceFileName() throws {
+        let original = Recording(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 1_700_100_000),
+            type: .fileTranscription,
+            audioFileName: "import.m4a",
+            durationSeconds: 30,
+            fileSizeBytes: 4096,
+            status: .transcribed,
+            transcriptionText: "Imported transcript",
+            sourceDevice: nil,
+            sourceFileName: "Product walkthrough.mov"
+        )
+
+        let data = try iso8601Encoder.encode([original])
+        let decoded = try iso8601.decode([Recording].self, from: data)[0]
+
+        XCTAssertEqual(decoded.sourceFileName, "Product walkthrough.mov")
+    }
+
+    func test_interruptedProcessingResetsToUnprocessedAfterLoad() {
+        var recordings = [
+            Recording(
+                id: UUID(),
+                createdAt: Date(),
+                type: .fileTranscription,
+                audioFileName: "prepared.m4a",
+                durationSeconds: 30,
+                fileSizeBytes: 4096,
+                status: .processing,
+                errorMessage: "Interrupted",
+                sourceDevice: nil
+            ),
+            Recording(
+                id: UUID(),
+                createdAt: Date(),
+                type: .fileTranscription,
+                audioFileName: "complete.m4a",
+                durationSeconds: 30,
+                fileSizeBytes: 4096,
+                status: .transcribed,
+                transcriptionText: "Done",
+                sourceDevice: nil
+            )
+        ]
+
+        XCTAssertTrue(RecordingsLibraryStorage.resetInterruptedProcessingStates(in: &recordings))
+        XCTAssertEqual(recordings[0].status, .unprocessed)
+        XCTAssertNil(recordings[0].errorMessage)
+        XCTAssertEqual(recordings[1].status, .transcribed)
+        XCTAssertEqual(recordings[1].transcriptionText, "Done")
     }
 
     func test_meetingTranslationType_roundTripsAndUsesMeetingBucket() throws {

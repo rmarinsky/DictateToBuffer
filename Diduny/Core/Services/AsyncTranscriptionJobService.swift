@@ -72,10 +72,11 @@ final class AsyncTranscriptionJobService {
 
         try await ensureSpeechDetected(at: audioFileURL, context: "submitJob")
 
+        let uploadMetadata = Self.fileUploadMetadata(for: audioFileURL)
         let multipart = try MultipartFormDataFile.create(
             audioURL: audioFileURL,
-            filename: "recording.m4a",
-            contentType: "audio/mp4",
+            filename: uploadMetadata.filename,
+            contentType: uploadMetadata.contentType,
             config: config
         )
         defer { multipart.remove() }
@@ -99,6 +100,23 @@ final class AsyncTranscriptionJobService {
             session: longRunningSession
         )
         return try decodeSubmissionResponse(data: data, httpResponse: httpResponse)
+    }
+
+    static func fileUploadMetadata(for audioFileURL: URL) -> (filename: String, contentType: String) {
+        switch audioFileURL.pathExtension.lowercased() {
+        case "flac":
+            ("recording.flac", "audio/flac")
+        case "mp3":
+            ("recording.mp3", "audio/mpeg")
+        case "wav":
+            ("recording.wav", "audio/wav")
+        case "ogg", "oga":
+            ("recording.ogg", "audio/ogg")
+        case "aac":
+            ("recording.aac", "audio/aac")
+        default:
+            ("recording.m4a", "audio/mp4")
+        }
     }
 
     // MARK: - Stream Job Result (SSE)

@@ -131,10 +131,6 @@ final class RecordingQueueService {
         }
 
         do {
-            let audioData = try await Task.detached(priority: .utility) {
-                try Data(contentsOf: audioURL, options: .mappedIfSafe)
-            }.value
-
             let provider = configuredProvider(for: item)
 
             if let error = preflightError(for: item, provider: provider) {
@@ -154,10 +150,11 @@ final class RecordingQueueService {
             case .transcribe:
                 if provider == .cloud {
                     text = try await transcribeViaJobs(
-                        audioData: audioData,
+                        audioFileURL: audioURL,
                         config: buildCloudTranscriptionConfig(enableSpeakerDiarization: false)
                     )
                 } else {
+                    let audioData = try await loadAudioData(from: audioURL)
                     text = try await service.transcribe(audioData: audioData)
                 }
                 status = .transcribed
@@ -165,15 +162,17 @@ final class RecordingQueueService {
             case .transcribeDiarize:
                 if provider == .cloud {
                     text = try await transcribeViaJobs(
-                        audioData: audioData,
+                        audioFileURL: audioURL,
                         config: buildCloudTranscriptionConfig(enableSpeakerDiarization: true)
                     )
                 } else {
+                    let audioData = try await loadAudioData(from: audioURL)
                     text = try await service.transcribe(audioData: audioData)
                 }
                 status = .transcribed
                 translationTargetLanguageCode = nil
             case .translate:
+                let audioData = try await loadAudioData(from: audioURL)
                 let targetLanguage: String
                 if let explicitTargetLanguage = item.targetLanguage {
                     targetLanguage = explicitTargetLanguage
@@ -247,13 +246,22 @@ final class RecordingQueueService {
         return config
     }
 
-    private func transcribeViaJobs(audioData: Data, config: [String: Any]) async throws -> String {
+    private func transcribeViaJobs(audioFileURL: URL, config: [String: Any]) async throws -> String {
         let asyncJobService = AsyncTranscriptionJobService()
-        return try await asyncJobService.transcribeWithRetry(audioData: audioData, config: config) { [weak self] status in
+        return try await asyncJobService.transcribeFileWithRetry(
+            audioFileURL: audioFileURL,
+            config: config
+        ) { [weak self] status in
             Task { @MainActor in
                 self?.currentJobStatus = status
             }
         }
+    }
+
+    private func loadAudioData(from url: URL) async throws -> Data {
+        try await Task.detached(priority: .utility) {
+            try Data(contentsOf: url, options: .mappedIfSafe)
+        }.value
     }
 
     private func makeQueueItem(

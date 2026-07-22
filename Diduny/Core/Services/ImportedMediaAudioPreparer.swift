@@ -106,22 +106,26 @@ final class ImportedMediaAudioPreparer {
         exporter.outputFileType = .m4a
         exporter.shouldOptimizeForNetworkUse = true
 
-        try await withCheckedThrowingContinuation { continuation in
-            exporter.exportAsynchronously {
-                switch exporter.status {
-                case .completed:
-                    continuation.resume()
-                case .cancelled:
-                    continuation.resume(throwing: CancellationError())
-                default:
-                    continuation.resume(
-                        throwing: PreparationError.extractionFailed(
-                            exporter.error?.localizedDescription
-                                ?? "Audio export did not complete."
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                exporter.exportAsynchronously {
+                    switch exporter.status {
+                    case .completed:
+                        continuation.resume()
+                    case .cancelled:
+                        continuation.resume(throwing: CancellationError())
+                    default:
+                        continuation.resume(
+                            throwing: PreparationError.extractionFailed(
+                                exporter.error?.localizedDescription
+                                    ?? "Audio export did not complete."
+                            )
                         )
-                    )
+                    }
                 }
             }
+        } onCancel: {
+            exporter.cancelExport()
         }
     }
 }

@@ -43,6 +43,9 @@ struct Recording: Identifiable, Codable, Equatable {
     /// creating a library entry. So in practice this is currently always nil.
     /// TODO: populate it when the recovery-save-to-library flow is implemented.
     var recoverySource: RecoverySource?
+    /// Original Finder name for explicitly imported media. Optional so metadata
+    /// written by older releases remains decodable.
+    var sourceFileName: String?
 
     /// Nested to avoid conflict with RecoveryState.RecordingType
     enum RecordingType: String, Codable, CaseIterable {
