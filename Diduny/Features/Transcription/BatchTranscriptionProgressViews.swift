@@ -75,6 +75,8 @@ struct BatchTranscriptionRow: View {
             .controlSize(.small)
         case .completed, .duplicate:
             if let text = item.transcriptionText, !text.isEmpty {
+                CopyTranscriptButton(text: text, controlSize: .small)
+
                 Button("Transcript") {
                     isShowingTranscript = true
                 }
@@ -215,6 +217,7 @@ private struct BatchTranscriptView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                CopyTranscriptButton(text: text)
                 Button("Close") {
                     dismiss()
                 }
@@ -232,5 +235,38 @@ private struct BatchTranscriptView: View {
         }
         .padding(20)
         .frame(minWidth: 560, idealWidth: 680, minHeight: 420, idealHeight: 520)
+    }
+}
+
+private struct CopyTranscriptButton: View {
+    let text: String
+    var controlSize: ControlSize = .regular
+
+    @State private var copiedAt: Date?
+
+    var body: some View {
+        Button {
+            copyTranscript()
+        } label: {
+            Label(
+                copiedAt == nil ? "Copy" : "Copied",
+                systemImage: copiedAt == nil ? "doc.on.doc" : "checkmark"
+            )
+        }
+        .controlSize(controlSize)
+        .help(copiedAt == nil ? "Copy transcript" : "Transcript copied")
+        .accessibilityLabel(copiedAt == nil ? "Copy transcript" : "Transcript copied")
+    }
+
+    private func copyTranscript() {
+        ClipboardService.shared.copy(text: text, behavior: .raw)
+
+        let timestamp = Date()
+        copiedAt = timestamp
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            guard copiedAt == timestamp else { return }
+            copiedAt = nil
+        }
     }
 }
