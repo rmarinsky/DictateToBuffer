@@ -82,12 +82,14 @@ struct BatchTranscriptionDuplicate: Equatable {
     let durationSeconds: TimeInterval
 }
 
+@MainActor
 protocol FileTranscriptionBatchPreparing: AnyObject {
     func prepare(sourceURL: URL) async throws -> ImportedMediaAudioPreparer.PreparedAudio
 }
 
 extension ImportedMediaAudioPreparer: FileTranscriptionBatchPreparing {}
 
+@MainActor
 protocol FileTranscriptionBatchTranscribing: AnyObject {
     func preflightError(for settings: FileTranscriptionSettingsSnapshot) -> String?
     func transcribe(

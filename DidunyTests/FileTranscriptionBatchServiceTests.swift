@@ -365,6 +365,7 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
     }
 }
 
+@MainActor
 private final class BatchTestPreparer: FileTranscriptionBatchPreparing {
     private let failingSourceNames: Set<String>
     private let outputDirectory: URL
@@ -396,6 +397,7 @@ private final class BatchTestPreparer: FileTranscriptionBatchPreparing {
     }
 }
 
+@MainActor
 private final class BatchTestTranscriber: FileTranscriptionBatchTranscribing {
     private(set) var transcribedFileNames: [String] = []
     private(set) var receivedSettings: [FileTranscriptionSettingsSnapshot] = []
