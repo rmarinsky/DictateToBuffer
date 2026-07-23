@@ -7,7 +7,7 @@ struct RecordingRowView: View {
     let onDelete: () -> Void
     var isSelectionMode = false
     var isSelected = false
-    var onToggleSelection: (() -> Void)? = nil
+    var onToggleSelection: (() -> Void)?
 
     @State private var playbackService = AudioPlaybackService.shared
 

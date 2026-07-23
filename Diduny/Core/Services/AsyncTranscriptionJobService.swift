@@ -151,7 +151,7 @@ final class AsyncTranscriptionJobService {
                 currentEvent = String(line.dropFirst(7))
             } else if line.hasPrefix("data: ") {
                 currentData = String(line.dropFirst(6))
-            } else if line.isEmpty && !currentEvent.isEmpty {
+            } else if line.isEmpty, !currentEvent.isEmpty {
                 switch currentEvent {
                 case "status":
                     if let status = JobStatus(rawValue: currentData.trimmingCharacters(in: .whitespaces)) {
@@ -284,7 +284,9 @@ final class AsyncTranscriptionJobService {
                 Log.transcription.warning("SSE stream failed (attempt \(sseFailures)): \(error)")
 
                 // Check if job finished while disconnected
-                if let status = try await getJobStatusAfterDisconnect(jobId: submission.jobId, sseAttempt: sseFailures) {
+                if let status = try await getJobStatusAfterDisconnect(jobId: submission.jobId,
+                                                                      sseAttempt: sseFailures)
+                {
                     if status.status == "completed", let result = status.result {
                         return result.outputText(preferSpeakerDiarization: preferSpeakerDiarization)
                     }
@@ -311,8 +313,9 @@ final class AsyncTranscriptionJobService {
 
     private func getJobStatusAfterDisconnect(jobId: String, sseAttempt: Int) async throws -> JobStatusResponse? {
         var lastError: Error?
+        let retryCount = statusPollRetryCount
 
-        for attempt in 1 ... statusPollRetryCount {
+        for attempt in 1 ... retryCount {
             try Task.checkCancellation()
 
             do {
@@ -325,7 +328,7 @@ final class AsyncTranscriptionJobService {
                     "Job status poll failed after SSE disconnect (sseAttempt=\(sseAttempt), pollAttempt=\(attempt)): \(error.localizedDescription)"
                 )
 
-                if attempt < statusPollRetryCount {
+                if attempt < retryCount {
                     let delaySeconds = min(Double(attempt), 3)
                     try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
                 }
@@ -334,7 +337,7 @@ final class AsyncTranscriptionJobService {
 
         if let lastError {
             Log.transcription.warning(
-                "Job status temporarily unavailable after \(self.statusPollRetryCount) attempts; keeping async job alive: \(lastError.localizedDescription)"
+                "Job status temporarily unavailable after \(retryCount) attempts; keeping async job alive: \(lastError.localizedDescription)"
             )
         }
 
@@ -391,7 +394,7 @@ final class AsyncTranscriptionJobService {
                 "-c", "1",
                 "-r", "16000",
                 inputURL.path,
-                outputURL.path,
+                outputURL.path
             ]
 
             let errorPipe = Pipe()

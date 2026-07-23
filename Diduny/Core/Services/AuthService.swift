@@ -1,6 +1,6 @@
 import Foundation
-import Supabase
 import os
+import Supabase
 
 /// Diduny auth façade backed by the Supabase Auth SDK.
 ///
@@ -43,24 +43,26 @@ final class AuthService {
         _cachedEmail
     }
 
-    // Cached from the session so callers that need a sync answer get one.
+    /// Cached from the session so callers that need a sync answer get one.
     private var _cachedEmail: String?
 
-    // Retained for the lifetime of AuthService.
+    /// Retained for the lifetime of AuthService.
     private var authStateObserverTask: Task<Void, Never>?
 
-    private var supabase: SupabaseService { SupabaseService.shared }
+    private var supabase: SupabaseService {
+        SupabaseService.shared
+    }
 
     private init() {
         // Eagerly restore session state from SDK cache.
         Task { @MainActor [weak self] in
             guard let self else { return }
             if let session = await supabase.currentSession {
-                self._cachedEmail = session.user.email
-                self.authState = .loggedIn
+                _cachedEmail = session.user.email
+                authState = .loggedIn
                 Self.setSessionPresent(true)
             }
-            self.startAuthStateObserver()
+            startAuthStateObserver()
         }
     }
 
@@ -73,13 +75,13 @@ final class AuthService {
                 guard let self else { return }
                 switch event {
                 case .signedIn, .tokenRefreshed, .userUpdated:
-                    self._cachedEmail = session?.user.email
-                    self.authState = .loggedIn
+                    _cachedEmail = session?.user.email
+                    authState = .loggedIn
                     Self.setSessionPresent(true)
                     Log.app.info("[Auth] State → loggedIn (event: \(String(describing: event)))")
                 case .signedOut, .userDeleted:
-                    self._cachedEmail = nil
-                    self.authState = .loggedOut
+                    _cachedEmail = nil
+                    authState = .loggedOut
                     Self.setSessionPresent(false)
                     Log.app.info("[Auth] State → loggedOut (event: \(String(describing: event)))")
                 default:

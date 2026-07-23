@@ -139,7 +139,7 @@ enum DiarizedTranscriptFormatter {
         var text: String
     }
 
-    private static let sameSpeakerGapThresholdMs = 2_500
+    private static let sameSpeakerGapThresholdMs = 2500
 
     static func format(tokens: [JobTranscriptionToken], fallbackText: String) -> String {
         guard tokens.contains(where: { $0.speaker != nil || $0.startMs != nil || $0.endMs != nil }) else {
@@ -241,7 +241,8 @@ enum DiarizedTranscriptFormatter {
         else { return false }
 
         if CharacterSet.whitespacesAndNewlines.contains(last) ||
-            CharacterSet.whitespacesAndNewlines.contains(first) {
+            CharacterSet.whitespacesAndNewlines.contains(first)
+        {
             return false
         }
 
