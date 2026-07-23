@@ -230,7 +230,7 @@ final class AsyncTranscriptionJobService {
             submission: submission,
             preferSpeakerDiarization: preferSpeakerDiarization,
             onProgressUpdate: onProgressUpdate
-        )
+        ).text
     }
 
     func transcribeFileWithRetry(
@@ -251,6 +251,18 @@ final class AsyncTranscriptionJobService {
         config: [String: Any],
         onProgressUpdate: @escaping (JobProgressUpdate) -> Void
     ) async throws -> String {
+        try await transcribeFileDetailedWithRetry(
+            audioFileURL: audioFileURL,
+            config: config,
+            onProgressUpdate: onProgressUpdate
+        ).text
+    }
+
+    func transcribeFileDetailedWithRetry(
+        audioFileURL: URL,
+        config: [String: Any],
+        onProgressUpdate: @escaping (JobProgressUpdate) -> Void
+    ) async throws -> GeneratedTranscript {
         try Task.checkCancellation()
         let preferSpeakerDiarization = shouldPreferSpeakerDiarization(config: config)
         let submission = try await submitJob(audioFileURL: audioFileURL, config: config)
@@ -265,7 +277,7 @@ final class AsyncTranscriptionJobService {
         submission: JobSubmission,
         preferSpeakerDiarization: Bool,
         onProgressUpdate: @escaping (JobProgressUpdate) -> Void
-    ) async throws -> String {
+    ) async throws -> GeneratedTranscript {
         var sseFailures = 0
         let deadline = Date().addingTimeInterval(maxJobWaitSeconds)
 
@@ -276,7 +288,7 @@ final class AsyncTranscriptionJobService {
                     jobId: submission.jobId,
                     onProgressUpdate: onProgressUpdate
                 )
-                return result.outputText(preferSpeakerDiarization: preferSpeakerDiarization)
+                return result.generatedTranscript(preferSpeakerDiarization: preferSpeakerDiarization)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
@@ -288,7 +300,7 @@ final class AsyncTranscriptionJobService {
                                                                       sseAttempt: sseFailures)
                 {
                     if status.status == "completed", let result = status.result {
-                        return result.outputText(preferSpeakerDiarization: preferSpeakerDiarization)
+                        return result.generatedTranscript(preferSpeakerDiarization: preferSpeakerDiarization)
                     }
                     if status.status == "error" {
                         throw TranscriptionError.apiError(status.error ?? "Transcription failed")
@@ -604,10 +616,18 @@ final class AsyncTranscriptionJobService {
         if let wrapped = try? JSONDecoder().decode(JobStatusResponse.self, from: jsonData),
            let result = wrapped.result
         {
-            return JobResult(text: result.text, tokens: result.tokens)
+            return JobResult(
+                text: result.text,
+                tokens: result.tokens,
+                providerSegments: result.providerSegments
+            )
         }
         let direct = try JSONDecoder().decode(JobTranscriptionResult.self, from: jsonData)
-        return JobResult(text: direct.text, tokens: direct.tokens)
+        return JobResult(
+            text: direct.text,
+            tokens: direct.tokens,
+            providerSegments: direct.providerSegments
+        )
     }
 
     private func parseErrorMessage(_ data: String) -> String {

@@ -19,28 +19,32 @@ struct RecordingsLibraryView: View {
         case meetings = "Meetings"
         case voiceNotes = "Voice notes"
         case files = "Files"
+        case youtube = "YouTube"
 
-        func matches(_ recordingType: Recording.RecordingType) -> Bool {
+        func matches(_ recording: Recording) -> Bool {
             switch self {
             case .all:
                 true
             case .meetings:
-                recordingType.isMeetingLike
+                recording.type.isMeetingLike
             case .voiceNotes:
-                recordingType == .voice || recordingType == .translation
+                recording.type == .voice || recording.type == .translation
             case .files:
-                recordingType == .fileTranscription
+                recording.type == .fileTranscription && !recording.isYouTubeVideo
+            case .youtube:
+                recording.isYouTubeVideo
             }
         }
     }
 
     private var filteredRecordings: [Recording] {
         storage.recordings.filter { recording in
-            guard filter.matches(recording.type) else { return false }
+            guard filter.matches(recording) else { return false }
             guard !searchText.isEmpty else { return true }
             let query = searchText.lowercased()
-            return recording.type.displayName.lowercased().contains(query)
+            return recording.libraryDisplayName.lowercased().contains(query)
                 || (recording.sourceFileName?.lowercased().contains(query) ?? false)
+                || (recording.remoteSource?.channelName?.lowercased().contains(query) ?? false)
                 || (recording.transcriptionText?.lowercased().contains(query) ?? false)
         }
     }

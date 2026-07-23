@@ -118,12 +118,12 @@ struct RecordingRowView: View {
     }
 
     private var typeBadge: some View {
-        Text(recording.type.displayName)
+        Text(recording.libraryDisplayName)
             .font(.system(size: 11, weight: .medium))
-            .foregroundColor(recording.type.brandColor)
+            .foregroundColor(recording.libraryBrandColor)
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
-            .background(recording.type.brandColor.opacity(0.12), in: Capsule())
+            .background(recording.libraryBrandColor.opacity(0.12), in: Capsule())
     }
 
     private var actionButtons: some View {

@@ -144,31 +144,31 @@ final class RecordingQueueService {
                 whisperModelOverride: item.whisperModelOverride
             )
 
-            let text: String
+            let transcript: GeneratedTranscript
             let status: Recording.ProcessingStatus
             let translationTargetLanguageCode: String?
             switch item.action {
             case .transcribe:
                 if provider == .cloud {
-                    text = try await transcribeViaJobs(
+                    transcript = try await transcribeViaJobs(
                         audioFileURL: audioURL,
                         config: buildCloudTranscriptionConfig(enableSpeakerDiarization: false)
                     )
                 } else {
                     let audioData = try await loadAudioData(from: audioURL)
-                    text = try await service.transcribe(audioData: audioData)
+                    transcript = try await GeneratedTranscript(text: service.transcribe(audioData: audioData))
                 }
                 status = .transcribed
                 translationTargetLanguageCode = nil
             case .transcribeDiarize:
                 if provider == .cloud {
-                    text = try await transcribeViaJobs(
+                    transcript = try await transcribeViaJobs(
                         audioFileURL: audioURL,
                         config: buildCloudTranscriptionConfig(enableSpeakerDiarization: true)
                     )
                 } else {
                     let audioData = try await loadAudioData(from: audioURL)
-                    text = try await service.transcribe(audioData: audioData)
+                    transcript = try await GeneratedTranscript(text: service.transcribe(audioData: audioData))
                 }
                 status = .transcribed
                 translationTargetLanguageCode = nil
@@ -177,16 +177,20 @@ final class RecordingQueueService {
                 let targetLanguage: String
                 if let explicitTargetLanguage = item.targetLanguage {
                     targetLanguage = explicitTargetLanguage
-                    text = try await service.translateAndTranscribe(
-                        audioData: audioData,
-                        targetLanguage: explicitTargetLanguage
+                    transcript = try await GeneratedTranscript(
+                        text: service.translateAndTranscribe(
+                            audioData: audioData,
+                            targetLanguage: explicitTargetLanguage
+                        )
                     )
                 } else {
                     let pair = SettingsStorage.shared.resolveTranslationLanguagePair()
                     targetLanguage = provider == .local ? "en" : pair.languageB
-                    text = try await service.translateAndTranscribe(
-                        audioData: audioData,
-                        languagePair: pair
+                    transcript = try await GeneratedTranscript(
+                        text: service.translateAndTranscribe(
+                            audioData: audioData,
+                            languagePair: pair
+                        )
                     )
                 }
                 status = .translated
@@ -199,21 +203,19 @@ final class RecordingQueueService {
                 return
             }
 
-            storage.updateRecording(
+            let provenance = recording.remoteSource != nil && status == .transcribed
+                ? GeneratedTranscriptProvenance(provider: provider.rawValue)
+                : nil
+            storage.completeTranscription(
                 id: item.id,
                 status: status,
-                text: text,
-                error: nil,
-                translationTargetLanguageCode: translationTargetLanguageCode
+                text: transcript.text,
+                segments: status == .transcribed && !transcript.segments.isEmpty
+                    ? transcript.segments
+                    : nil,
+                translationTargetLanguageCode: translationTargetLanguageCode,
+                generatedTranscriptProvenance: provenance
             )
-            if recording.remoteSource != nil, status == .transcribed {
-                storage.updateRemoteArtifacts(
-                    id: item.id,
-                    generatedTranscriptProvenance: GeneratedTranscriptProvenance(
-                        provider: provider.rawValue
-                    )
-                )
-            }
             currentJobStatus = nil
             Log.app.info("Queue processed recording \(item.id): \(status.rawValue)")
         } catch is CancellationError {
@@ -255,14 +257,17 @@ final class RecordingQueueService {
         return config
     }
 
-    private func transcribeViaJobs(audioFileURL: URL, config: [String: Any]) async throws -> String {
+    private func transcribeViaJobs(
+        audioFileURL: URL,
+        config: [String: Any]
+    ) async throws -> GeneratedTranscript {
         let asyncJobService = AsyncTranscriptionJobService()
-        return try await asyncJobService.transcribeFileWithRetry(
+        return try await asyncJobService.transcribeFileDetailedWithRetry(
             audioFileURL: audioFileURL,
             config: config
-        ) { [weak self] status in
+        ) { [weak self] update in
             Task { @MainActor in
-                self?.currentJobStatus = status
+                self?.currentJobStatus = update.status
             }
         }
     }

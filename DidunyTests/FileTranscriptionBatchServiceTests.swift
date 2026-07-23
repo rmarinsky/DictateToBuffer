@@ -477,6 +477,36 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertNil(service.items.first?.transcriptionText)
     }
 
+    func test_remoteTranscriptionPersistsTimedPhraseSegments() async throws {
+        let segments = [
+            TimedTranscriptSegment(
+                startMilliseconds: 1200,
+                endMilliseconds: 2000,
+                text: "First thought."
+            )
+        ]
+        let transcriber = BatchTestTranscriber(
+            transcript: GeneratedTranscript(text: "First thought.", segments: segments)
+        )
+        let store = BatchTestRecordingStore(storesRemoteAudio: true)
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: transcriber,
+            recordingStore: store,
+            remoteExtractor: BatchTestRemoteExtractor(),
+            chromeProfile: { ChromeProfile(id: "Default", name: "Roman") },
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+
+        service.beginBatch(remoteSources: [source])
+        try await waitUntil { !service.isProcessing && service.finishedCount == 1 }
+
+        XCTAssertEqual(store.completedTranscript?.text, "First thought.")
+        XCTAssertEqual(store.completedTranscript?.segments, segments)
+    }
+
     func test_remoteCaptionRetryDoesNotRegenerateCompletedTranscript() async throws {
         let caption = TranscriptArtifact(
             text: "Provider captions",
@@ -1134,6 +1164,7 @@ private final class BatchTestTranscriber: FileTranscriptionBatchTranscribing {
     private let preflightErrorMessage: String?
     private let progressUpdates: [JobProgressUpdate]
     private let waitsForRelease: Bool
+    private let transcript: GeneratedTranscript?
     private var releaseContinuations: [CheckedContinuation<Void, Never>] = []
 
     init(
@@ -1141,13 +1172,15 @@ private final class BatchTestTranscriber: FileTranscriptionBatchTranscribing {
         preflightError: String? = nil,
         failureCount: Int = 0,
         progressUpdates: [JobProgressUpdate] = [],
-        waitsForRelease: Bool = false
+        waitsForRelease: Bool = false,
+        transcript: GeneratedTranscript? = nil
     ) {
         self.delay = delay
         preflightErrorMessage = preflightError
         remainingFailures = failureCount
         self.progressUpdates = progressUpdates
         self.waitsForRelease = waitsForRelease
+        self.transcript = transcript
     }
 
     func preflightError(for _: FileTranscriptionSettingsSnapshot) -> String? {
@@ -1158,7 +1191,7 @@ private final class BatchTestTranscriber: FileTranscriptionBatchTranscribing {
         audioFileURL: URL,
         settings: FileTranscriptionSettingsSnapshot,
         onUpdate: @escaping (JobProgressUpdate) -> Void
-    ) async throws -> String {
+    ) async throws -> GeneratedTranscript {
         transcribedFileNames.append(audioFileURL.lastPathComponent)
         receivedSettings.append(settings)
         concurrentCount += 1
@@ -1177,7 +1210,9 @@ private final class BatchTestTranscriber: FileTranscriptionBatchTranscribing {
             remainingFailures -= 1
             throw BatchTestError.transcriptionFailed
         }
-        return "Transcript for \(audioFileURL.lastPathComponent)"
+        return transcript ?? GeneratedTranscript(
+            text: "Transcript for \(audioFileURL.lastPathComponent)"
+        )
     }
 
     func releaseAll() {
@@ -1196,6 +1231,7 @@ private final class BatchTestRecordingStore: FileTranscriptionBatchRecordingStor
     private let storesRemoteAudio: Bool
     private var storedAudioURLs: [UUID: URL] = [:]
     private(set) var updatedCaptionArtifacts: [TranscriptArtifact] = []
+    private(set) var completedTranscript: GeneratedTranscript?
 
     init(
         duplicate: BatchTranscriptionDuplicate? = nil,
@@ -1255,7 +1291,14 @@ private final class BatchTestRecordingStore: FileTranscriptionBatchRecordingStor
     }
 
     func markProcessing(recordingID _: UUID) {}
-    func markCompleted(recordingID _: UUID, text _: String) {}
+    func markCompleted(
+        recordingID _: UUID,
+        transcript: GeneratedTranscript,
+        provenance _: GeneratedTranscriptProvenance?
+    ) {
+        completedTranscript = transcript
+    }
+
     func markFailed(recordingID _: UUID, error _: String) {}
     func markUnprocessed(recordingID _: UUID) {}
 }

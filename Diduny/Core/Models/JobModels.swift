@@ -21,6 +21,7 @@ struct JobStatusResponse: Decodable {
 struct JobTranscriptionResult: Decodable {
     let text: String
     let tokens: [JobTranscriptionToken]
+    let providerSegments: [JobTranscriptionToken]?
 
     private enum CodingKeys: String, CodingKey {
         case text
@@ -32,10 +33,22 @@ struct JobTranscriptionResult: Decodable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        tokens = (try? container.decode([JobTranscriptionToken].self, forKey: .tokens))
-            ?? (try? container.decode([JobTranscriptionToken].self, forKey: .words))
-            ?? (try? container.decode([JobTranscriptionToken].self, forKey: .segments))
-            ?? []
+        if let decoded = try? container.decode([JobTranscriptionToken].self, forKey: .segments),
+           decoded.contains(where: { $0.startMs != nil })
+        {
+            providerSegments = decoded
+        } else {
+            providerSegments = nil
+        }
+        if let decoded = try? container.decode([JobTranscriptionToken].self, forKey: .tokens) {
+            tokens = decoded
+        } else if let decoded = try? container.decode([JobTranscriptionToken].self, forKey: .words) {
+            tokens = decoded
+        } else if let decoded = providerSegments {
+            tokens = decoded
+        } else {
+            tokens = []
+        }
 
         text = container.decodeStringIfPresent(forKeys: [.text, .transcript])
             ?? tokens.map(\.text).joined()
@@ -47,6 +60,15 @@ struct JobTranscriptionResult: Decodable {
         }
 
         return DiarizedTranscriptFormatter.format(tokens: tokens, fallbackText: text)
+    }
+
+    func generatedTranscript(preferSpeakerDiarization: Bool) -> GeneratedTranscript {
+        GeneratedTranscript(
+            sourceText: text,
+            tokens: tokens,
+            providerSegments: providerSegments,
+            preferSpeakerDiarization: preferSpeakerDiarization
+        )
     }
 }
 
@@ -100,10 +122,16 @@ struct JobTranscriptionToken: Decodable, Equatable {
 struct JobResult {
     let text: String
     let tokens: [JobTranscriptionToken]
+    let providerSegments: [JobTranscriptionToken]?
 
-    init(text: String, tokens: [JobTranscriptionToken] = []) {
+    init(
+        text: String,
+        tokens: [JobTranscriptionToken] = [],
+        providerSegments: [JobTranscriptionToken]? = nil
+    ) {
         self.text = text
         self.tokens = tokens
+        self.providerSegments = providerSegments
     }
 
     func outputText(preferSpeakerDiarization: Bool) -> String {
@@ -112,6 +140,40 @@ struct JobResult {
         }
 
         return DiarizedTranscriptFormatter.format(tokens: tokens, fallbackText: text)
+    }
+
+    func generatedTranscript(preferSpeakerDiarization: Bool) -> GeneratedTranscript {
+        GeneratedTranscript(
+            sourceText: text,
+            tokens: tokens,
+            providerSegments: providerSegments,
+            preferSpeakerDiarization: preferSpeakerDiarization
+        )
+    }
+}
+
+struct GeneratedTranscript: Equatable {
+    let text: String
+    let segments: [TimedTranscriptSegment]
+
+    init(text: String, segments: [TimedTranscriptSegment] = []) {
+        self.text = text
+        self.segments = segments
+    }
+
+    init(
+        sourceText: String,
+        tokens: [JobTranscriptionToken],
+        providerSegments: [JobTranscriptionToken]?,
+        preferSpeakerDiarization: Bool
+    ) {
+        text = preferSpeakerDiarization
+            ? DiarizedTranscriptFormatter.format(tokens: tokens, fallbackText: sourceText)
+            : sourceText
+        segments = DiarizedTranscriptFormatter.timedSegments(
+            tokens: providerSegments ?? tokens,
+            preserveTokenBoundaries: providerSegments != nil
+        )
     }
 }
 
@@ -142,8 +204,125 @@ enum DiarizedTranscriptFormatter {
     private static let sameSpeakerGapThresholdMs = 2500
 
     static func format(tokens: [JobTranscriptionToken], fallbackText: String) -> String {
-        guard tokens.contains(where: { $0.speaker != nil || $0.startMs != nil || $0.endMs != nil }) else {
+        let segments = buildSegments(tokens: tokens)
+        guard !segments.isEmpty else {
             return fallbackText
+        }
+
+        let formatted = segments
+            .map { segment -> String? in
+                let text = cleanedSegmentText(segment.text)
+                guard !text.isEmpty else { return nil }
+                return "[\(timestamp(for: segment.startMs))] \(speakerLabel(segment.speaker)): \(text)"
+            }
+            .compactMap { $0 }
+            .joined(separator: "\n\n")
+
+        return formatted.isEmpty ? fallbackText : formatted
+    }
+
+    static func timedSegments(
+        tokens: [JobTranscriptionToken],
+        preserveTokenBoundaries: Bool = false
+    ) -> [TimedTranscriptSegment] {
+        let segments = preserveTokenBoundaries
+            ? providerSegments(tokens: tokens)
+            : phraseSegments(tokens: tokens)
+        return segments.compactMap { segment in
+            let text = cleanedSegmentText(segment.text)
+            guard !text.isEmpty else { return nil }
+            return TimedTranscriptSegment(
+                startMilliseconds: segment.startMs,
+                endMilliseconds: segment.endMs,
+                speaker: segment.speaker,
+                text: text
+            )
+        }
+    }
+
+    private static func providerSegments(tokens: [JobTranscriptionToken]) -> [Segment] {
+        tokens.compactMap { token in
+            guard let startMs = token.startMs else { return nil }
+            return Segment(
+                speaker: normalizedSpeaker(token.speaker),
+                startMs: startMs,
+                endMs: token.endMs,
+                text: token.text
+            )
+        }
+    }
+
+    private static func phraseSegments(tokens: [JobTranscriptionToken]) -> [Segment] {
+        var segments: [Segment] = []
+
+        for token in tokens {
+            guard !token.text.isEmpty else { continue }
+            let visibleText = token.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if visibleText.isEmpty {
+                guard !segments.isEmpty else { continue }
+                segments[segments.count - 1].text += token.text
+                if let endMs = token.endMs {
+                    segments[segments.count - 1].endMs = endMs
+                }
+                continue
+            }
+
+            let speaker = normalizedSpeaker(token.speaker)
+            if let startMs = token.startMs,
+               shouldStartNewTimedSegment(
+                   speaker: speaker,
+                   startMs: startMs,
+                   previous: segments.last
+               )
+            {
+                segments.append(
+                    Segment(
+                        speaker: speaker,
+                        startMs: startMs,
+                        endMs: token.endMs,
+                        text: token.text
+                    )
+                )
+            } else if !segments.isEmpty {
+                segments[segments.count - 1].text = appendedText(
+                    segments[segments.count - 1].text,
+                    token.text
+                )
+                if let endMs = token.endMs {
+                    segments[segments.count - 1].endMs = endMs
+                }
+            } else if let startMs = token.startMs {
+                segments.append(
+                    Segment(
+                        speaker: speaker,
+                        startMs: startMs,
+                        endMs: token.endMs,
+                        text: token.text
+                    )
+                )
+            }
+        }
+
+        return segments
+    }
+
+    private static func shouldStartNewTimedSegment(
+        speaker: String?,
+        startMs: Int,
+        previous: Segment?
+    ) -> Bool {
+        guard let previous else { return true }
+        guard previous.speaker == speaker else { return true }
+        if cleanedSegmentText(previous.text).last.map(isPhraseTerminator) == true {
+            return true
+        }
+        guard let previousEndMs = previous.endMs else { return false }
+        return startMs - previousEndMs > sameSpeakerGapThresholdMs
+    }
+
+    private static func buildSegments(tokens: [JobTranscriptionToken]) -> [Segment] {
+        guard tokens.contains(where: { $0.speaker != nil || $0.startMs != nil || $0.endMs != nil }) else {
+            return []
         }
 
         var segments: [Segment] = []
@@ -169,16 +348,7 @@ enum DiarizedTranscriptFormatter {
             }
         }
 
-        let formatted = segments
-            .map { segment -> String? in
-                let text = cleanedSegmentText(segment.text)
-                guard !text.isEmpty else { return nil }
-                return "[\(timestamp(for: segment.startMs))] \(speakerLabel(segment.speaker)): \(text)"
-            }
-            .compactMap { $0 }
-            .joined(separator: "\n\n")
-
-        return formatted.isEmpty ? fallbackText : formatted
+        return segments
     }
 
     private static func appendWhitespace(_ whitespace: String, endMs: Int?, to segments: inout [Segment]) {
@@ -194,6 +364,10 @@ enum DiarizedTranscriptFormatter {
         guard previous.speaker == speaker else { return true }
         guard let previousEndMs = previous.endMs else { return false }
         return startMs - previousEndMs > sameSpeakerGapThresholdMs
+    }
+
+    private static func isPhraseTerminator(_ character: Character) -> Bool {
+        ".!?…".contains(character)
     }
 
     private static func normalizedSpeaker(_ speaker: String?) -> String? {

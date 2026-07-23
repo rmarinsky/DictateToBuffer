@@ -99,12 +99,12 @@ struct RecordingDetailView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Image(systemName: currentRecording.type.iconName)
+            Image(systemName: currentRecording.libraryIconName)
                 .font(.title2)
                 .foregroundColor(iconColor)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(currentRecording.type.displayName)
+                Text(currentRecording.libraryDisplayName)
                     .font(.headline)
 
                 HStack(spacing: 8) {
@@ -414,7 +414,7 @@ struct RecordingDetailView: View {
     }
 
     private var iconColor: Color {
-        currentRecording.type.brandColor
+        currentRecording.libraryBrandColor
     }
 
     private static let dateFormatter: DateFormatter = {

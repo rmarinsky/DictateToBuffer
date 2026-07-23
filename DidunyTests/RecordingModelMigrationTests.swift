@@ -73,6 +73,7 @@ final class RecordingModelMigrationTests: XCTestCase {
         XCTAssertNil(recordings[0].remoteSource)
         XCTAssertNil(recordings[0].sourceCaptionArtifacts)
         XCTAssertNil(recordings[0].generatedTranscriptProvenance)
+        XCTAssertNil(recordings[0].transcriptSegments)
     }
 
     func test_legacyJSON_originalFieldsIntact() throws {
@@ -131,6 +132,14 @@ final class RecordingModelMigrationTests: XCTestCase {
             provenance: .youtubeAutomatic
         )
         let generated = GeneratedTranscriptProvenance(provider: "cloud")
+        let segments = [
+            TimedTranscriptSegment(
+                startMilliseconds: 1200,
+                endMilliseconds: 2300,
+                speaker: "1",
+                text: "Generated transcript"
+            )
+        ]
         let original = Recording(
             id: UUID(),
             createdAt: Date(timeIntervalSince1970: 1_700_000_000),
@@ -143,7 +152,8 @@ final class RecordingModelMigrationTests: XCTestCase {
             sourceDevice: nil,
             remoteSource: remoteSource,
             sourceCaptionArtifacts: [captions],
-            generatedTranscriptProvenance: generated
+            generatedTranscriptProvenance: generated,
+            transcriptSegments: segments
         )
 
         let data = try iso8601Encoder.encode([original])
@@ -152,6 +162,7 @@ final class RecordingModelMigrationTests: XCTestCase {
         XCTAssertEqual(decoded.remoteSource, remoteSource)
         XCTAssertEqual(decoded.sourceCaptionArtifacts, [captions])
         XCTAssertEqual(decoded.generatedTranscriptProvenance, generated)
+        XCTAssertEqual(decoded.transcriptSegments, segments)
         XCTAssertEqual(decoded.transcriptionText, "Generated transcript")
     }
 

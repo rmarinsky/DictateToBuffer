@@ -197,7 +197,7 @@ protocol FileTranscriptionBatchTranscribing: AnyObject {
         audioFileURL: URL,
         settings: FileTranscriptionSettingsSnapshot,
         onUpdate: @escaping (JobProgressUpdate) -> Void
-    ) async throws -> String
+    ) async throws -> GeneratedTranscript
 }
 
 @MainActor
@@ -219,11 +219,10 @@ protocol FileTranscriptionBatchRecordingStoring: AnyObject {
     ) -> UUID?
     func audioFileURL(recordingID: UUID) -> URL?
     func markProcessing(recordingID: UUID)
-    func markCompleted(recordingID: UUID, text: String)
     func markCompleted(
         recordingID: UUID,
-        text: String,
-        provenance: GeneratedTranscriptProvenance
+        transcript: GeneratedTranscript,
+        provenance: GeneratedTranscriptProvenance?
     )
     func markFailed(recordingID: UUID, error: String)
     func markUnprocessed(recordingID: UUID)
@@ -231,14 +230,6 @@ protocol FileTranscriptionBatchRecordingStoring: AnyObject {
 }
 
 extension FileTranscriptionBatchRecordingStoring {
-    func markCompleted(
-        recordingID: UUID,
-        text: String,
-        provenance _: GeneratedTranscriptProvenance
-    ) {
-        markCompleted(recordingID: recordingID, text: text)
-    }
-
     func completedDuplicate(remoteProvider _: String, mediaID _: String) -> BatchTranscriptionDuplicate? {
         nil
     }
@@ -871,7 +862,7 @@ final class FileTranscriptionBatchService {
                 $0.status = settings.provider == .cloud ? .uploading : .processing
                 $0.progressFraction = nil
             }
-            let text = try await transcribeWithPermit(
+            let transcript = try await transcribeWithPermit(
                 audioFileURL: audioURL,
                 settings: settings
             ) { [weak self] progressUpdate in
@@ -884,7 +875,7 @@ final class FileTranscriptionBatchService {
             if let recordingID {
                 recordingStore.markCompleted(
                     recordingID: recordingID,
-                    text: text,
+                    transcript: transcript,
                     provenance: GeneratedTranscriptProvenance(provider: settings.provider.rawValue)
                 )
             }
@@ -892,7 +883,7 @@ final class FileTranscriptionBatchService {
                 $0.status = captionAttemptFailed ? .partialResult : .completed
                 $0.progressFraction = 1
                 $0.finishedAt = Date()
-                $0.transcriptionText = text
+                $0.transcriptionText = transcript.text
                 $0.errorMessage = captionAttemptFailed ? $0.captionErrorMessage : nil
             }
         } catch RemoteMediaExtractorError.authorizationRequired {
@@ -970,7 +961,7 @@ final class FileTranscriptionBatchService {
             }
 
             update(itemID) { $0.status = settings.provider == .cloud ? .uploading : .processing }
-            let text = try await transcribeWithPermit(
+            let transcript = try await transcribeWithPermit(
                 audioFileURL: audioURL,
                 settings: settings
             ) { [weak self] progressUpdate in
@@ -981,13 +972,17 @@ final class FileTranscriptionBatchService {
             try Task.checkCancellation()
 
             if let recordingID {
-                recordingStore.markCompleted(recordingID: recordingID, text: text)
+                recordingStore.markCompleted(
+                    recordingID: recordingID,
+                    transcript: transcript,
+                    provenance: nil
+                )
             }
             update(itemID) {
                 $0.status = .completed
                 $0.progressFraction = 1
                 $0.finishedAt = Date()
-                $0.transcriptionText = text
+                $0.transcriptionText = transcript.text
                 $0.errorMessage = nil
             }
         } catch is CancellationError {
@@ -1031,7 +1026,7 @@ final class FileTranscriptionBatchService {
         audioFileURL: URL,
         settings: FileTranscriptionSettingsSnapshot,
         onUpdate: @escaping (JobProgressUpdate) -> Void
-    ) async throws -> String {
+    ) async throws -> GeneratedTranscript {
         let permits = settings.provider == .cloud
             ? cloudTranscriptionPermits
             : localTranscriptionPermits
@@ -1164,7 +1159,7 @@ private final class LiveFileTranscriptionBatchTranscriber: FileTranscriptionBatc
         audioFileURL: URL,
         settings: FileTranscriptionSettingsSnapshot,
         onUpdate: @escaping (JobProgressUpdate) -> Void
-    ) async throws -> String {
+    ) async throws -> GeneratedTranscript {
         switch settings.provider {
         case .cloud:
             var config: [String: Any] = ["mode": "transcribe"]
@@ -1172,7 +1167,7 @@ private final class LiveFileTranscriptionBatchTranscriber: FileTranscriptionBatc
                 config["language_hints"] = settings.languageHints
                 config["language_hints_strict"] = true
             }
-            return try await AsyncTranscriptionJobService().transcribeFileWithRetry(
+            return try await AsyncTranscriptionJobService().transcribeFileDetailedWithRetry(
                 audioFileURL: audioFileURL,
                 config: config,
                 onProgressUpdate: onUpdate
@@ -1184,7 +1179,7 @@ private final class LiveFileTranscriptionBatchTranscriber: FileTranscriptionBatc
             }.value
             let service = WhisperTranscriptionService()
             service.modelNameOverride = settings.localModelName
-            return try await service.transcribe(audioData: audioData)
+            return try await GeneratedTranscript(text: service.transcribe(audioData: audioData))
         }
     }
 }
@@ -1282,18 +1277,16 @@ private final class LiveFileTranscriptionBatchRecordingStore: FileTranscriptionB
         storage.updateRecording(id: recordingID, status: .processing, error: nil)
     }
 
-    func markCompleted(recordingID: UUID, text: String) {
-        storage.updateRecording(id: recordingID, status: .transcribed, text: text, error: nil)
-    }
-
     func markCompleted(
         recordingID: UUID,
-        text: String,
-        provenance: GeneratedTranscriptProvenance
+        transcript: GeneratedTranscript,
+        provenance: GeneratedTranscriptProvenance?
     ) {
-        storage.updateRecording(id: recordingID, status: .transcribed, text: text, error: nil)
-        storage.updateRemoteArtifacts(
+        storage.completeTranscription(
             id: recordingID,
+            status: .transcribed,
+            text: transcript.text,
+            segments: transcript.segments.isEmpty ? nil : transcript.segments,
             generatedTranscriptProvenance: provenance
         )
     }

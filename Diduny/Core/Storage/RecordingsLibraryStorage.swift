@@ -11,6 +11,7 @@ final class RecordingsLibraryStorage {
     private let appSupportDir: URL
     private let recordingsDir: URL
     private let metadataURL: URL
+    private let metadataWriteQueue = DispatchQueue(label: "ua.com.rmarinsky.diduny.recordings-metadata")
 
     private init() {
         let fm = FileManager.default
@@ -47,6 +48,7 @@ final class RecordingsLibraryStorage {
         remoteSource: RemoteMediaSourceMetadata? = nil,
         sourceCaptionArtifacts: [TranscriptArtifact]? = nil,
         generatedTranscriptProvenance: GeneratedTranscriptProvenance? = nil,
+        transcriptSegments: [TimedTranscriptSegment]? = nil,
         createdAt: Date = Date(),
         recoverySource: RecoverySource? = nil,
         forceSave: Bool = false
@@ -87,7 +89,8 @@ final class RecordingsLibraryStorage {
             sourceFileSizeBytes: sourceFileSizeBytes,
             remoteSource: remoteSource,
             sourceCaptionArtifacts: sourceCaptionArtifacts,
-            generatedTranscriptProvenance: generatedTranscriptProvenance
+            generatedTranscriptProvenance: generatedTranscriptProvenance,
+            transcriptSegments: transcriptSegments
         )
 
         recordings.insert(recording, at: 0)
@@ -123,6 +126,7 @@ final class RecordingsLibraryStorage {
         remoteSource: RemoteMediaSourceMetadata? = nil,
         sourceCaptionArtifacts: [TranscriptArtifact]? = nil,
         generatedTranscriptProvenance: GeneratedTranscriptProvenance? = nil,
+        transcriptSegments: [TimedTranscriptSegment]? = nil,
         createdAt: Date = Date(),
         recoverySource: RecoverySource? = nil,
         forceSave: Bool = false
@@ -172,7 +176,8 @@ final class RecordingsLibraryStorage {
             sourceFileSizeBytes: sourceFileSizeBytes,
             remoteSource: remoteSource,
             sourceCaptionArtifacts: sourceCaptionArtifacts,
-            generatedTranscriptProvenance: generatedTranscriptProvenance
+            generatedTranscriptProvenance: generatedTranscriptProvenance,
+            transcriptSegments: transcriptSegments
         )
 
         recordings.insert(recording, at: 0)
@@ -269,6 +274,29 @@ final class RecordingsLibraryStorage {
             recordings[index].generatedTranscriptProvenance = generatedTranscriptProvenance
         }
         saveMetadata()
+    }
+
+    func completeTranscription(
+        id: UUID,
+        status: Recording.ProcessingStatus,
+        text: String,
+        segments: [TimedTranscriptSegment]?,
+        translationTargetLanguageCode: String? = nil,
+        generatedTranscriptProvenance: GeneratedTranscriptProvenance? = nil
+    ) {
+        guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
+        recordings[index].status = status
+        recordings[index].transcriptionText = text
+        recordings[index].errorMessage = nil
+        recordings[index].processedAt = Date()
+        recordings[index].transcriptSegments = segments
+        if let translationTargetLanguageCode {
+            recordings[index].translationTargetLanguageCode = translationTargetLanguageCode
+        }
+        if let generatedTranscriptProvenance {
+            recordings[index].generatedTranscriptProvenance = generatedTranscriptProvenance
+        }
+        saveMetadataSynchronously()
     }
 
     func optimizeStoredRecordingIfNeeded(id: UUID) async -> URL? {
@@ -379,27 +407,28 @@ final class RecordingsLibraryStorage {
     private func saveMetadata() {
         let snapshot = recordings
         let url = metadataURL
-        Task.detached(priority: .utility) {
-            do {
-                let encoder = JSONEncoder()
-                encoder.dateEncodingStrategy = .iso8601
-                let data = try encoder.encode(snapshot)
-                try data.write(to: url, options: .atomic)
-            } catch {
-                Log.app.error("Failed to save recordings metadata: \(error.localizedDescription)")
-            }
+        metadataWriteQueue.async {
+            _ = Self.writeMetadataSnapshot(snapshot, to: url)
         }
     }
 
     private func saveMetadataSynchronously() -> Bool {
+        let snapshot = recordings
+        let url = metadataURL
+        return metadataWriteQueue.sync {
+            Self.writeMetadataSnapshot(snapshot, to: url)
+        }
+    }
+
+    private nonisolated static func writeMetadataSnapshot(_ snapshot: [Recording], to url: URL) -> Bool {
         do {
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
-            let data = try encoder.encode(recordings)
-            try data.write(to: metadataURL, options: .atomic)
+            let data = try encoder.encode(snapshot)
+            try data.write(to: url, options: .atomic)
             return true
         } catch {
-            Log.app.error("Failed to save recovered recording metadata: \(error.localizedDescription)")
+            Log.app.error("Failed to save recordings metadata: \(error.localizedDescription)")
             return false
         }
     }
@@ -459,7 +488,8 @@ final class RecordingsLibraryStorage {
                 sourceFileSizeBytes: recording.sourceFileSizeBytes,
                 remoteSource: recording.remoteSource,
                 sourceCaptionArtifacts: recording.sourceCaptionArtifacts,
-                generatedTranscriptProvenance: recording.generatedTranscriptProvenance
+                generatedTranscriptProvenance: recording.generatedTranscriptProvenance,
+                transcriptSegments: recording.transcriptSegments
             )
             saveMetadata()
 

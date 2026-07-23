@@ -19,6 +19,25 @@ enum RecoverySource: String, Codable {
     // Future cases: .importedFile, .crashRecovery — out of scope for M0.
 }
 
+struct TimedTranscriptSegment: Codable, Equatable {
+    let startMilliseconds: Int
+    let endMilliseconds: Int?
+    let speaker: String?
+    let text: String
+
+    init(
+        startMilliseconds: Int,
+        endMilliseconds: Int? = nil,
+        speaker: String? = nil,
+        text: String
+    ) {
+        self.startMilliseconds = startMilliseconds
+        self.endMilliseconds = endMilliseconds
+        self.speaker = speaker
+        self.text = text
+    }
+}
+
 struct Recording: Identifiable, Codable, Equatable {
     let id: UUID
     let createdAt: Date
@@ -51,6 +70,25 @@ struct Recording: Identifiable, Codable, Equatable {
     var sourceCaptionArtifacts: [TranscriptArtifact]?
     /// Identifies which Diduny provider produced `transcriptionText`.
     var generatedTranscriptProvenance: GeneratedTranscriptProvenance?
+    /// Phrase-level timestamps from the generated transcript provider.
+    /// Optional so recordings created by older releases remain decodable.
+    var transcriptSegments: [TimedTranscriptSegment]?
+
+    var isYouTubeVideo: Bool {
+        remoteSource?.provider == YouTubeRemoteMediaSource.provider
+    }
+
+    var libraryDisplayName: String {
+        isYouTubeVideo ? "YouTube Video" : type.displayName
+    }
+
+    var libraryIconName: String {
+        isYouTubeVideo ? "play.rectangle.fill" : type.iconName
+    }
+
+    var libraryBrandColor: Color {
+        isYouTubeVideo ? .red : type.brandColor
+    }
 
     /// Nested to avoid conflict with RecoveryState.RecordingType
     enum RecordingType: String, Codable, CaseIterable {
