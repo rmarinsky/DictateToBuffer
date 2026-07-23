@@ -342,7 +342,7 @@ struct RecordingsLibraryView: View {
         }
         .disabled(recording.status == .processing)
 
-        if let text = recording.transcriptionText, !text.isEmpty {
+        if let text = recording.displayTranscriptText {
             Divider()
             Button("Copy Text") {
                 ClipboardService.shared.copy(text: text, behavior: recording.type.clipboardCopyBehavior)

@@ -166,6 +166,33 @@ final class RecordingModelMigrationTests: XCTestCase {
         XCTAssertEqual(decoded.transcriptionText, "Generated transcript")
     }
 
+    func test_displayTranscriptText_includesStoredPhraseTimestamps() {
+        let recording = Recording(
+            id: UUID(),
+            createdAt: Date(),
+            type: .fileTranscription,
+            audioFileName: "video.m4a",
+            durationSeconds: 3700,
+            fileSizeBytes: 42,
+            status: .transcribed,
+            transcriptionText: "First phrase. Later phrase.",
+            sourceDevice: nil,
+            transcriptSegments: [
+                TimedTranscriptSegment(startMilliseconds: 1200, endMilliseconds: 2300, text: "First phrase."),
+                TimedTranscriptSegment(
+                    startMilliseconds: 3_661_000,
+                    endMilliseconds: 3_662_000,
+                    text: "Later phrase."
+                ),
+            ]
+        )
+
+        XCTAssertEqual(
+            recording.displayTranscriptText,
+            "[00:01] First phrase.\n\n[1:01:01] Later phrase."
+        )
+    }
+
     func test_roundTrip_nilRecoverySource_normalStop() throws {
         let original = Recording(
             id: UUID(),

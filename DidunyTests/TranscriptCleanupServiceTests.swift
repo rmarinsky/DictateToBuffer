@@ -175,6 +175,29 @@ struct TranscriptCleanupServiceTests {
         #expect(result.outputText(preferSpeakerDiarization: true) == "[00:00] Speaker 1: Hello Roman.")
     }
 
+    @Test("Soniox token fragments preserve provider spacing in timed phrases")
+    func sonioxTokenFragmentsPreserveProviderSpacing() throws {
+        let json = """
+        {
+          "text": "Всіх вітаю.",
+          "tokens": [
+            { "text": "В", "start_ms": 0, "end_ms": 100 },
+            { "text": "сі", "start_ms": 100, "end_ms": 200 },
+            { "text": "х ", "start_ms": 200, "end_ms": 300 },
+            { "text": "ві", "start_ms": 300, "end_ms": 400 },
+            { "text": "таю", "start_ms": 400, "end_ms": 500 },
+            { "text": ".", "start_ms": 500, "end_ms": 600 }
+          ]
+        }
+        """
+
+        let result = try JSONDecoder().decode(JobTranscriptionResult.self, from: Data(json.utf8))
+
+        #expect(result.generatedTranscript(preferSpeakerDiarization: false).segments == [
+            TimedTranscriptSegment(startMilliseconds: 0, endMilliseconds: 600, text: "Всіх вітаю.")
+        ])
+    }
+
     @Test("Job result preserves phrase timestamps without changing plain text")
     func jobResultPreservesPhraseTimestamps() throws {
         let json = """

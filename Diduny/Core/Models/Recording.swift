@@ -36,6 +36,16 @@ struct TimedTranscriptSegment: Codable, Equatable {
         self.speaker = speaker
         self.text = text
     }
+
+    var timestampLabel: String {
+        let totalSeconds = max(0, startMilliseconds) / 1000
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+        return hours > 0
+            ? String(format: "%d:%02d:%02d", hours, minutes, seconds)
+            : String(format: "%02d:%02d", minutes, seconds)
+    }
 }
 
 struct Recording: Identifiable, Codable, Equatable {
@@ -88,6 +98,14 @@ struct Recording: Identifiable, Codable, Equatable {
 
     var libraryBrandColor: Color {
         isYouTubeVideo ? .red : type.brandColor
+    }
+
+    var displayTranscriptText: String? {
+        guard let transcriptionText, !transcriptionText.isEmpty else { return nil }
+        guard let transcriptSegments, !transcriptSegments.isEmpty else { return transcriptionText }
+        return transcriptSegments
+            .map { "[\($0.timestampLabel)] \($0.text)" }
+            .joined(separator: "\n\n")
     }
 
     /// Nested to avoid conflict with RecoveryState.RecordingType

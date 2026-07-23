@@ -176,11 +176,20 @@ struct RecordingDetailView: View {
                                 .foregroundColor(.secondary)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if let text = currentRecording.transcriptionText, !text.isEmpty {
-                        Text(text)
-                            .textSelection(.enabled)
-                            .font(.body)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else if let text = currentRecording.displayTranscriptText {
+                        VStack(alignment: .leading, spacing: 8) {
+                            if currentRecording.isYouTubeVideo,
+                               currentRecording.transcriptSegments?.isEmpty ?? true
+                            {
+                                Text("Timestamps were not stored for this transcript. Transcribe Again to add them.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Text(text)
+                                .textSelection(.enabled)
+                                .font(.body)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     } else if currentRecording.status == .failed {
                         Text(currentRecording.errorMessage ?? "Transcription failed")
                             .foregroundColor(.red)
@@ -260,7 +269,7 @@ struct RecordingDetailView: View {
             localActionsSection
 
             // Copy text button
-            if let text = currentRecording.transcriptionText, !text.isEmpty {
+            if let text = currentRecording.displayTranscriptText {
                 Divider()
                 HStack {
                     Spacer()

@@ -22,6 +22,7 @@ struct JobTranscriptionResult: Decodable {
     let text: String
     let tokens: [JobTranscriptionToken]
     let providerSegments: [JobTranscriptionToken]?
+    let insertsSpacesBetweenTokens: Bool
 
     private enum CodingKeys: String, CodingKey {
         case text
@@ -42,12 +43,16 @@ struct JobTranscriptionResult: Decodable {
         }
         if let decoded = try? container.decode([JobTranscriptionToken].self, forKey: .tokens) {
             tokens = decoded
+            insertsSpacesBetweenTokens = false
         } else if let decoded = try? container.decode([JobTranscriptionToken].self, forKey: .words) {
             tokens = decoded
+            insertsSpacesBetweenTokens = true
         } else if let decoded = providerSegments {
             tokens = decoded
+            insertsSpacesBetweenTokens = false
         } else {
             tokens = []
+            insertsSpacesBetweenTokens = false
         }
 
         text = container.decodeStringIfPresent(forKeys: [.text, .transcript])
@@ -59,7 +64,11 @@ struct JobTranscriptionResult: Decodable {
             return text
         }
 
-        return DiarizedTranscriptFormatter.format(tokens: tokens, fallbackText: text)
+        return DiarizedTranscriptFormatter.format(
+            tokens: tokens,
+            fallbackText: text,
+            insertsSpacesBetweenTokens: insertsSpacesBetweenTokens
+        )
     }
 
     func generatedTranscript(preferSpeakerDiarization: Bool) -> GeneratedTranscript {
@@ -67,6 +76,7 @@ struct JobTranscriptionResult: Decodable {
             sourceText: text,
             tokens: tokens,
             providerSegments: providerSegments,
+            insertsSpacesBetweenTokens: insertsSpacesBetweenTokens,
             preferSpeakerDiarization: preferSpeakerDiarization
         )
     }
@@ -123,15 +133,18 @@ struct JobResult {
     let text: String
     let tokens: [JobTranscriptionToken]
     let providerSegments: [JobTranscriptionToken]?
+    let insertsSpacesBetweenTokens: Bool
 
     init(
         text: String,
         tokens: [JobTranscriptionToken] = [],
-        providerSegments: [JobTranscriptionToken]? = nil
+        providerSegments: [JobTranscriptionToken]? = nil,
+        insertsSpacesBetweenTokens: Bool = false
     ) {
         self.text = text
         self.tokens = tokens
         self.providerSegments = providerSegments
+        self.insertsSpacesBetweenTokens = insertsSpacesBetweenTokens
     }
 
     func outputText(preferSpeakerDiarization: Bool) -> String {
@@ -139,7 +152,11 @@ struct JobResult {
             return text
         }
 
-        return DiarizedTranscriptFormatter.format(tokens: tokens, fallbackText: text)
+        return DiarizedTranscriptFormatter.format(
+            tokens: tokens,
+            fallbackText: text,
+            insertsSpacesBetweenTokens: insertsSpacesBetweenTokens
+        )
     }
 
     func generatedTranscript(preferSpeakerDiarization: Bool) -> GeneratedTranscript {
@@ -147,6 +164,7 @@ struct JobResult {
             sourceText: text,
             tokens: tokens,
             providerSegments: providerSegments,
+            insertsSpacesBetweenTokens: insertsSpacesBetweenTokens,
             preferSpeakerDiarization: preferSpeakerDiarization
         )
     }
@@ -165,14 +183,20 @@ struct GeneratedTranscript: Equatable {
         sourceText: String,
         tokens: [JobTranscriptionToken],
         providerSegments: [JobTranscriptionToken]?,
+        insertsSpacesBetweenTokens: Bool,
         preferSpeakerDiarization: Bool
     ) {
         text = preferSpeakerDiarization
-            ? DiarizedTranscriptFormatter.format(tokens: tokens, fallbackText: sourceText)
+            ? DiarizedTranscriptFormatter.format(
+                tokens: tokens,
+                fallbackText: sourceText,
+                insertsSpacesBetweenTokens: insertsSpacesBetweenTokens
+            )
             : sourceText
         segments = DiarizedTranscriptFormatter.timedSegments(
             tokens: providerSegments ?? tokens,
-            preserveTokenBoundaries: providerSegments != nil
+            preserveTokenBoundaries: providerSegments != nil,
+            insertsSpacesBetweenTokens: insertsSpacesBetweenTokens
         )
     }
 }
@@ -203,8 +227,15 @@ enum DiarizedTranscriptFormatter {
 
     private static let sameSpeakerGapThresholdMs = 2500
 
-    static func format(tokens: [JobTranscriptionToken], fallbackText: String) -> String {
-        let segments = buildSegments(tokens: tokens)
+    static func format(
+        tokens: [JobTranscriptionToken],
+        fallbackText: String,
+        insertsSpacesBetweenTokens: Bool = false
+    ) -> String {
+        let segments = buildSegments(
+            tokens: tokens,
+            insertsSpacesBetweenTokens: insertsSpacesBetweenTokens
+        )
         guard !segments.isEmpty else {
             return fallbackText
         }
@@ -223,11 +254,15 @@ enum DiarizedTranscriptFormatter {
 
     static func timedSegments(
         tokens: [JobTranscriptionToken],
-        preserveTokenBoundaries: Bool = false
+        preserveTokenBoundaries: Bool = false,
+        insertsSpacesBetweenTokens: Bool = false
     ) -> [TimedTranscriptSegment] {
         let segments = preserveTokenBoundaries
             ? providerSegments(tokens: tokens)
-            : phraseSegments(tokens: tokens)
+            : phraseSegments(
+                tokens: tokens,
+                insertsSpacesBetweenTokens: insertsSpacesBetweenTokens
+            )
         return segments.compactMap { segment in
             let text = cleanedSegmentText(segment.text)
             guard !text.isEmpty else { return nil }
@@ -252,7 +287,10 @@ enum DiarizedTranscriptFormatter {
         }
     }
 
-    private static func phraseSegments(tokens: [JobTranscriptionToken]) -> [Segment] {
+    private static func phraseSegments(
+        tokens: [JobTranscriptionToken],
+        insertsSpacesBetweenTokens: Bool
+    ) -> [Segment] {
         var segments: [Segment] = []
 
         for token in tokens {
@@ -284,10 +322,9 @@ enum DiarizedTranscriptFormatter {
                     )
                 )
             } else if !segments.isEmpty {
-                segments[segments.count - 1].text = appendedText(
-                    segments[segments.count - 1].text,
-                    token.text
-                )
+                segments[segments.count - 1].text = insertsSpacesBetweenTokens
+                    ? appendedText(segments[segments.count - 1].text, token.text)
+                    : segments[segments.count - 1].text + token.text
                 if let endMs = token.endMs {
                     segments[segments.count - 1].endMs = endMs
                 }
@@ -320,7 +357,10 @@ enum DiarizedTranscriptFormatter {
         return startMs - previousEndMs > sameSpeakerGapThresholdMs
     }
 
-    private static func buildSegments(tokens: [JobTranscriptionToken]) -> [Segment] {
+    private static func buildSegments(
+        tokens: [JobTranscriptionToken],
+        insertsSpacesBetweenTokens: Bool
+    ) -> [Segment] {
         guard tokens.contains(where: { $0.speaker != nil || $0.startMs != nil || $0.endMs != nil }) else {
             return []
         }
@@ -343,7 +383,9 @@ enum DiarizedTranscriptFormatter {
             if shouldStartNewSegment(speaker: speaker, startMs: startMs, previous: segments.last) {
                 segments.append(Segment(speaker: speaker, startMs: startMs, endMs: endMs, text: token.text))
             } else {
-                segments[segments.count - 1].text = appendedText(segments[segments.count - 1].text, token.text)
+                segments[segments.count - 1].text = insertsSpacesBetweenTokens
+                    ? appendedText(segments[segments.count - 1].text, token.text)
+                    : segments[segments.count - 1].text + token.text
                 segments[segments.count - 1].endMs = max(segments[segments.count - 1].endMs ?? endMs, endMs)
             }
         }

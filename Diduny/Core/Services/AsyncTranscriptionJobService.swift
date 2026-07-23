@@ -619,14 +619,16 @@ final class AsyncTranscriptionJobService {
             return JobResult(
                 text: result.text,
                 tokens: result.tokens,
-                providerSegments: result.providerSegments
+                providerSegments: result.providerSegments,
+                insertsSpacesBetweenTokens: result.insertsSpacesBetweenTokens
             )
         }
         let direct = try JSONDecoder().decode(JobTranscriptionResult.self, from: jsonData)
         return JobResult(
             text: direct.text,
             tokens: direct.tokens,
-            providerSegments: direct.providerSegments
+            providerSegments: direct.providerSegments,
+            insertsSpacesBetweenTokens: direct.insertsSpacesBetweenTokens
         )
     }
 
