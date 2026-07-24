@@ -46,6 +46,10 @@ extension AppDelegate {
         do {
             let audioData = try await loadAudioData(from: fileURL)
             Log.app.info("transcribeFile: Loaded \(audioData.count) bytes")
+            let asset = AVURLAsset(url: fileURL)
+            let duration = try await asset.load(.duration)
+            let durationSeconds = CMTimeGetSeconds(duration)
+            let finiteDurationSeconds = durationSeconds.isFinite ? durationSeconds : 0
 
             let text: String
             if SettingsStorage.shared.effectiveTranscriptionProvider == .cloud {
@@ -57,7 +61,12 @@ extension AppDelegate {
                     config["language_hints_strict"] = true
                 }
 
-                text = try await asyncJobService.transcribeWithRetry(audioData: audioData, config: config) { status in
+                text = try await asyncJobService.transcribeWithRetry(
+                    audioData: audioData,
+                    config: config,
+                    source: fileURL.lastPathComponent,
+                    sourceDurationSeconds: finiteDurationSeconds
+                ) { status in
                     Task { @MainActor in
                         switch status {
                         case .queued:
@@ -111,16 +120,11 @@ extension AppDelegate {
                 }
             }
 
-            // Calculate actual audio duration
-            let asset = AVURLAsset(url: fileURL)
-            let duration = try await asset.load(.duration)
-            let durationSeconds = CMTimeGetSeconds(duration)
-
             // Save to recordings library (copy original file to preserve format)
             RecordingsLibraryStorage.shared.saveRecording(
                 audioURL: fileURL,
                 type: .fileTranscription,
-                duration: durationSeconds.isFinite ? durationSeconds : 0,
+                duration: finiteDurationSeconds,
                 transcriptionText: text
             )
 

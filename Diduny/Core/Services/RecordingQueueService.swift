@@ -155,7 +155,9 @@ final class RecordingQueueService {
                 if provider == .cloud {
                     text = try await transcribeViaJobs(
                         audioData: audioData,
-                        config: buildCloudTranscriptionConfig(enableSpeakerDiarization: false)
+                        config: buildCloudTranscriptionConfig(enableSpeakerDiarization: false),
+                        source: recording.audioFileName,
+                        sourceDurationSeconds: recording.durationSeconds
                     )
                 } else {
                     text = try await service.transcribe(audioData: audioData)
@@ -166,7 +168,9 @@ final class RecordingQueueService {
                 if provider == .cloud {
                     text = try await transcribeViaJobs(
                         audioData: audioData,
-                        config: buildCloudTranscriptionConfig(enableSpeakerDiarization: true)
+                        config: buildCloudTranscriptionConfig(enableSpeakerDiarization: true),
+                        source: recording.audioFileName,
+                        sourceDurationSeconds: recording.durationSeconds
                     )
                 } else {
                     text = try await service.transcribe(audioData: audioData)
@@ -247,9 +251,19 @@ final class RecordingQueueService {
         return config
     }
 
-    private func transcribeViaJobs(audioData: Data, config: [String: Any]) async throws -> String {
+    private func transcribeViaJobs(
+        audioData: Data,
+        config: [String: Any],
+        source: String,
+        sourceDurationSeconds: TimeInterval
+    ) async throws -> String {
         let asyncJobService = AsyncTranscriptionJobService()
-        return try await asyncJobService.transcribeWithRetry(audioData: audioData, config: config) { [weak self] status in
+        return try await asyncJobService.transcribeWithRetry(
+            audioData: audioData,
+            config: config,
+            source: source,
+            sourceDurationSeconds: sourceDurationSeconds
+        ) { [weak self] status in
             Task { @MainActor in
                 self?.currentJobStatus = status
             }
