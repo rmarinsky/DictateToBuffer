@@ -152,7 +152,9 @@ final class RecordingQueueService {
                 if provider == .cloud {
                     transcript = try await transcribeViaJobs(
                         audioFileURL: audioURL,
-                        config: buildCloudTranscriptionConfig(enableSpeakerDiarization: false)
+                        config: buildCloudTranscriptionConfig(enableSpeakerDiarization: false),
+                        source: recording.audioFileName,
+                        sourceDurationSeconds: recording.durationSeconds
                     )
                 } else {
                     let audioData = try await loadAudioData(from: audioURL)
@@ -164,7 +166,9 @@ final class RecordingQueueService {
                 if provider == .cloud {
                     transcript = try await transcribeViaJobs(
                         audioFileURL: audioURL,
-                        config: buildCloudTranscriptionConfig(enableSpeakerDiarization: true)
+                        config: buildCloudTranscriptionConfig(enableSpeakerDiarization: true),
+                        source: recording.audioFileName,
+                        sourceDurationSeconds: recording.durationSeconds
                     )
                 } else {
                     let audioData = try await loadAudioData(from: audioURL)
@@ -259,12 +263,16 @@ final class RecordingQueueService {
 
     private func transcribeViaJobs(
         audioFileURL: URL,
-        config: [String: Any]
+        config: [String: Any],
+        source: String,
+        sourceDurationSeconds: TimeInterval
     ) async throws -> GeneratedTranscript {
         let asyncJobService = AsyncTranscriptionJobService()
         return try await asyncJobService.transcribeFileDetailedWithRetry(
             audioFileURL: audioFileURL,
-            config: config
+            config: config,
+            source: source,
+            sourceDurationSeconds: sourceDurationSeconds
         ) { [weak self] update in
             Task { @MainActor in
                 self?.currentJobStatus = update.status

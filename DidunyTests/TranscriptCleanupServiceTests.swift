@@ -321,4 +321,21 @@ struct TranscriptCleanupServiceTests {
             TimedTranscriptSegment(startMilliseconds: 1200, endMilliseconds: 2100, text: "Timed words.")
         ])
     }
+
+    @Test("Batch upload diagnostics include source duration and prepared payload")
+    func batchUploadDiagnosticsIncludeUploadShape() {
+        let diagnostics = BatchUploadDiagnostics(
+            source: "MRG podcast - vol.6.mp4",
+            sourceDurationSeconds: 9994,
+            originalBytes: 155_900_000,
+            preparedBytes: 51_200_000,
+            filename: "recording.flac",
+            contentType: "audio/flac"
+        )
+
+        #expect(
+            diagnostics.message ==
+                "source=MRG podcast - vol.6.mp4 sourceDuration=2:46:34 originalBytes=155900000 preparedBytes=51200000 filename=recording.flac contentType=audio/flac"
+        )
+    }
 }

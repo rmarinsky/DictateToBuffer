@@ -196,6 +196,8 @@ protocol FileTranscriptionBatchTranscribing: AnyObject {
     func transcribe(
         audioFileURL: URL,
         settings: FileTranscriptionSettingsSnapshot,
+        source: String,
+        sourceDurationSeconds: TimeInterval?,
         onUpdate: @escaping (JobProgressUpdate) -> Void
     ) async throws -> GeneratedTranscript
 }
@@ -864,7 +866,9 @@ final class FileTranscriptionBatchService {
             }
             let transcript = try await transcribeWithPermit(
                 audioFileURL: audioURL,
-                settings: settings
+                settings: settings,
+                source: item(withID: itemID)?.displayName ?? audioURL.lastPathComponent,
+                sourceDurationSeconds: item(withID: itemID)?.durationSeconds
             ) { [weak self] progressUpdate in
                 Task { @MainActor in
                     self?.apply(progressUpdate: progressUpdate, to: itemID)
@@ -963,7 +967,9 @@ final class FileTranscriptionBatchService {
             update(itemID) { $0.status = settings.provider == .cloud ? .uploading : .processing }
             let transcript = try await transcribeWithPermit(
                 audioFileURL: audioURL,
-                settings: settings
+                settings: settings,
+                source: item(withID: itemID)?.displayName ?? audioURL.lastPathComponent,
+                sourceDurationSeconds: item(withID: itemID)?.durationSeconds
             ) { [weak self] progressUpdate in
                 Task { @MainActor in
                     self?.apply(progressUpdate: progressUpdate, to: itemID)
@@ -1025,6 +1031,8 @@ final class FileTranscriptionBatchService {
     private func transcribeWithPermit(
         audioFileURL: URL,
         settings: FileTranscriptionSettingsSnapshot,
+        source: String,
+        sourceDurationSeconds: TimeInterval?,
         onUpdate: @escaping (JobProgressUpdate) -> Void
     ) async throws -> GeneratedTranscript {
         let permits = settings.provider == .cloud
@@ -1036,6 +1044,8 @@ final class FileTranscriptionBatchService {
             let result = try await transcriber.transcribe(
                 audioFileURL: audioFileURL,
                 settings: settings,
+                source: source,
+                sourceDurationSeconds: sourceDurationSeconds,
                 onUpdate: onUpdate
             )
             await permits.release()
@@ -1158,6 +1168,8 @@ private final class LiveFileTranscriptionBatchTranscriber: FileTranscriptionBatc
     func transcribe(
         audioFileURL: URL,
         settings: FileTranscriptionSettingsSnapshot,
+        source: String,
+        sourceDurationSeconds: TimeInterval?,
         onUpdate: @escaping (JobProgressUpdate) -> Void
     ) async throws -> GeneratedTranscript {
         switch settings.provider {
@@ -1170,6 +1182,8 @@ private final class LiveFileTranscriptionBatchTranscriber: FileTranscriptionBatc
             return try await AsyncTranscriptionJobService().transcribeFileDetailedWithRetry(
                 audioFileURL: audioFileURL,
                 config: config,
+                source: source,
+                sourceDurationSeconds: sourceDurationSeconds,
                 onProgressUpdate: onUpdate
             )
         case .local:

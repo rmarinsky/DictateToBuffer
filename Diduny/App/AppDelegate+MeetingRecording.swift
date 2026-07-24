@@ -515,7 +515,9 @@ extension AppDelegate {
 
                 rawText = try await asyncJobService.transcribeMeetingWithRetry(
                     audioData: audioData,
-                    config: config
+                    config: config,
+                    source: compressedURL.lastPathComponent,
+                    sourceDurationSeconds: duration
                 ) { status in
                     Task { @MainActor in
                         switch status {

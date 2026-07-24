@@ -1,6 +1,36 @@
 import Foundation
 import os
 
+struct BatchUploadDiagnostics: Equatable {
+    let source: String
+    let sourceDurationSeconds: TimeInterval?
+    let originalBytes: Int
+    let preparedBytes: Int
+    let filename: String
+    let contentType: String
+
+    var message: String {
+        [
+            "source=\(source)",
+            "sourceDuration=\(Self.formatDuration(sourceDurationSeconds))",
+            "originalBytes=\(originalBytes)",
+            "preparedBytes=\(preparedBytes)",
+            "filename=\(filename)",
+            "contentType=\(contentType)",
+        ].joined(separator: " ")
+    }
+
+    private static func formatDuration(_ seconds: TimeInterval?) -> String {
+        guard let seconds, seconds.isFinite, seconds >= 0 else { return "unknown" }
+
+        let total = Int(seconds.rounded())
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let remainingSeconds = total % 60
+        return String(format: "%d:%02d:%02d", hours, minutes, remainingSeconds)
+    }
+}
+
 final class AsyncTranscriptionJobService {
     private var proxyBase: String {
         SettingsStorage.shared.proxyBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -21,7 +51,12 @@ final class AsyncTranscriptionJobService {
 
     // MARK: - Submit Job
 
-    func submitJob(audioData: Data, config: [String: Any]) async throws -> JobSubmission {
+    func submitJob(
+        audioData: Data,
+        config: [String: Any],
+        source: String = "unknown",
+        sourceDurationSeconds: TimeInterval? = nil
+    ) async throws -> JobSubmission {
         guard let url = URL(string: "\(proxyBase)/api/v1/jobs") else {
             throw TranscriptionError.invalidURL
         }
@@ -29,6 +64,14 @@ final class AsyncTranscriptionJobService {
         try await ensureSpeechDetected(audioData, context: "submitJob")
 
         let preparedUpload = await prepareUploadPayload(audioData)
+        let diagnostics = BatchUploadDiagnostics(
+            source: source,
+            sourceDurationSeconds: sourceDurationSeconds,
+            originalBytes: audioData.count,
+            preparedBytes: preparedUpload.data.count,
+            filename: preparedUpload.filename,
+            contentType: preparedUpload.contentType
+        )
         let boundary = UUID().uuidString
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -55,17 +98,20 @@ final class AsyncTranscriptionJobService {
 
         request.httpBody = body
 
-        Log.transcription.info(
-            "submitJob: audio format=\(preparedUpload.contentType), original=\(audioData.count) bytes, prepared=\(preparedUpload.data.count) bytes"
-        )
+        Log.transcription.notice("submitJob upload diagnostics: \(diagnostics.message, privacy: .public)")
 
         let (data, httpResponse) = try await performDataRequest(request)
 
-        return try decodeSubmissionResponse(data: data, httpResponse: httpResponse)
+        return try decodeSubmissionResponse(data: data, httpResponse: httpResponse, diagnostics: diagnostics)
     }
 
     /// Submits an already prepared audio file without decoding or duplicating it in memory.
-    func submitJob(audioFileURL: URL, config: [String: Any]) async throws -> JobSubmission {
+    func submitJob(
+        audioFileURL: URL,
+        config: [String: Any],
+        source: String? = nil,
+        sourceDurationSeconds: TimeInterval? = nil
+    ) async throws -> JobSubmission {
         guard let url = URL(string: "\(proxyBase)/api/v1/jobs") else {
             throw TranscriptionError.invalidURL
         }
@@ -73,6 +119,15 @@ final class AsyncTranscriptionJobService {
         try await ensureSpeechDetected(at: audioFileURL, context: "submitJob")
 
         let uploadMetadata = Self.fileUploadMetadata(for: audioFileURL)
+        let sourceSize = fileSize(at: audioFileURL)
+        let diagnostics = BatchUploadDiagnostics(
+            source: source ?? audioFileURL.lastPathComponent,
+            sourceDurationSeconds: sourceDurationSeconds,
+            originalBytes: sourceSize,
+            preparedBytes: sourceSize,
+            filename: uploadMetadata.filename,
+            contentType: uploadMetadata.contentType
+        )
         let multipart = try MultipartFormDataFile.create(
             audioURL: audioFileURL,
             filename: uploadMetadata.filename,
@@ -89,17 +144,17 @@ final class AsyncTranscriptionJobService {
         )
         request.setValue(String(multipart.contentLength), forHTTPHeaderField: "Content-Length")
 
-        let sourceSize = fileSize(at: audioFileURL)
         Log.transcription.info(
             "submitJob: file-backed audio upload, source=\(sourceSize) bytes, multipart=\(multipart.contentLength) bytes"
         )
+        Log.transcription.notice("submitJob upload diagnostics: \(diagnostics.message, privacy: .public)")
 
         let (data, httpResponse) = try await AuthService.shared.performUploadWithAuth(
             request,
             bodyFileURL: multipart.fileURL,
             session: longRunningSession
         )
-        return try decodeSubmissionResponse(data: data, httpResponse: httpResponse)
+        return try decodeSubmissionResponse(data: data, httpResponse: httpResponse, diagnostics: diagnostics)
     }
 
     static func fileUploadMetadata(for audioFileURL: URL) -> (filename: String, contentType: String) {
@@ -200,19 +255,31 @@ final class AsyncTranscriptionJobService {
     func transcribeMeetingWithRetry(
         audioData: Data,
         config: [String: Any],
+        source: String = "unknown",
+        sourceDurationSeconds: TimeInterval? = nil,
         onUpdate: @escaping (JobStatus) -> Void
     ) async throws -> String {
-        try await transcribeWithRetry(audioData: audioData, config: config, onUpdate: onUpdate)
+        try await transcribeWithRetry(
+            audioData: audioData,
+            config: config,
+            source: source,
+            sourceDurationSeconds: sourceDurationSeconds,
+            onUpdate: onUpdate
+        )
     }
 
     func transcribeWithRetry(
         audioData: Data,
         config: [String: Any],
+        source: String = "unknown",
+        sourceDurationSeconds: TimeInterval? = nil,
         onUpdate: @escaping (JobStatus) -> Void
     ) async throws -> String {
         try await transcribeWithRetry(
             audioData: audioData,
-            config: config
+            config: config,
+            source: source,
+            sourceDurationSeconds: sourceDurationSeconds
         ) { update in
             onUpdate(update.status)
         }
@@ -221,11 +288,18 @@ final class AsyncTranscriptionJobService {
     private func transcribeWithRetry(
         audioData: Data,
         config: [String: Any],
+        source: String = "unknown",
+        sourceDurationSeconds: TimeInterval? = nil,
         onProgressUpdate: @escaping (JobProgressUpdate) -> Void
     ) async throws -> String {
         try Task.checkCancellation()
         let preferSpeakerDiarization = shouldPreferSpeakerDiarization(config: config)
-        let submission = try await submitJob(audioData: audioData, config: config)
+        let submission = try await submitJob(
+            audioData: audioData,
+            config: config,
+            source: source,
+            sourceDurationSeconds: sourceDurationSeconds
+        )
         return try await waitForResult(
             submission: submission,
             preferSpeakerDiarization: preferSpeakerDiarization,
@@ -261,11 +335,18 @@ final class AsyncTranscriptionJobService {
     func transcribeFileDetailedWithRetry(
         audioFileURL: URL,
         config: [String: Any],
+        source: String? = nil,
+        sourceDurationSeconds: TimeInterval? = nil,
         onProgressUpdate: @escaping (JobProgressUpdate) -> Void
     ) async throws -> GeneratedTranscript {
         try Task.checkCancellation()
         let preferSpeakerDiarization = shouldPreferSpeakerDiarization(config: config)
-        let submission = try await submitJob(audioFileURL: audioFileURL, config: config)
+        let submission = try await submitJob(
+            audioFileURL: audioFileURL,
+            config: config,
+            source: source,
+            sourceDurationSeconds: sourceDurationSeconds
+        )
         return try await waitForResult(
             submission: submission,
             preferSpeakerDiarization: preferSpeakerDiarization,
@@ -487,7 +568,8 @@ final class AsyncTranscriptionJobService {
 
     private func decodeSubmissionResponse(
         data: Data,
-        httpResponse: HTTPURLResponse
+        httpResponse: HTTPURLResponse,
+        diagnostics: BatchUploadDiagnostics? = nil
     ) throws -> JobSubmission {
         if httpResponse.statusCode == 402 {
             Log.transcription.warning("submitJob: 402 — usage limit exceeded")
@@ -503,7 +585,13 @@ final class AsyncTranscriptionJobService {
 
         guard (200 ... 299).contains(httpResponse.statusCode) else {
             let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-            Log.transcription.error("submitJob: failed (\(httpResponse.statusCode)): \(errorBody)")
+            if let diagnostics {
+                Log.transcription.error(
+                    "submitJob failed status=\(httpResponse.statusCode, privacy: .public) diagnostics=\(diagnostics.message, privacy: .public) body=\(errorBody, privacy: .public)"
+                )
+            } else {
+                Log.transcription.error("submitJob: failed (\(httpResponse.statusCode)): \(errorBody)")
+            }
             throw TranscriptionError.apiError(
                 "Job submission failed (\(httpResponse.statusCode)): \(errorBody)"
             )

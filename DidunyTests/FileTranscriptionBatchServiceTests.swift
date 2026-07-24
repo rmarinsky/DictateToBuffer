@@ -1190,6 +1190,8 @@ private final class BatchTestTranscriber: FileTranscriptionBatchTranscribing {
     func transcribe(
         audioFileURL: URL,
         settings: FileTranscriptionSettingsSnapshot,
+        source _: String,
+        sourceDurationSeconds _: TimeInterval?,
         onUpdate: @escaping (JobProgressUpdate) -> Void
     ) async throws -> GeneratedTranscript {
         transcribedFileNames.append(audioFileURL.lastPathComponent)
