@@ -50,14 +50,17 @@ final class ImportedMediaAudioPreparer {
         try Task.checkCancellation()
 
         let asset = AVURLAsset(url: sourceURL)
-        let duration = try await asset.load(.duration)
-        let durationSeconds = CMTimeGetSeconds(duration)
-        try Self.validate(durationSeconds: durationSeconds)
-
         let audioTracks = try await asset.loadTracks(withMediaType: .audio)
-        guard !audioTracks.isEmpty else {
+        guard let audioTrack = audioTracks.first else {
             throw PreparationError.noAudioTrack
         }
+
+        // A live recorder can finalize a container whose movie/track/edit-list timeline overstates
+        // the real audio (e.g. a 166-minute recording reported as 6+ hours). AVAsset.duration and
+        // the track's timeRange both inherit that inflated timeline, so validate the decoded audio
+        // samples — the audio that will actually be exported — instead of the container timeline.
+        let durationSeconds = try await Self.audioSampleDurationSeconds(asset: asset, track: audioTrack)
+        try Self.validate(durationSeconds: durationSeconds)
 
         let outputURL = temporaryDirectory
             .appendingPathComponent("diduny-import-\(UUID().uuidString)")
@@ -88,6 +91,59 @@ final class ImportedMediaAudioPreparer {
                 maximumMinutes: Int(maximumDurationSeconds / 60)
             )
         }
+    }
+
+    /// Duration of the real decoded audio samples, independent of the container's movie/track/
+    /// edit-list timeline (which a live recorder can overstate). Reading stops as soon as the
+    /// audio is known to exceed the limit, so an over-long file is rejected without scanning all
+    /// of it.
+    private static func audioSampleDurationSeconds(
+        asset: AVAsset,
+        track: AVAssetTrack
+    ) async throws -> TimeInterval {
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+        output.alwaysCopiesSampleData = false
+        guard reader.canAdd(output) else {
+            throw PreparationError.invalidDuration
+        }
+        reader.add(output)
+        guard reader.startReading() else {
+            throw reader.error ?? PreparationError.invalidDuration
+        }
+        defer { reader.cancelReading() }
+
+        let limit = CMTime(seconds: maximumDurationSeconds, preferredTimescale: 600)
+        var total = CMTime.zero
+        while let sample = output.copyNextSampleBuffer() {
+            try Task.checkCancellation()
+            total = CMTimeAdd(total, sampleDuration(of: sample))
+            if total > limit {
+                return CMTimeGetSeconds(total)
+            }
+        }
+
+        if reader.status == .failed {
+            throw reader.error ?? PreparationError.invalidDuration
+        }
+        return CMTimeGetSeconds(total)
+    }
+
+    private static func sampleDuration(of sample: CMSampleBuffer) -> CMTime {
+        let duration = CMSampleBufferGetDuration(sample)
+        if duration.isNumeric, duration.value > 0 {
+            return duration
+        }
+        // Fall back to the frame count when the container omits per-sample durations.
+        let frames = CMSampleBufferGetNumSamples(sample)
+        guard frames > 0,
+              let format = CMSampleBufferGetFormatDescription(sample),
+              let sampleRate = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee.mSampleRate,
+              sampleRate > 0
+        else {
+            return .zero
+        }
+        return CMTime(value: CMTimeValue(frames), timescale: CMTimeScale(sampleRate))
     }
 
     private func extractAudio(

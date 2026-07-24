@@ -103,6 +103,48 @@ final class ImportedMediaAudioPreparerTests: XCTestCase {
         XCTAssertTrue(preparedVideoTracks.isEmpty)
     }
 
+    func test_prepare_acceptsLiveRecordedM4AWithInflatedContainerTimeline() async throws {
+        // A live recorder can finalize an M4A whose container/edit-list timeline overstates the
+        // real audio. In Fixtures/live-recorded-inflated-duration.m4a the container reports ~6h40m
+        // while the real audio is ~3s. AVAsset.duration and the audio track's timeRange both inherit
+        // that inflated timeline, so validating either one wrongly rejects a short file as being over
+        // the 300-minute limit. Preparation must trust the real audio samples instead.
+        let sourceURL = try fixtureURL(named: "live-recorded-inflated-duration.m4a")
+
+        // Precondition: the fixture reproduces the pathology at the AVFoundation level — both
+        // AVAsset.duration and the audio track's timeRange report far more than the real audio,
+        // which is why validating either one (rather than the samples) reproduces the bug.
+        let asset = AVURLAsset(url: sourceURL)
+        let containerDuration = CMTimeGetSeconds(try await asset.load(.duration))
+        XCTAssertGreaterThan(containerDuration, ImportedMediaAudioPreparer.maximumDurationSeconds)
+        var trackDuration = 0.0
+        if let audioTrack = try await asset.loadTracks(withMediaType: .audio).first {
+            trackDuration = CMTimeGetSeconds(try await audioTrack.load(.timeRange).duration)
+        }
+        XCTAssertGreaterThan(trackDuration, ImportedMediaAudioPreparer.maximumDurationSeconds)
+
+        let preparer = ImportedMediaAudioPreparer(temporaryDirectory: temporaryDirectory)
+        let prepared = try await preparer.prepare(sourceURL: sourceURL)
+        defer { prepared.removeTemporaryFile() }
+
+        XCTAssertLessThan(prepared.durationSeconds, ImportedMediaAudioPreparer.maximumDurationSeconds)
+        XCTAssertEqual(prepared.durationSeconds, 3, accuracy: 0.5)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: prepared.fileURL.path))
+    }
+
+    private func fixtureURL(named name: String) throws -> URL {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/\(name)")
+        // The fixture is committed, so a missing file is a real failure (bad checkout / gitignore
+        // regression), not a reason to silently skip the regression it protects.
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            XCTFail("Missing committed test fixture: \(url.path)")
+            throw CocoaError(.fileNoSuchFile)
+        }
+        return url
+    }
+
     private func makeWAV(durationSeconds: TimeInterval) throws -> URL {
         let url = temporaryDirectory.appendingPathComponent("source.wav")
         let settings: [String: Any] = [
