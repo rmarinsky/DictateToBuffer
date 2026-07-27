@@ -3,6 +3,7 @@ import SwiftUI
 enum MainSection: String, Hashable {
     case overview
     case recordings
+    case batches
     case typingTest
     case meetings
 
@@ -16,6 +17,7 @@ enum MainSection: String, Hashable {
         switch self {
         case .overview: "Overview"
         case .recordings: "Recordings"
+        case .batches: "Batches"
         case .typingTest: "Typing Test"
         case .meetings: "Meetings"
         case .general: "General"
@@ -30,6 +32,7 @@ enum MainSection: String, Hashable {
         switch self {
         case .overview: "square.grid.2x2"
         case .recordings: "waveform"
+        case .batches: "square.stack.3d.up"
         case .typingTest: "keyboard"
         case .meetings: "calendar"
         case .general: "gear"

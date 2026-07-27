@@ -6,7 +6,7 @@ struct SidebarView: View {
 
     let topInset: CGFloat
 
-    private let mainItems: [MainSection] = [.overview, .recordings, .typingTest, .meetings]
+    private let mainItems: [MainSection] = [.overview, .recordings, .batches, .typingTest, .meetings]
     private let settingsItems: [MainSection] = [.general, .audioDictation, .models, .shortcuts, .account]
 
     init(selectedSection: Binding<MainSection>, topInset: CGFloat = 34) {

@@ -642,6 +642,54 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertTrue(batchStore.didClose)
     }
 
+    func test_beginBatchCombinesFilesURLsAndExistingLibraryRecordingsInOrder() throws {
+        let existingID = UUID()
+        let fileID = UUID()
+        let remoteID = UUID()
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+        let batchStore = BatchTestPersistence()
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(),
+            recordingStore: BatchTestRecordingStore(
+                duplicate: BatchTranscriptionDuplicate(
+                    recordingID: fileID,
+                    transcriptionText: "File",
+                    durationSeconds: 1
+                ),
+                remoteDuplicate: BatchTranscriptionDuplicate(
+                    recordingID: remoteID,
+                    transcriptionText: "Remote",
+                    durationSeconds: 1,
+                    sourceCaptionArtifacts: [
+                        TranscriptArtifact(
+                            text: "Captions",
+                            languageCode: "en",
+                            provenance: .youtubeAuthored
+                        )
+                    ]
+                ),
+                matchingRemoteMediaID: source.mediaID
+            ),
+            remoteExtractor: BatchTestRemoteExtractor(),
+            chromeProfile: { ChromeProfile(id: "Default", name: "Roman") },
+            batchPersistence: batchStore,
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+
+        service.beginBatch(
+            urls: [URL(fileURLWithPath: "/tmp/file.m4a")],
+            remoteSources: [source],
+            name: "Mixed",
+            description: "",
+            existingRecordingIDs: [existingID]
+        )
+
+        XCTAssertEqual(batchStore.recordingIDs, [existingID, fileID, remoteID])
+        XCTAssertTrue(batchStore.didClose)
+    }
+
     func test_remoteDuplicateWithMissingCaptionsRetrievesOnlyCaptionArtifact() async throws {
         let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
         let caption = TranscriptArtifact(

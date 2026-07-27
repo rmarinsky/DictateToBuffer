@@ -18,6 +18,7 @@ struct RecordingsLibraryView: View {
         case all = "All"
         case meetings = "Meetings"
         case voiceNotes = "Voice notes"
+        case hasTranslation = "Has Translation"
         case files = "Files"
         case youtube = "YouTube"
 
@@ -29,6 +30,10 @@ struct RecordingsLibraryView: View {
                 recording.type.isMeetingLike
             case .voiceNotes:
                 recording.type == .voice || recording.type == .translation
+            case .hasTranslation:
+                recording.translationTargetLanguageCode != nil
+                    || recording.type == .translation
+                    || recording.type == .meetingTranslation
             case .files:
                 recording.type == .fileTranscription && !recording.isYouTubeVideo
             case .youtube:

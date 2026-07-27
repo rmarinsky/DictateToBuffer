@@ -19,6 +19,15 @@ final class RecordingsLibraryFilterTests: XCTestCase {
         XCTAssertEqual(recording.libraryIconName, "play.rectangle.fill")
     }
 
+    func test_hasTranslationMatchesAttachedTranslationArtifact() {
+        var recording = makeRecording(remoteSource: nil)
+        XCTAssertFalse(RecordingsLibraryView.RecordingTypeFilter.hasTranslation.matches(recording))
+
+        recording.translationTargetLanguageCode = "en"
+
+        XCTAssertTrue(RecordingsLibraryView.RecordingTypeFilter.hasTranslation.matches(recording))
+    }
+
     private func makeRecording(remoteSource: RemoteMediaSourceMetadata?) -> Recording {
         Recording(
             id: UUID(),

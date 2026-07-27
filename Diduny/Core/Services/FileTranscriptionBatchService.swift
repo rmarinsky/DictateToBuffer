@@ -397,16 +397,13 @@ final class FileTranscriptionBatchService {
         description: String,
         existingRecordingIDs: [UUID]
     ) {
-        guard !urls.isEmpty || !existingRecordingIDs.isEmpty else { return }
-        resetFinishedBatchIfNeeded()
-        guard createPersistentBatch(
+        beginBatch(
+            urls: urls,
+            remoteSources: [],
             name: name,
             description: description,
             existingRecordingIDs: existingRecordingIDs
-        ) else { return }
-        add(urls: urls)
-        startIfNeeded()
-        finalizePersistentBatchIfFinished()
+        )
     }
 
     func beginBatch(remoteSources: [YouTubeRemoteMediaSource]) {
@@ -424,13 +421,32 @@ final class FileTranscriptionBatchService {
         description: String,
         existingRecordingIDs: [UUID]
     ) {
-        guard !remoteSources.isEmpty || !existingRecordingIDs.isEmpty else { return }
+        beginBatch(
+            urls: [],
+            remoteSources: remoteSources,
+            name: name,
+            description: description,
+            existingRecordingIDs: existingRecordingIDs
+        )
+    }
+
+    func beginBatch(
+        urls: [URL],
+        remoteSources: [YouTubeRemoteMediaSource],
+        name: String,
+        description: String,
+        existingRecordingIDs: [UUID]
+    ) {
+        guard !urls.isEmpty || !remoteSources.isEmpty || !existingRecordingIDs.isEmpty else {
+            return
+        }
         resetFinishedBatchIfNeeded()
         guard createPersistentBatch(
             name: name,
             description: description,
             existingRecordingIDs: existingRecordingIDs
         ) else { return }
+        add(urls: urls)
         add(remoteSources: remoteSources)
         startIfNeeded()
         finalizePersistentBatchIfFinished()
