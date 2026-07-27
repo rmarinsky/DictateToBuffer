@@ -4,6 +4,46 @@ The language used for bringing recorded media into Diduny and producing reusable
 
 ## Language
 
+**Transcription Batch**:
+A persisted snapshot of one grouped transcription run. Items may be added while the run is processing, but normal membership editing ends when processing finishes. Its name and description remain editable. Deleting a recording is an explicit exception that removes its membership and updates the batch.
+_Avoid_: Project, folder, permanent collection
+
+**Batch Member**:
+A reference to any recording included in a transcription batch, including Voice, Meeting, File, YouTube, or a recording with a translation. The same recording may belong to multiple batches without being moved or copied. A batch may combine existing Library recordings with newly supplied files and URLs. Adding an existing completed recording reuses its transcript artifacts without transcribing it again; reprocessing requires an explicit Transcribe Again request.
+_Avoid_: Copied recording, moved recording, automatic retranscription
+
+**Batch Processing Status**:
+A batch-level status derived from its members rather than edited by the user. It is Processing while work remains, Completed when every member succeeds, and Completed with Issues when processing finishes with at least one failed or partial result.
+_Avoid_: Manual project status, progress percentage
+
+**Processing Checkpoint**:
+The latest durable successful result in a recording's multi-step workflow. Retrying resumes at the failed step and reuses valid earlier results, such as remote metadata, source captions, acquired audio, or prepared audio. Intermediate files are retained until the item succeeds or its batch is deleted.
+_Avoid_: Restart batch, repeat all steps
+
+**Batch Deletion**:
+A destructive operation that deletes the transcription batch and every recording referenced by it. Recordings shared with other batches are removed from those batches as part of the same operation. The user sees an explicit confirmation with the affected recording count before deletion.
+_Avoid_: Delete grouping only, preserve shared recordings
+
+**Recording Deletion**:
+Removal of a recording from the Library and every batch that references it. Completed batches update their membership and counts after the recording is deleted.
+_Avoid_: Batch tombstone, immutable deleted member
+
+**Batch Transcript Export**:
+A Markdown document produced by Copy All Transcripts. Each batch member has a heading with its recording name and source type followed by its transcript; members without a completed transcript retain a labeled status placeholder.
+_Avoid_: Unlabeled text concatenation, format picker
+
+**Batch Creation Date**:
+The immutable date and time when a transcription batch is created. Batch lists sort by this value with the newest batch first.
+_Avoid_: Last updated date, last activity
+
+**Default Batch Name**:
+An editable generated name containing the batch creation date and time, used when the user does not provide a name.
+_Avoid_: Required name, first recording name
+
+**Translation Artifact**:
+Translated text attached to a recording. It is searchable and filterable as Has Translation but is not a separate recording type in the target Library model.
+_Avoid_: Translation recording, translated source
+
 **Remote Media Source**:
 A media item identified by a URL rather than a file already available on the user's Mac.
 _Avoid_: URL file, web video
