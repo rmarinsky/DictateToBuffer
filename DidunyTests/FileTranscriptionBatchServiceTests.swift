@@ -403,6 +403,30 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(extractor.metadataCallCount, 3)
     }
 
+    func test_remoteAuthorizationPauseIsPersistedForRestart() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BatchAuthorizationPersistence-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let batchStore = try TranscriptionBatchStorage(baseDirectory: directory)
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(),
+            recordingStore: BatchTestRecordingStore(),
+            remoteExtractor: BatchTestRemoteExtractor(captionAuthorizationFailureCount: 1),
+            chromeProfile: { ChromeProfile(id: "Default", name: "Roman") },
+            batchPersistence: batchStore,
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+
+        service.beginBatch(remoteSources: [source])
+        try await waitUntil { service.items.first?.status == .authorizationPaused }
+
+        let reloaded = try TranscriptionBatchStorage(baseDirectory: directory)
+        XCTAssertEqual(reloaded.batches.first?.workItems?.first?.status, .authorizationPaused)
+    }
+
     func test_stopBatchDuringRemotePreflightMarksItemsCancelledWithoutAcquisition() async throws {
         let extractor = BatchTestRemoteExtractor(metadataDelay: .milliseconds(500))
         let service = FileTranscriptionBatchService(
@@ -1187,6 +1211,7 @@ private final class BatchTestPreparer: FileTranscriptionBatchPreparing {
 @MainActor
 private final class BatchTestRemoteExtractor: RemoteMediaExtracting {
     private var remainingAuthorizationFailures: Int
+    private var remainingCaptionAuthorizationFailures: Int
     private var remainingCaptionFailures: Int
     private let caption: TranscriptArtifact?
     private let metadataDelay: Duration
@@ -1198,12 +1223,14 @@ private final class BatchTestRemoteExtractor: RemoteMediaExtracting {
 
     init(
         metadataAuthorizationFailureCount: Int = 0,
+        captionAuthorizationFailureCount: Int = 0,
         caption: TranscriptArtifact? = nil,
         captionFailureCount: Int = 0,
         metadataDelay: Duration = .zero,
         downloadDelay: Duration = .zero
     ) {
         remainingAuthorizationFailures = metadataAuthorizationFailureCount
+        remainingCaptionAuthorizationFailures = captionAuthorizationFailureCount
         remainingCaptionFailures = captionFailureCount
         self.caption = caption
         self.metadataDelay = metadataDelay
@@ -1248,6 +1275,10 @@ private final class BatchTestRemoteExtractor: RemoteMediaExtracting {
         metadata _: RemoteMediaMetadata,
         profile _: ChromeProfile
     ) async throws -> TranscriptArtifact? {
+        if remainingCaptionAuthorizationFailures > 0 {
+            remainingCaptionAuthorizationFailures -= 1
+            throw RemoteMediaExtractorError.authorizationRequired
+        }
         if remainingCaptionFailures > 0 {
             remainingCaptionFailures -= 1
             throw BatchTestError.captionFailed

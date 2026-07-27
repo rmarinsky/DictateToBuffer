@@ -1195,6 +1195,7 @@ final class FileTranscriptionBatchService {
             items[index].errorMessage = nil
             items[index].finishedAt = nil
         }
+        persistWorkItems()
         processingTask?.cancel()
         wakeScheduler()
     }
