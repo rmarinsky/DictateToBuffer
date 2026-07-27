@@ -664,6 +664,50 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertEqual(batchStore.createdDescription, "Reused source")
         XCTAssertEqual(batchStore.recordingIDs, [recordingID])
         XCTAssertTrue(batchStore.didClose)
+
+        service.add(urls: [URL(fileURLWithPath: "/tmp/late.m4a")])
+        XCTAssertEqual(service.items.count, 1)
+    }
+
+    func test_remoteRetryReusesDownloadedAudioAfterPreparationFailure() async throws {
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+        let extractor = BatchTestRemoteExtractor()
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(failingSourceNames: ["dQw4w9WgXcQ.m4a"]),
+            transcriber: BatchTestTranscriber(),
+            recordingStore: BatchTestRecordingStore(),
+            remoteExtractor: extractor,
+            chromeProfile: { ChromeProfile(id: "Default", name: "Roman") },
+            batchPersistence: BatchTestPersistence(),
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+
+        service.beginBatch(remoteSources: [source])
+        try await waitUntil { !service.isProcessing }
+        service.retryFailed()
+        try await waitUntil { !service.isProcessing }
+
+        XCTAssertEqual(extractor.downloadCallCount, 1)
+    }
+
+    func test_retryResumesSubmittedCloudJobWithoutUploadingAgain() async throws {
+        let transcriber = BatchTestTranscriber(failureCount: 1)
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: transcriber,
+            recordingStore: BatchTestRecordingStore(),
+            batchPersistence: BatchTestPersistence(),
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+
+        service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/upload.m4a")])
+        try await waitUntil { !service.isProcessing }
+        service.retryFailed()
+        try await waitUntil { !service.isProcessing }
+
+        XCTAssertEqual(transcriber.receivedResumeJobIDs, [nil, "test-job"])
     }
 
     func test_beginBatchCombinesFilesURLsAndExistingLibraryRecordingsInOrder() throws {
@@ -1317,6 +1361,7 @@ private final class BatchTestTranscriber: FileTranscriptionBatchTranscribing {
     private(set) var transcribedFileNames: [String] = []
     private(set) var receivedSettings: [FileTranscriptionSettingsSnapshot] = []
     private(set) var maximumConcurrentCount = 0
+    private(set) var receivedResumeJobIDs: [String?] = []
     private var concurrentCount = 0
     private var remainingFailures: Int
     private let delay: Duration
@@ -1351,8 +1396,12 @@ private final class BatchTestTranscriber: FileTranscriptionBatchTranscribing {
         settings: FileTranscriptionSettingsSnapshot,
         source _: String,
         sourceDurationSeconds _: TimeInterval?,
+        resumeJobID: String?,
+        onJobSubmitted: @escaping (String) -> Void,
         onUpdate: @escaping (JobProgressUpdate) -> Void
     ) async throws -> GeneratedTranscript {
+        receivedResumeJobIDs.append(resumeJobID)
+        if resumeJobID == nil { onJobSubmitted("test-job") }
         transcribedFileNames.append(audioFileURL.lastPathComponent)
         receivedSettings.append(settings)
         concurrentCount += 1

@@ -134,6 +134,8 @@ struct BatchTranscriptionItem: Codable, Identifiable, Equatable {
     var sourceCaptionArtifacts: [TranscriptArtifact] = []
     var captionErrorMessage: String?
     var remoteArtifactWork: RemoteArtifactWork = .all
+    var downloadedAudioURL: URL?
+    var cloudJobID: String?
     var startedAt: Date?
     var finishedAt: Date?
 
@@ -198,6 +200,8 @@ protocol FileTranscriptionBatchTranscribing: AnyObject {
         settings: FileTranscriptionSettingsSnapshot,
         source: String,
         sourceDurationSeconds: TimeInterval?,
+        resumeJobID: String?,
+        onJobSubmitted: @escaping (String) -> Void,
         onUpdate: @escaping (JobProgressUpdate) -> Void
     ) async throws -> GeneratedTranscript
 }
@@ -481,6 +485,7 @@ final class FileTranscriptionBatchService {
     }
 
     func add(urls: [URL]) {
+        guard batchPersistence == nil || currentBatchID != nil else { return }
         let existingURLs = Set(items.map(\.sourceURL.standardizedFileURL))
         var addedURLs = Set<URL>()
         let initialItemCount = items.count
@@ -511,6 +516,7 @@ final class FileTranscriptionBatchService {
     }
 
     func add(remoteSources: [YouTubeRemoteMediaSource]) {
+        guard batchPersistence == nil || currentBatchID != nil else { return }
         let existingIDs = Set(items.compactMap { $0.remoteSource?.mediaID })
         var addedIDs = Set<String>()
         let initialItemCount = items.count
@@ -876,7 +882,11 @@ final class FileTranscriptionBatchService {
         var captionAttemptFailed = false
 
         defer {
-            downloadedAudio?.removeTemporaryFiles()
+            if recordingID != nil {
+                downloadedAudio?.removeTemporaryFiles()
+                update(itemID) { $0.downloadedAudioURL = nil }
+                persistWorkItems()
+            }
             temporaryAudio?.removeTemporaryFile()
         }
 
@@ -955,48 +965,61 @@ final class FileTranscriptionBatchService {
                     return
                 }
 
-                let acquisition = try await withRemoteAcquisitionPermit {
-                    if items[initialIndex].remoteArtifactWork != .transcriptOnly,
-                       items[initialIndex].sourceCaptionArtifacts.isEmpty
-                    {
-                        update(itemID) { $0.status = .retrievingCaptions }
-                        do {
-                            if let caption = try await remoteExtractor.retrieveCaption(
-                                for: source,
-                                metadata: metadata,
-                                profile: profile
-                            ) {
-                                update(itemID) { $0.sourceCaptionArtifacts = [caption] }
-                            }
-                        } catch RemoteMediaExtractorError.authorizationRequired {
-                            throw RemoteMediaExtractorError.authorizationRequired
-                        } catch {
-                            captionAttemptFailed = true
-                            update(itemID) {
-                                $0.captionErrorMessage = "Source captions could not be retrieved."
+                if let checkpointURL = items[initialIndex].downloadedAudioURL,
+                   FileManager.default.fileExists(atPath: checkpointURL.path)
+                {
+                    downloadedAudio = RemoteDownloadedAudio(
+                        fileURL: checkpointURL,
+                        temporaryDirectory: checkpointURL.deletingLastPathComponent()
+                    )
+                } else {
+                    let acquisition = try await withRemoteAcquisitionPermit {
+                        if items[initialIndex].remoteArtifactWork != .transcriptOnly,
+                           items[initialIndex].sourceCaptionArtifacts.isEmpty
+                        {
+                            update(itemID) { $0.status = .retrievingCaptions }
+                            do {
+                                if let caption = try await remoteExtractor.retrieveCaption(
+                                    for: source,
+                                    metadata: metadata,
+                                    profile: profile
+                                ) {
+                                    update(itemID) { $0.sourceCaptionArtifacts = [caption] }
+                                }
+                            } catch RemoteMediaExtractorError.authorizationRequired {
+                                throw RemoteMediaExtractorError.authorizationRequired
+                            } catch {
+                                captionAttemptFailed = true
+                                update(itemID) {
+                                    $0.captionErrorMessage = "Source captions could not be retrieved."
+                                }
                             }
                         }
-                    }
 
-                    update(itemID) {
-                        $0.status = .downloading
-                        $0.progressFraction = nil
-                    }
-                    return try await remoteExtractor.downloadAudio(
-                        for: source,
-                        metadata: metadata,
-                        profile: profile
-                    ) { [weak self] progress in
-                        Task { @MainActor in
-                            self?.update(itemID) {
-                                $0.downloadedBytes = progress.downloadedBytes
-                                $0.totalDownloadBytes = progress.totalBytes
-                                $0.progressFraction = progress.fractionCompleted
+                        update(itemID) {
+                            $0.status = .downloading
+                            $0.progressFraction = nil
+                        }
+                        return try await remoteExtractor.downloadAudio(
+                            for: source,
+                            metadata: metadata,
+                            profile: profile
+                        ) { [weak self] progress in
+                            Task { @MainActor in
+                                self?.update(itemID) {
+                                    $0.downloadedBytes = progress.downloadedBytes
+                                    $0.totalDownloadBytes = progress.totalBytes
+                                    $0.progressFraction = progress.fractionCompleted
+                                }
                             }
                         }
+                    }
+                    downloadedAudio = acquisition
+                    update(itemID) {
+                        $0.downloadedAudioURL = acquisition.fileURL
+                        $0.status = .preparing
                     }
                 }
-                downloadedAudio = acquisition
                 try Task.checkCancellation()
 
                 guard let downloadedAudio else {
@@ -1038,7 +1061,8 @@ final class FileTranscriptionBatchService {
                 audioFileURL: audioURL,
                 settings: settings,
                 source: item(withID: itemID)?.displayName ?? audioURL.lastPathComponent,
-                sourceDurationSeconds: item(withID: itemID)?.durationSeconds
+                sourceDurationSeconds: item(withID: itemID)?.durationSeconds,
+                itemID: itemID
             ) { [weak self] progressUpdate in
                 Task { @MainActor in
                     self?.apply(progressUpdate: progressUpdate, to: itemID)
@@ -1140,7 +1164,8 @@ final class FileTranscriptionBatchService {
                 audioFileURL: audioURL,
                 settings: settings,
                 source: item(withID: itemID)?.displayName ?? audioURL.lastPathComponent,
-                sourceDurationSeconds: item(withID: itemID)?.durationSeconds
+                sourceDurationSeconds: item(withID: itemID)?.durationSeconds,
+                itemID: itemID
             ) { [weak self] progressUpdate in
                 Task { @MainActor in
                     self?.apply(progressUpdate: progressUpdate, to: itemID)
@@ -1205,6 +1230,7 @@ final class FileTranscriptionBatchService {
         settings: FileTranscriptionSettingsSnapshot,
         source: String,
         sourceDurationSeconds: TimeInterval?,
+        itemID: UUID,
         onUpdate: @escaping (JobProgressUpdate) -> Void
     ) async throws -> GeneratedTranscript {
         let permits = settings.provider == .cloud
@@ -1218,6 +1244,11 @@ final class FileTranscriptionBatchService {
                 settings: settings,
                 source: source,
                 sourceDurationSeconds: sourceDurationSeconds,
+                resumeJobID: item(withID: itemID)?.cloudJobID,
+                onJobSubmitted: { [weak self] jobID in
+                    self?.update(itemID) { $0.cloudJobID = jobID }
+                    self?.persistWorkItems()
+                },
                 onUpdate: onUpdate
             )
             await permits.release()
@@ -1355,6 +1386,8 @@ private final class LiveFileTranscriptionBatchTranscriber: FileTranscriptionBatc
         settings: FileTranscriptionSettingsSnapshot,
         source: String,
         sourceDurationSeconds: TimeInterval?,
+        resumeJobID: String?,
+        onJobSubmitted: @escaping (String) -> Void,
         onUpdate: @escaping (JobProgressUpdate) -> Void
     ) async throws -> GeneratedTranscript {
         switch settings.provider {
@@ -1364,11 +1397,20 @@ private final class LiveFileTranscriptionBatchTranscriber: FileTranscriptionBatc
                 config["language_hints"] = settings.languageHints
                 config["language_hints_strict"] = true
             }
-            return try await AsyncTranscriptionJobService().transcribeFileDetailedWithRetry(
+            let service = AsyncTranscriptionJobService()
+            if let resumeJobID {
+                return try await service.resumeFileDetailed(
+                    jobID: resumeJobID,
+                    config: config,
+                    onProgressUpdate: onUpdate
+                )
+            }
+            return try await service.transcribeFileDetailedWithRetry(
                 audioFileURL: audioFileURL,
                 config: config,
                 source: source,
                 sourceDurationSeconds: sourceDurationSeconds,
+                onSubmitted: onJobSubmitted,
                 onProgressUpdate: onUpdate
             )
         case .local:

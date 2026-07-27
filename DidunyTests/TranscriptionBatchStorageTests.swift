@@ -95,6 +95,28 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         )
     }
 
+    func test_markdownKeepsFailedAndCompletedWorkItemOrder() throws {
+        let completed = makeRecording(title: "Second", transcript: "Done")
+        var failedItem = BatchTranscriptionItem(sourceURL: URL(fileURLWithPath: "/tmp/first.m4a"))
+        failedItem.status = .failed
+        failedItem.errorMessage = "Failed first"
+        var completedItem = BatchTranscriptionItem(sourceURL: URL(fileURLWithPath: "/tmp/second.m4a"))
+        completedItem.status = .completed
+        completedItem.recordingID = completed.id
+        let batch = TranscriptionBatch(
+            name: "Ordered",
+            isProcessingClosed: true,
+            recordingIDs: [completed.id],
+            workItems: [failedItem, completedItem]
+        )
+
+        let markdown = batch.markdown(recordings: [completed])
+        XCTAssertLessThan(
+            try XCTUnwrap(markdown.range(of: "first.m4a")?.lowerBound),
+            try XCTUnwrap(markdown.range(of: "Second")?.lowerBound)
+        )
+    }
+
     func test_removingRecordingCleansEveryBatchReference() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("TranscriptionBatchStorageTests-\(UUID())")
@@ -119,13 +141,17 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         let ownedID = UUID()
         let store = try TranscriptionBatchStorage(baseDirectory: directory)
         let target = try store.create(name: "Target", recordingIDs: [ownedID, sharedID])
-        _ = try store.create(name: "Other", recordingIDs: [sharedID])
+        let other = try store.create(name: "Other", recordingIDs: [sharedID])
+        var sharedItem = BatchTranscriptionItem(sourceURL: URL(fileURLWithPath: "/tmp/shared.m4a"))
+        sharedItem.recordingID = sharedID
+        try store.replaceWorkItems([sharedItem], in: other.id)
 
         let affected = try store.delete(batchID: target.id)
 
         XCTAssertEqual(affected, Set([ownedID, sharedID]))
         XCTAssertEqual(store.batches.count, 1)
         XCTAssertEqual(store.batches[0].recordingIDs, [])
+        XCTAssertEqual(store.batches[0].workItems, [])
     }
 
     func test_recordingAndBatchDeletionStayReferentiallyConsistent() throws {

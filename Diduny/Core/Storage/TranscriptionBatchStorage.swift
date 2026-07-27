@@ -74,7 +74,8 @@ struct TranscriptionBatch: Codable, Equatable, Identifiable {
 
     func markdown(recordings: [Recording]) -> String {
         let byID = Dictionary(uniqueKeysWithValues: recordings.map { ($0.id, $0) })
-        let recordingsMarkdown = recordingIDs.compactMap { id -> String? in
+        let workItemRecordingIDs = Set((workItems ?? []).compactMap(\.recordingID))
+        let recordingsMarkdown = recordingIDs.filter { !workItemRecordingIDs.contains($0) }.compactMap { id -> String? in
             guard let recording = byID[id] else { return nil }
             let title = recording.remoteSource?.title
                 ?? recording.sourceFileName
@@ -83,11 +84,18 @@ struct TranscriptionBatch: Codable, Equatable, Identifiable {
                 ?? "[Transcript unavailable — \(recording.status.displayName)]"
             return "# \(title)\n\nSource: \(recording.libraryDisplayName)\n\n\(body)"
         }
-        let unresolvedMarkdown = (workItems ?? []).compactMap { item -> String? in
-            guard item.recordingID == nil else { return nil }
+        let workItemsMarkdown = (workItems ?? []).compactMap { item -> String? in
+            if let recordingID = item.recordingID, let recording = byID[recordingID] {
+                let title = recording.remoteSource?.title
+                    ?? recording.sourceFileName
+                    ?? recording.libraryDisplayName
+                let body = recording.displayTranscriptText
+                    ?? "[Transcript unavailable — \(recording.status.displayName)]"
+                return "# \(title)\n\nSource: \(recording.libraryDisplayName)\n\n\(body)"
+            }
             return "# \(item.displayName)\n\nSource: \(item.sourceURL.absoluteString)\n\n[Transcript unavailable — \(item.errorMessage ?? "Not completed")]"
         }
-        return (recordingsMarkdown + unresolvedMarkdown).joined(separator: "\n\n")
+        return (recordingsMarkdown + workItemsMarkdown).joined(separator: "\n\n")
     }
 }
 
@@ -207,6 +215,9 @@ final class TranscriptionBatchStorage {
         guard !ids.isEmpty else { return }
         for index in batches.indices {
             batches[index].recordingIDs.removeAll(where: ids.contains)
+            batches[index].workItems?.removeAll { item in
+                item.recordingID.map(ids.contains) == true
+            }
         }
         try save()
     }
@@ -220,6 +231,14 @@ final class TranscriptionBatchStorage {
         batches.removeAll { $0.id == batchID }
         for index in batches.indices {
             batches[index].recordingIDs.removeAll(where: affected.contains)
+            batches[index].workItems?.removeAll { item in
+                item.recordingID.map(affected.contains) == true
+            }
+        }
+        for item in batch.workItems ?? [] {
+            if let url = item.downloadedAudioURL {
+                try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+            }
         }
         try save()
         return affected
