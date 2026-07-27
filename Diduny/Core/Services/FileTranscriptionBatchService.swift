@@ -452,6 +452,7 @@ final class FileTranscriptionBatchService {
             return
         }
         resetFinishedBatchIfNeeded()
+        guard currentBatchID == nil else { return }
         guard createPersistentBatch(
             name: name,
             description: description,

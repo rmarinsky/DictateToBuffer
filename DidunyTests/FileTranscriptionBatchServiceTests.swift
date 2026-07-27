@@ -684,13 +684,31 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         )
 
         service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/first.m4a")])
-        try await waitUntil { service.isProcessing }
+        try await waitUntil { transcriber.transcribedFileNames == ["first.m4a"] }
         service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/second.m4a")])
 
         XCTAssertEqual(batchStore.createCount, 1)
         XCTAssertEqual(service.items.map(\.sourceURL.lastPathComponent), ["first.m4a"])
         transcriber.releaseAll()
         try await waitUntil { !service.isProcessing }
+    }
+
+    func test_beginBatchRejectsOverlapWhileFirstBatchIsPreflightBlocked() {
+        let batchStore = BatchTestPersistence()
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(preflightError: "Offline"),
+            recordingStore: BatchTestRecordingStore(),
+            batchPersistence: batchStore,
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+
+        service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/first.m4a")])
+        service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/second.m4a")])
+
+        XCTAssertEqual(batchStore.createCount, 1)
+        XCTAssertEqual(service.items.map(\.sourceURL.lastPathComponent), ["first.m4a"])
     }
 
     func test_remoteRetryReusesDownloadedAudioAfterPreparationFailure() async throws {
