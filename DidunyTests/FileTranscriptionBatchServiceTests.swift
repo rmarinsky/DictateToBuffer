@@ -690,6 +690,44 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertTrue(batchStore.didClose)
     }
 
+    func test_resumePersistedBatchReusesPreparedRecordingCheckpoint() async throws {
+        let recordingID = UUID()
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+        var item = BatchTranscriptionItem(remoteSource: source)
+        item.recordingID = recordingID
+        item.status = .failed
+        item.errorMessage = "Offline"
+        let batch = TranscriptionBatch(
+            name: "Retry",
+            isProcessingClosed: true,
+            recordingIDs: [recordingID],
+            workItems: [item]
+        )
+        let preparer = BatchTestPreparer()
+        let batchStore = BatchTestPersistence()
+        let service = FileTranscriptionBatchService(
+            preparer: preparer,
+            transcriber: BatchTestTranscriber(),
+            recordingStore: BatchTestRecordingStore(
+                existingRecordingID: recordingID,
+                audioFileURL: URL(fileURLWithPath: "/tmp/saved.m4a")
+            ),
+            remoteExtractor: BatchTestRemoteExtractor(),
+            chromeProfile: { ChromeProfile(id: "Default", name: "Roman") },
+            batchPersistence: batchStore,
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+
+        service.resume(batch: batch)
+        try await waitUntil { !service.isProcessing }
+
+        XCTAssertEqual(preparer.preparedSourceNames, [])
+        XCTAssertEqual(service.items.first?.status, .completed)
+        XCTAssertTrue(batchStore.didReopen)
+        XCTAssertTrue(batchStore.didClose)
+    }
+
     func test_remoteDuplicateWithMissingCaptionsRetrievesOnlyCaptionArtifact() async throws {
         let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
         let caption = TranscriptArtifact(
@@ -1330,13 +1368,18 @@ private final class BatchTestRecordingStore: FileTranscriptionBatchRecordingStor
         matchingSourceIdentity: ImportedMediaIdentity? = nil,
         remoteDuplicate: BatchTranscriptionDuplicate? = nil,
         matchingRemoteMediaID: String? = nil,
-        storesRemoteAudio: Bool = false
+        storesRemoteAudio: Bool = false,
+        existingRecordingID: UUID? = nil,
+        audioFileURL: URL? = nil
     ) {
         self.duplicate = duplicate
         self.matchingSourceIdentity = matchingSourceIdentity
         self.remoteDuplicate = remoteDuplicate
         self.matchingRemoteMediaID = matchingRemoteMediaID
         self.storesRemoteAudio = storesRemoteAudio
+        if let existingRecordingID, let audioFileURL {
+            storedAudioURLs[existingRecordingID] = audioFileURL
+        }
     }
 
     func completedDuplicate(sourceIdentity: ImportedMediaIdentity) -> BatchTranscriptionDuplicate? {
@@ -1402,6 +1445,7 @@ private final class BatchTestPersistence: FileTranscriptionBatchPersisting {
     private(set) var createdDescription: String?
     private(set) var recordingIDs: [UUID] = []
     private(set) var didClose = false
+    private(set) var didReopen = false
 
     func createBatch(
         name: String,
@@ -1422,6 +1466,12 @@ private final class BatchTestPersistence: FileTranscriptionBatchPersisting {
 
     func replaceRecordingIDs(_ recordingIDs: [UUID], in _: UUID) throws {
         self.recordingIDs = recordingIDs
+    }
+
+    func replaceWorkItems(_: [BatchTranscriptionItem], in _: UUID) throws {}
+
+    func reopenBatch(_: UUID) throws {
+        didReopen = true
     }
 
     func closeBatch(_: UUID) throws {

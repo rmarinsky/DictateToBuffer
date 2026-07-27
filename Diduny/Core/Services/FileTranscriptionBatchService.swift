@@ -73,7 +73,7 @@ struct FileTranscriptionSettingsSnapshot {
     }
 }
 
-struct ImportedMediaIdentity: Equatable {
+struct ImportedMediaIdentity: Codable, Equatable {
     let fileName: String
     let fileSizeBytes: Int64?
 
@@ -84,14 +84,14 @@ struct ImportedMediaIdentity: Equatable {
     }
 }
 
-struct BatchTranscriptionItem: Identifiable, Equatable {
-    enum RemoteArtifactWork: Equatable {
+struct BatchTranscriptionItem: Codable, Identifiable, Equatable {
+    enum RemoteArtifactWork: Codable, Equatable {
         case all
         case captionsOnly
         case transcriptOnly
     }
 
-    enum Status: Equatable {
+    enum Status: Codable, Equatable {
         case queued
         case checkingLink
         case checkingDuplicate
@@ -264,6 +264,8 @@ protocol FileTranscriptionBatchPersisting: AnyObject {
     func createBatch(name: String, description: String, recordingIDs: [UUID]) throws -> UUID
     func addRecordingIDs(_ recordingIDs: [UUID], to batchID: UUID) throws
     func replaceRecordingIDs(_ recordingIDs: [UUID], in batchID: UUID) throws
+    func replaceWorkItems(_ items: [BatchTranscriptionItem], in batchID: UUID) throws
+    func reopenBatch(_ batchID: UUID) throws
     func closeBatch(_ batchID: UUID) throws
 }
 
@@ -278,6 +280,10 @@ extension TranscriptionBatchStorage: FileTranscriptionBatchPersisting {
 
     func closeBatch(_ batchID: UUID) throws {
         try close(batchID: batchID)
+    }
+
+    func reopenBatch(_ batchID: UUID) throws {
+        try reopen(batchID: batchID)
     }
 }
 
@@ -452,6 +458,28 @@ final class FileTranscriptionBatchService {
         finalizePersistentBatchIfFinished()
     }
 
+    func resume(batch: TranscriptionBatch) {
+        guard !isProcessing, let persistedItems = batch.workItems, !persistedItems.isEmpty else {
+            return
+        }
+        do {
+            try batchPersistence?.reopenBatch(batch.id)
+        } catch {
+            batchError = "Could not reopen the transcription batch."
+            return
+        }
+        currentBatchID = batch.id
+        initialRecordingIDs = batch.recordingIDs
+        items = persistedItems.map { item in
+            var item = item
+            if !item.status.isTerminal || item.status == .authorizationPaused {
+                item.status = .failed
+            }
+            return item
+        }
+        retry(ids: Set(items.filter { $0.status != .completed && $0.status != .duplicate }.map(\.id)))
+    }
+
     func add(urls: [URL]) {
         let existingURLs = Set(items.map(\.sourceURL.standardizedFileURL))
         var addedURLs = Set<URL>()
@@ -477,6 +505,7 @@ final class FileTranscriptionBatchService {
         }
 
         if items.count > initialItemCount {
+            persistWorkItems()
             wakeScheduler()
         }
     }
@@ -503,6 +532,7 @@ final class FileTranscriptionBatchService {
         }
 
         if items.count > initialItemCount {
+            persistWorkItems()
             wakeScheduler()
         }
     }
@@ -541,6 +571,7 @@ final class FileTranscriptionBatchService {
         guard let batchPersistence, let currentBatchID else { return }
         do {
             try batchPersistence.addRecordingIDs([recordingID], to: currentBatchID)
+            try batchPersistence.replaceWorkItems(items, in: currentBatchID)
         } catch {
             batchError = "Could not save the transcription batch."
         }
@@ -553,6 +584,7 @@ final class FileTranscriptionBatchService {
               let currentBatchID
         else { return }
         do {
+            try batchPersistence.replaceWorkItems(items, in: currentBatchID)
             try batchPersistence.replaceRecordingIDs(
                 initialRecordingIDs + items.compactMap(\.recordingID),
                 in: currentBatchID
@@ -924,7 +956,9 @@ final class FileTranscriptionBatchService {
                 }
 
                 let acquisition = try await withRemoteAcquisitionPermit {
-                    if items[initialIndex].remoteArtifactWork != .transcriptOnly {
+                    if items[initialIndex].remoteArtifactWork != .transcriptOnly,
+                       items[initialIndex].sourceCaptionArtifacts.isEmpty
+                    {
                         update(itemID) { $0.status = .retrievingCaptions }
                         do {
                             if let caption = try await remoteExtractor.retrieveCaption(
@@ -1282,7 +1316,20 @@ final class FileTranscriptionBatchService {
         _ mutation: (inout BatchTranscriptionItem) -> Void
     ) {
         guard let index = index(of: itemID) else { return }
+        let oldStatus = items[index].status
         mutation(&items[index])
+        if items[index].status != oldStatus {
+            persistWorkItems()
+        }
+    }
+
+    private func persistWorkItems() {
+        guard let batchPersistence, let currentBatchID else { return }
+        do {
+            try batchPersistence.replaceWorkItems(items, in: currentBatchID)
+        } catch {
+            batchError = "Could not save the transcription batch."
+        }
     }
 }
 

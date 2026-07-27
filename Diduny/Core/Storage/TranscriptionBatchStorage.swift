@@ -13,6 +13,7 @@ struct TranscriptionBatch: Codable, Equatable, Identifiable {
     let createdAt: Date
     var isProcessingClosed: Bool
     var recordingIDs: [UUID]
+    var workItems: [BatchTranscriptionItem]?
 
     init(
         id: UUID = UUID(),
@@ -20,7 +21,8 @@ struct TranscriptionBatch: Codable, Equatable, Identifiable {
         description: String = "",
         createdAt: Date = Date(),
         isProcessingClosed: Bool = false,
-        recordingIDs: [UUID] = []
+        recordingIDs: [UUID] = [],
+        workItems: [BatchTranscriptionItem]? = nil
     ) {
         self.id = id
         self.name = name
@@ -28,10 +30,16 @@ struct TranscriptionBatch: Codable, Equatable, Identifiable {
         self.createdAt = createdAt
         self.isProcessingClosed = isProcessingClosed
         self.recordingIDs = recordingIDs
+        self.workItems = workItems
     }
 
     func status(in recordings: [Recording]) -> TranscriptionBatchStatus {
         guard isProcessingClosed else { return .processing }
+        if workItems?.contains(where: {
+            $0.status != .completed && $0.status != .duplicate
+        }) == true {
+            return .completedWithIssues
+        }
         let byID = Dictionary(uniqueKeysWithValues: recordings.map { ($0.id, $0) })
         return recordingIDs.allSatisfy { id in
             guard let recording = byID[id] else { return false }
@@ -58,12 +66,15 @@ struct TranscriptionBatch: Codable, Equatable, Identifiable {
                 ].compactMap { $0 }.contains {
                     $0.localizedCaseInsensitiveContains(normalized)
                 }
-        }
+        } || workItems?.contains {
+            $0.displayName.localizedCaseInsensitiveContains(normalized)
+                || ($0.errorMessage?.localizedCaseInsensitiveContains(normalized) ?? false)
+        } == true
     }
 
     func markdown(recordings: [Recording]) -> String {
         let byID = Dictionary(uniqueKeysWithValues: recordings.map { ($0.id, $0) })
-        return recordingIDs.compactMap { id -> String? in
+        let recordingsMarkdown = recordingIDs.compactMap { id -> String? in
             guard let recording = byID[id] else { return nil }
             let title = recording.remoteSource?.title
                 ?? recording.sourceFileName
@@ -71,7 +82,12 @@ struct TranscriptionBatch: Codable, Equatable, Identifiable {
             let body = recording.displayTranscriptText
                 ?? "[Transcript unavailable — \(recording.status.displayName)]"
             return "# \(title)\n\nSource: \(recording.libraryDisplayName)\n\n\(body)"
-        }.joined(separator: "\n\n")
+        }
+        let unresolvedMarkdown = (workItems ?? []).compactMap { item -> String? in
+            guard item.recordingID == nil else { return nil }
+            return "# \(item.displayName)\n\nSource: \(item.sourceURL.absoluteString)\n\n[Transcript unavailable — \(item.errorMessage ?? "Not completed")]"
+        }
+        return (recordingsMarkdown + unresolvedMarkdown).joined(separator: "\n\n")
     }
 }
 
@@ -160,6 +176,22 @@ final class TranscriptionBatchStorage {
             throw StorageError.batchNotFound
         }
         batches[index].recordingIDs = unique(recordingIDs)
+        try save()
+    }
+
+    func replaceWorkItems(_ items: [BatchTranscriptionItem], in batchID: UUID) throws {
+        guard let index = batches.firstIndex(where: { $0.id == batchID }) else {
+            throw StorageError.batchNotFound
+        }
+        batches[index].workItems = items
+        try save()
+    }
+
+    func reopen(batchID: UUID) throws {
+        guard let index = batches.firstIndex(where: { $0.id == batchID }) else {
+            throw StorageError.batchNotFound
+        }
+        batches[index].isProcessingClosed = false
         try save()
     }
 

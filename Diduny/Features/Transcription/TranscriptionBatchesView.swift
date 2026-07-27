@@ -154,6 +154,15 @@ struct TranscriptionBatchesView: View {
                         $0.localizedCaseInsensitiveContains(memberQuery)
                     }
             }
+        let unresolvedItems = (batch.workItems ?? []).filter { item in
+            item.recordingID == nil
+                && (memberQuery.isEmpty
+                    || item.displayName.localizedCaseInsensitiveContains(memberQuery)
+                    || (item.errorMessage?.localizedCaseInsensitiveContains(memberQuery) ?? false))
+        }
+        let canRetry = batch.workItems?.contains {
+            $0.status != .completed && $0.status != .duplicate
+        } == true
 
         return VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
@@ -167,6 +176,12 @@ struct TranscriptionBatchesView: View {
                 Spacer()
                 Button("Delete", role: .destructive) { deletingBatch = batch }
                 Button("Edit") { editingBatch = batch }
+                if canRetry {
+                    Button("Retry Failed") {
+                        FileTranscriptionBatchService.shared.resume(batch: batch)
+                        BatchTranscriptionWindowController.shared.showWindow()
+                    }
+                }
                 Button {
                     ClipboardService.shared.copy(
                         text: batch.markdown(recordings: recordings.recordings),
@@ -190,7 +205,7 @@ struct TranscriptionBatchesView: View {
 
             searchField("Search members", text: $memberQuery)
 
-            if members.isEmpty {
+            if members.isEmpty && unresolvedItems.isEmpty {
                 ContentUnavailableView(
                     memberQuery.isEmpty ? "No Recordings" : "No Results",
                     systemImage: memberQuery.isEmpty ? "waveform" : "magnifyingglass"
@@ -199,6 +214,22 @@ struct TranscriptionBatchesView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
+                        ForEach(unresolvedItems) { item in
+                            HStack(spacing: 12) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                                    .frame(width: 28)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(item.displayName).font(.headline)
+                                    Text(item.errorMessage ?? "Not completed")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                            }
+                            .padding(16)
+                            Divider()
+                        }
                         ForEach(Array(members.enumerated()), id: \.element.id) { index, recording in
                             HStack(spacing: 12) {
                                 Image(systemName: recording.libraryIconName)

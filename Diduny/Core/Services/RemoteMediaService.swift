@@ -218,7 +218,7 @@ enum RemoteMediaExtractorError: LocalizedError, Equatable {
     }
 }
 
-struct RemoteMediaMetadata: Equatable {
+struct RemoteMediaMetadata: Codable, Equatable {
     let source: RemoteMediaSourceMetadata
     let durationSeconds: TimeInterval
     let audioFormatID: String

@@ -52,6 +52,28 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         XCTAssertTrue(persisted.isProcessingClosed)
     }
 
+    func test_storeRoundTripPreservesFailedWorkForRestartRetry() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TranscriptionBatchStorageTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+        var item = BatchTranscriptionItem(remoteSource: source)
+        item.status = .failed
+        item.errorMessage = "Network unavailable"
+
+        let store = try TranscriptionBatchStorage(baseDirectory: directory)
+        let batch = try store.create(name: "Retry", recordingIDs: [])
+        try store.replaceWorkItems([item], in: batch.id)
+        try store.close(batchID: batch.id)
+
+        let persisted = try XCTUnwrap(
+            try TranscriptionBatchStorage(baseDirectory: directory).batches.first
+        )
+        XCTAssertEqual(persisted.workItems, [item])
+        XCTAssertEqual(persisted.status(in: []), .completedWithIssues)
+        XCTAssertTrue(persisted.markdown(recordings: []).contains("Network unavailable"))
+    }
+
     func test_batchDerivesStatusSearchAndMarkdownFromCurrentRecordings() throws {
         let completed = makeRecording(title: "Quarterly planning", transcript: "Revenue grew")
         let failed = makeRecording(title: "Customer call", status: .failed, transcript: nil)
