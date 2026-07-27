@@ -11,14 +11,19 @@ final class RecordingsLibraryStorage {
     private let appSupportDir: URL
     private let recordingsDir: URL
     private let metadataURL: URL
+    private let batchStorage: TranscriptionBatchStorage
     private let metadataWriteQueue = DispatchQueue(label: "ua.com.rmarinsky.diduny.recordings-metadata")
 
-    private init() {
+    init(
+        baseDirectory: URL? = nil,
+        batchStorage: TranscriptionBatchStorage? = nil
+    ) {
         let fm = FileManager.default
         let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let bundleID = Bundle.main.bundleIdentifier ?? "Diduny"
-        let appDir = appSupport.appendingPathComponent(bundleID)
+        let appDir = baseDirectory ?? appSupport.appendingPathComponent(bundleID)
         appSupportDir = appDir
+        self.batchStorage = batchStorage ?? .shared
 
         let recDir = appDir.appendingPathComponent("Recordings")
         try? fm.createDirectory(at: recDir, withIntermediateDirectories: true)
@@ -200,6 +205,12 @@ final class RecordingsLibraryStorage {
     // MARK: - Delete
 
     func deleteRecording(_ recording: Recording) {
+        do {
+            try batchStorage.removeRecordingReferences(Set([recording.id]))
+        } catch {
+            Log.app.error("Failed to remove recording from transcription batches: \(error.localizedDescription)")
+            return
+        }
         let fileURL = recordingsDir.appendingPathComponent(recording.audioFileName)
         try? fileManager.removeItem(at: fileURL)
         recordings.removeAll { $0.id == recording.id }
@@ -208,6 +219,12 @@ final class RecordingsLibraryStorage {
 
     func deleteRecordings(_ ids: Set<UUID>) {
         guard !ids.isEmpty else { return }
+        do {
+            try batchStorage.removeRecordingReferences(ids)
+        } catch {
+            Log.app.error("Failed to remove recordings from transcription batches: \(error.localizedDescription)")
+            return
+        }
 
         for id in ids {
             if let recording = recordings.first(where: { $0.id == id }) {
@@ -217,6 +234,15 @@ final class RecordingsLibraryStorage {
         }
         recordings.removeAll { ids.contains($0.id) }
         saveMetadata()
+    }
+
+    func deleteBatch(_ batch: TranscriptionBatch) {
+        do {
+            let recordingIDs = try batchStorage.delete(batchID: batch.id)
+            deleteRecordings(recordingIDs)
+        } catch {
+            Log.app.error("Failed to delete transcription batch: \(error.localizedDescription)")
+        }
     }
 
     func pruneExpiredRecordings(now: Date = Date()) {

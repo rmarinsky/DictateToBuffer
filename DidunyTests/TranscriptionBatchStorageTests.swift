@@ -105,4 +105,41 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         XCTAssertEqual(store.batches.count, 1)
         XCTAssertEqual(store.batches[0].recordingIDs, [])
     }
+
+    func test_recordingAndBatchDeletionStayReferentiallyConsistent() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TranscriptionBatchStorageTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let batchStore = try TranscriptionBatchStorage(baseDirectory: directory)
+        let recordingStore = RecordingsLibraryStorage(
+            baseDirectory: directory,
+            batchStorage: batchStore
+        )
+        let firstID = try XCTUnwrap(recordingStore.saveRecording(
+            audioData: Data("first".utf8),
+            type: .fileTranscription,
+            duration: 1,
+            transcriptionText: "First",
+            forceSave: true
+        ))
+        let secondID = try XCTUnwrap(recordingStore.saveRecording(
+            audioData: Data("second".utf8),
+            type: .fileTranscription,
+            duration: 1,
+            transcriptionText: "Second",
+            forceSave: true
+        ))
+        let target = try batchStore.create(name: "Target", recordingIDs: [firstID, secondID])
+        _ = try batchStore.create(name: "Other", recordingIDs: [secondID])
+
+        recordingStore.deleteRecording(try XCTUnwrap(
+            recordingStore.recordings.first(where: { $0.id == firstID })
+        ))
+        XCTAssertTrue(batchStore.batches.allSatisfy { !$0.recordingIDs.contains(firstID) })
+
+        recordingStore.deleteBatch(target)
+        XCTAssertTrue(recordingStore.recordings.isEmpty)
+        XCTAssertEqual(batchStore.batches.count, 1)
+        XCTAssertTrue(batchStore.batches[0].recordingIDs.isEmpty)
+    }
 }
