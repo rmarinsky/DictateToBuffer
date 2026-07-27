@@ -115,6 +115,8 @@ final class TranscriptionBatchStorageTests: XCTestCase {
             try XCTUnwrap(markdown.range(of: "first.m4a")?.lowerBound),
             try XCTUnwrap(markdown.range(of: "Second")?.lowerBound)
         )
+        XCTAssertTrue(markdown.contains("Source: File Transcription"))
+        XCTAssertFalse(markdown.contains("/tmp/first.m4a"))
     }
 
     func test_removingRecordingCleansEveryBatchReference() throws {

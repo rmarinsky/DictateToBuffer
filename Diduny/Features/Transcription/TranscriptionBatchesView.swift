@@ -175,6 +175,7 @@ struct TranscriptionBatchesView: View {
                 .buttonStyle(.plain)
                 Spacer()
                 Button("Delete", role: .destructive) { deletingBatch = batch }
+                    .disabled(!batch.isProcessingClosed)
                 Button("Edit") { editingBatch = batch }
                 if canRetry {
                     Button("Retry Failed") {

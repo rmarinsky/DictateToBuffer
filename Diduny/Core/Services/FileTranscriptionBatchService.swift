@@ -447,6 +447,7 @@ final class FileTranscriptionBatchService {
         description: String,
         existingRecordingIDs: [UUID]
     ) {
+        guard !isProcessing else { return }
         guard !urls.isEmpty || !remoteSources.isEmpty || !existingRecordingIDs.isEmpty else {
             return
         }
@@ -485,7 +486,10 @@ final class FileTranscriptionBatchService {
     }
 
     func add(urls: [URL]) {
-        guard batchPersistence == nil || currentBatchID != nil else { return }
+        if batchPersistence != nil, currentBatchID == nil {
+            beginBatch(urls: urls)
+            return
+        }
         let existingURLs = Set(items.map(\.sourceURL.standardizedFileURL))
         var addedURLs = Set<URL>()
         let initialItemCount = items.count
@@ -516,7 +520,10 @@ final class FileTranscriptionBatchService {
     }
 
     func add(remoteSources: [YouTubeRemoteMediaSource]) {
-        guard batchPersistence == nil || currentBatchID != nil else { return }
+        if batchPersistence != nil, currentBatchID == nil {
+            beginBatch(remoteSources: remoteSources)
+            return
+        }
         let existingIDs = Set(items.compactMap { $0.remoteSource?.mediaID })
         var addedIDs = Set<String>()
         let initialItemCount = items.count

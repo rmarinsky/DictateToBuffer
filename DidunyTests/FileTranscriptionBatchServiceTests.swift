@@ -667,6 +667,30 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
 
         service.add(urls: [URL(fileURLWithPath: "/tmp/late.m4a")])
         XCTAssertEqual(service.items.count, 1)
+        XCTAssertEqual(service.items.first?.sourceURL.lastPathComponent, "late.m4a")
+        XCTAssertEqual(batchStore.createCount, 2)
+    }
+
+    func test_beginBatchRejectsOverlappingBatch() async throws {
+        let transcriber = BatchTestTranscriber(waitsForRelease: true)
+        let batchStore = BatchTestPersistence()
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: transcriber,
+            recordingStore: BatchTestRecordingStore(),
+            batchPersistence: batchStore,
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+
+        service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/first.m4a")])
+        try await waitUntil { service.isProcessing }
+        service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/second.m4a")])
+
+        XCTAssertEqual(batchStore.createCount, 1)
+        XCTAssertEqual(service.items.map(\.sourceURL.lastPathComponent), ["first.m4a"])
+        transcriber.releaseAll()
+        try await waitUntil { !service.isProcessing }
     }
 
     func test_remoteRetryReusesDownloadedAudioAfterPreparationFailure() async throws {
@@ -1526,12 +1550,14 @@ private final class BatchTestPersistence: FileTranscriptionBatchPersisting {
     private(set) var recordingIDs: [UUID] = []
     private(set) var didClose = false
     private(set) var didReopen = false
+    private(set) var createCount = 0
 
     func createBatch(
         name: String,
         description: String,
         recordingIDs: [UUID]
     ) throws -> UUID {
+        createCount += 1
         createdName = name
         createdDescription = description
         self.recordingIDs = recordingIDs

@@ -93,7 +93,8 @@ struct TranscriptionBatch: Codable, Equatable, Identifiable {
                     ?? "[Transcript unavailable — \(recording.status.displayName)]"
                 return "# \(title)\n\nSource: \(recording.libraryDisplayName)\n\n\(body)"
             }
-            return "# \(item.displayName)\n\nSource: \(item.sourceURL.absoluteString)\n\n[Transcript unavailable — \(item.errorMessage ?? "Not completed")]"
+            let source = item.remoteSource == nil ? "File Transcription" : "YouTube"
+            return "# \(item.displayName)\n\nSource: \(source)\n\n[Transcript unavailable — \(item.errorMessage ?? "Not completed")]"
         }
         return (recordingsMarkdown + workItemsMarkdown).joined(separator: "\n\n")
     }
