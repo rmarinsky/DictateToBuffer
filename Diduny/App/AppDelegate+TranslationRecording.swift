@@ -81,17 +81,42 @@ extension AppDelegate {
         let translationRecordingState = appState.translationRecordingState
         Log.app.info("toggleTranslationRecording called, current state: \(translationRecordingState)")
 
+        // Second hotkey press while the picker is open confirms the
+        // highlighted pair — "hotkey, hotkey" starts with the default. Don't
+        // cancel the pipeline task: it is suspended awaiting this choice.
+        if TranslationPairPickerController.shared.isVisible {
+            TranslationPairPickerController.shared.confirmCurrentSelection()
+            return
+        }
+
         translationPipelineTask?.cancel()
         translationPipelineTask = Task {
-            await self.performToggleTranslationRecording()
+            await self.performToggleTranslationRecording(promptForLanguagePair: true)
         }
     }
 
-    func performToggleTranslationRecording() async {
+    /// - Parameter promptForLanguagePair: when true (translation hotkey) and
+    ///   more than one pair is configured, shows the pair picker before
+    ///   starting. Push-to-talk passes false — recording must start instantly
+    ///   while keys are held.
+    func performToggleTranslationRecording(promptForLanguagePair: Bool = false) async {
         let translationRecordingState = appState.translationRecordingState
         switch translationRecordingState {
         case .idle:
-            await startTranslationRecording()
+            let pairs = SettingsStorage.shared.translationLanguagePairs
+            if promptForLanguagePair, pairs.count > 1 {
+                let preselected = SettingsStorage.shared.resolveTranslationLanguagePair()
+                guard let pair = await TranslationPairPickerController.shared.pick(
+                    pairs: pairs,
+                    preselected: preselected
+                ) else {
+                    Log.app.info("Translation pair picker cancelled")
+                    return
+                }
+                await startTranslationRecording(languagePair: pair)
+            } else {
+                await startTranslationRecording()
+            }
         case .recording:
             await stopTranslationRecording()
         case .processing:

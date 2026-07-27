@@ -3,6 +3,8 @@ import XCTest
 
 final class SettingsStorageProviderTests: XCTestCase {
     private let transcriptionProviderKey = "transcriptionProvider"
+    private let translationProviderKey = "translationProvider"
+    private let sessionPresentKey = "_diduny_supabase_session_present"
     private let dictationRetentionKey = "dictationTranslationHistoryRetentionPolicy"
     private let meetingRetentionKey = "meetingHistoryRetentionPolicy"
     private let favoriteLanguagesKey = "favoriteLanguages"
@@ -18,6 +20,8 @@ final class SettingsStorageProviderTests: XCTestCase {
     private let textTranslationSourceLanguageKey = "textTranslationSourceLanguage"
     private let textTranslationTargetLanguageKey = "textTranslationTargetLanguage"
     private var storedProvider: Any?
+    private var storedTranslationProvider: Any?
+    private var storedSessionPresent: Any?
     private var storedDictationRetention: Any?
     private var storedMeetingRetention: Any?
     private var storedFavoriteLanguages: Any?
@@ -36,6 +40,8 @@ final class SettingsStorageProviderTests: XCTestCase {
     override func setUp() {
         super.setUp()
         storedProvider = UserDefaults.standard.object(forKey: transcriptionProviderKey)
+        storedTranslationProvider = UserDefaults.standard.object(forKey: translationProviderKey)
+        storedSessionPresent = UserDefaults.standard.object(forKey: sessionPresentKey)
         storedDictationRetention = UserDefaults.standard.object(forKey: dictationRetentionKey)
         storedMeetingRetention = UserDefaults.standard.object(forKey: meetingRetentionKey)
         storedFavoriteLanguages = UserDefaults.standard.object(forKey: favoriteLanguagesKey)
@@ -56,6 +62,8 @@ final class SettingsStorageProviderTests: XCTestCase {
 
     override func tearDown() {
         restore(storedProvider, key: transcriptionProviderKey)
+        restore(storedTranslationProvider, key: translationProviderKey)
+        restore(storedSessionPresent, key: sessionPresentKey)
         restore(storedDictationRetention, key: dictationRetentionKey)
         restore(storedMeetingRetention, key: meetingRetentionKey)
         restore(storedFavoriteLanguages, key: favoriteLanguagesKey)
@@ -83,6 +91,19 @@ final class SettingsStorageProviderTests: XCTestCase {
         UserDefaults.standard.set(TranscriptionProvider.local.rawValue, forKey: transcriptionProviderKey)
 
         XCTAssertEqual(SettingsStorage.shared.transcriptionProvider, .local)
+    }
+
+    func test_menuBarProcessingModeSelection_updatesDisplayedAndStoredProviders() {
+        UserDefaults.standard.set(true, forKey: sessionPresentKey)
+        SettingsStorage.shared.transcriptionProvider = .local
+        SettingsStorage.shared.translationProvider = .local
+        var selection = MenuBarProcessingModeSelection()
+
+        selection.select(.cloud)
+
+        XCTAssertEqual(selection.provider, .cloud)
+        XCTAssertEqual(SettingsStorage.shared.transcriptionProvider, .cloud)
+        XCTAssertEqual(SettingsStorage.shared.translationProvider, .cloud)
     }
 
     func test_defaultHistoryRetentionPolicies_areForever() {
