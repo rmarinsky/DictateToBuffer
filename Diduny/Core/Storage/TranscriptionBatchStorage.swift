@@ -155,6 +155,14 @@ final class TranscriptionBatchStorage {
         try save()
     }
 
+    func replaceRecordingIDs(_ recordingIDs: [UUID], in batchID: UUID) throws {
+        guard let index = batches.firstIndex(where: { $0.id == batchID }) else {
+            throw StorageError.batchNotFound
+        }
+        batches[index].recordingIDs = unique(recordingIDs)
+        try save()
+    }
+
     func close(batchID: UUID) throws {
         guard let index = batches.firstIndex(where: { $0.id == batchID }) else {
             throw StorageError.batchNotFound

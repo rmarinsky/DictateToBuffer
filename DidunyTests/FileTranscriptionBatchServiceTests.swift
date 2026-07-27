@@ -600,6 +600,48 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertEqual(extractor.metadataCallCount, 0)
     }
 
+    func test_beginBatchPersistsReusedMembershipAndClosesFinishedBatch() throws {
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+        let recordingID = UUID()
+        let batchStore = BatchTestPersistence()
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(),
+            recordingStore: BatchTestRecordingStore(
+                remoteDuplicate: BatchTranscriptionDuplicate(
+                    recordingID: recordingID,
+                    transcriptionText: "Existing transcript",
+                    durationSeconds: 90,
+                    sourceCaptionArtifacts: [
+                        TranscriptArtifact(
+                            text: "Captions",
+                            languageCode: "en",
+                            provenance: .youtubeAuthored
+                        )
+                    ]
+                ),
+                matchingRemoteMediaID: source.mediaID
+            ),
+            remoteExtractor: BatchTestRemoteExtractor(),
+            chromeProfile: { ChromeProfile(id: "Default", name: "Roman") },
+            batchPersistence: batchStore,
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+
+        service.beginBatch(
+            remoteSources: [source],
+            name: "Research",
+            description: "Reused source",
+            existingRecordingIDs: []
+        )
+
+        XCTAssertEqual(batchStore.createdName, "Research")
+        XCTAssertEqual(batchStore.createdDescription, "Reused source")
+        XCTAssertEqual(batchStore.recordingIDs, [recordingID])
+        XCTAssertTrue(batchStore.didClose)
+    }
+
     func test_remoteDuplicateWithMissingCaptionsRetrievesOnlyCaptionArtifact() async throws {
         let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
         let caption = TranscriptArtifact(
@@ -1303,6 +1345,40 @@ private final class BatchTestRecordingStore: FileTranscriptionBatchRecordingStor
 
     func markFailed(recordingID _: UUID, error _: String) {}
     func markUnprocessed(recordingID _: UUID) {}
+}
+
+@MainActor
+private final class BatchTestPersistence: FileTranscriptionBatchPersisting {
+    let batchID = UUID()
+    private(set) var createdName: String?
+    private(set) var createdDescription: String?
+    private(set) var recordingIDs: [UUID] = []
+    private(set) var didClose = false
+
+    func createBatch(
+        name: String,
+        description: String,
+        recordingIDs: [UUID]
+    ) throws -> UUID {
+        createdName = name
+        createdDescription = description
+        self.recordingIDs = recordingIDs
+        return batchID
+    }
+
+    func addRecordingIDs(_ recordingIDs: [UUID], to _: UUID) throws {
+        for id in recordingIDs where !self.recordingIDs.contains(id) {
+            self.recordingIDs.append(id)
+        }
+    }
+
+    func replaceRecordingIDs(_ recordingIDs: [UUID], in _: UUID) throws {
+        self.recordingIDs = recordingIDs
+    }
+
+    func closeBatch(_: UUID) throws {
+        didClose = true
+    }
 }
 
 private enum BatchTestError: Error {

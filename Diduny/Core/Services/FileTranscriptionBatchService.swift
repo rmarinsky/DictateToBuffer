@@ -259,6 +259,28 @@ extension FileTranscriptionBatchRecordingStoring {
     }
 }
 
+@MainActor
+protocol FileTranscriptionBatchPersisting: AnyObject {
+    func createBatch(name: String, description: String, recordingIDs: [UUID]) throws -> UUID
+    func addRecordingIDs(_ recordingIDs: [UUID], to batchID: UUID) throws
+    func replaceRecordingIDs(_ recordingIDs: [UUID], in batchID: UUID) throws
+    func closeBatch(_ batchID: UUID) throws
+}
+
+extension TranscriptionBatchStorage: FileTranscriptionBatchPersisting {
+    func createBatch(name: String, description: String, recordingIDs: [UUID]) throws -> UUID {
+        try create(
+            name: name,
+            description: description,
+            recordingIDs: recordingIDs
+        ).id
+    }
+
+    func closeBatch(_ batchID: UUID) throws {
+        try close(batchID: batchID)
+    }
+}
+
 @Observable
 @MainActor
 final class FileTranscriptionBatchService {
@@ -273,6 +295,7 @@ final class FileTranscriptionBatchService {
             guard let id = SettingsStorage.shared.selectedChromeProfileID else { return nil }
             return ChromeProfileStore.discover().first(where: { $0.id == id })
         },
+        batchPersistence: TranscriptionBatchStorage.shared,
         settingsSnapshot: { .current() },
         playCompletionSound: {
             guard SettingsStorage.shared.playSoundOnCompletion else { return }
@@ -325,12 +348,15 @@ final class FileTranscriptionBatchService {
     private let preparer: FileTranscriptionBatchPreparing
     private let transcriber: FileTranscriptionBatchTranscribing
     private let recordingStore: FileTranscriptionBatchRecordingStoring
+    private let batchPersistence: FileTranscriptionBatchPersisting?
     private let remoteExtractor: RemoteMediaExtracting?
     private let chromeProfile: @MainActor () -> ChromeProfile?
     private let settingsSnapshot: @MainActor () -> FileTranscriptionSettingsSnapshot
     private let playCompletionSound: @MainActor () -> Void
 
     private var processingTask: Task<Void, Never>?
+    private var currentBatchID: UUID?
+    private var initialRecordingIDs: [UUID] = []
     private var activeSettingsSnapshot: FileTranscriptionSettingsSnapshot?
     private var hasPlayedCompletionSound = false
     private var schedulerContinuation: CheckedContinuation<Void, Never>?
@@ -347,12 +373,14 @@ final class FileTranscriptionBatchService {
         recordingStore: FileTranscriptionBatchRecordingStoring,
         remoteExtractor: RemoteMediaExtracting? = nil,
         chromeProfile: @escaping @MainActor () -> ChromeProfile? = { nil },
+        batchPersistence: FileTranscriptionBatchPersisting? = nil,
         settingsSnapshot: @escaping @MainActor () -> FileTranscriptionSettingsSnapshot,
         playCompletionSound: @escaping @MainActor () -> Void
     ) {
         self.preparer = preparer
         self.transcriber = transcriber
         self.recordingStore = recordingStore
+        self.batchPersistence = batchPersistence
         self.remoteExtractor = remoteExtractor
         self.chromeProfile = chromeProfile
         self.settingsSnapshot = settingsSnapshot
@@ -360,15 +388,52 @@ final class FileTranscriptionBatchService {
     }
 
     func beginBatch(urls: [URL]) {
+        beginBatch(urls: urls, name: "", description: "", existingRecordingIDs: [])
+    }
+
+    func beginBatch(
+        urls: [URL],
+        name: String,
+        description: String,
+        existingRecordingIDs: [UUID]
+    ) {
+        guard !urls.isEmpty || !existingRecordingIDs.isEmpty else { return }
         resetFinishedBatchIfNeeded()
+        guard createPersistentBatch(
+            name: name,
+            description: description,
+            existingRecordingIDs: existingRecordingIDs
+        ) else { return }
         add(urls: urls)
         startIfNeeded()
+        finalizePersistentBatchIfFinished()
     }
 
     func beginBatch(remoteSources: [YouTubeRemoteMediaSource]) {
+        beginBatch(
+            remoteSources: remoteSources,
+            name: "",
+            description: "",
+            existingRecordingIDs: []
+        )
+    }
+
+    func beginBatch(
+        remoteSources: [YouTubeRemoteMediaSource],
+        name: String,
+        description: String,
+        existingRecordingIDs: [UUID]
+    ) {
+        guard !remoteSources.isEmpty || !existingRecordingIDs.isEmpty else { return }
         resetFinishedBatchIfNeeded()
+        guard createPersistentBatch(
+            name: name,
+            description: description,
+            existingRecordingIDs: existingRecordingIDs
+        ) else { return }
         add(remoteSources: remoteSources)
         startIfNeeded()
+        finalizePersistentBatchIfFinished()
     }
 
     func add(urls: [URL]) {
@@ -390,6 +455,7 @@ final class FileTranscriptionBatchService {
                 item.durationSeconds = duplicate.durationSeconds
                 item.transcriptionText = duplicate.transcriptionText
                 item.recordingID = duplicate.recordingID
+                persistRecordingID(duplicate.recordingID)
             }
             items.append(item)
         }
@@ -415,6 +481,7 @@ final class FileTranscriptionBatchService {
                 mediaID: source.mediaID
             ), canReuse(duplicate: duplicate) {
                 apply(duplicate: duplicate, to: &item)
+                persistRecordingID(duplicate.recordingID)
             }
             items.append(item)
         }
@@ -429,6 +496,56 @@ final class FileTranscriptionBatchService {
             items.removeAll()
             activeSettingsSnapshot = nil
             hasPlayedCompletionSound = false
+            currentBatchID = nil
+            initialRecordingIDs = []
+        }
+    }
+
+    private func createPersistentBatch(
+        name: String,
+        description: String,
+        existingRecordingIDs: [UUID]
+    ) -> Bool {
+        initialRecordingIDs = existingRecordingIDs
+        guard let batchPersistence else { return true }
+        do {
+            currentBatchID = try batchPersistence.createBatch(
+                name: name,
+                description: description,
+                recordingIDs: existingRecordingIDs
+            )
+            return true
+        } catch {
+            batchError = "Could not create the transcription batch."
+            return false
+        }
+    }
+
+    private func persistRecordingID(_ recordingID: UUID) {
+        guard let batchPersistence, let currentBatchID else { return }
+        do {
+            try batchPersistence.addRecordingIDs([recordingID], to: currentBatchID)
+        } catch {
+            batchError = "Could not save the transcription batch."
+        }
+    }
+
+    private func finalizePersistentBatchIfFinished() {
+        guard !isProcessing,
+              items.allSatisfy(\.status.isTerminal),
+              let batchPersistence,
+              let currentBatchID
+        else { return }
+        do {
+            try batchPersistence.replaceRecordingIDs(
+                initialRecordingIDs + items.compactMap(\.recordingID),
+                in: currentBatchID
+            )
+            try batchPersistence.closeBatch(currentBatchID)
+            self.currentBatchID = nil
+            initialRecordingIDs = []
+        } catch {
+            batchError = "Could not finish saving the transcription batch."
         }
     }
 
@@ -540,6 +657,7 @@ final class FileTranscriptionBatchService {
             if !Task.isCancelled, items.contains(where: { $0.status == .queued }) {
                 startIfNeeded()
             }
+            finalizePersistentBatchIfFinished()
         }
         guard await preflightRemoteAuthorization() else { return }
 
@@ -785,6 +903,7 @@ final class FileTranscriptionBatchService {
                     durationSeconds: metadata.durationSeconds
                 ), canReuse(duplicate: duplicate) {
                     update(itemID) { apply(duplicate: duplicate, to: &$0) }
+                    persistRecordingID(duplicate.recordingID)
                     return
                 }
 
@@ -849,6 +968,7 @@ final class FileTranscriptionBatchService {
                 )
                 if let recordingID {
                     update(itemID) { $0.recordingID = recordingID }
+                    persistRecordingID(recordingID)
                     recordingStore.markProcessing(recordingID: recordingID)
                 }
             } else if let recordingID {
@@ -956,6 +1076,7 @@ final class FileTranscriptionBatchService {
                 )
                 if let recordingID {
                     update(itemID) { $0.recordingID = recordingID }
+                    persistRecordingID(recordingID)
                     recordingStore.markProcessing(recordingID: recordingID)
                 }
             }
