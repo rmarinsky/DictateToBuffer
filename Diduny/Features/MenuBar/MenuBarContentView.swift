@@ -1,8 +1,34 @@
 import KeyboardShortcuts
 import SwiftUI
 
+struct MenuBarProcessingModeSelection {
+    private let settings: SettingsStorage
+    private(set) var provider: TranscriptionProvider
+
+    init(settings: SettingsStorage = .shared) {
+        self.settings = settings
+        provider = settings.effectiveTranscriptionProvider == .cloud
+            && settings.effectiveTranslationProvider == .cloud ? .cloud : .local
+    }
+
+    mutating func refresh() {
+        provider = settings.effectiveTranscriptionProvider == .cloud
+            && settings.effectiveTranslationProvider == .cloud ? .cloud : .local
+    }
+
+    mutating func select(_ provider: TranscriptionProvider) {
+        settings.transcriptionProvider = provider
+        settings.translationProvider = provider
+        if provider == .local {
+            settings.meetingRealtimeTranscriptionEnabled = false
+        }
+        self.provider = provider
+    }
+}
+
 struct MenuBarContentView: View {
     @Environment(AppState.self) var appState
+    @State private var processingMode = MenuBarProcessingModeSelection()
     var audioDeviceManager: AudioDeviceManager
 
     var onToggleRecording: @MainActor () -> Void
@@ -132,6 +158,7 @@ struct MenuBarContentView: View {
             .keyboardShortcut("q", modifiers: .command)
         }
         .padding(.vertical, 4)
+        .onAppear { processingMode.refresh() }
     }
 
     private var recordingButtonTitle: String {
@@ -258,9 +285,7 @@ struct MenuBarContentView: View {
     }
 
     private var isCloudMode: Bool {
-        let settings = SettingsStorage.shared
-        return settings.effectiveTranscriptionProvider == .cloud
-            && settings.effectiveTranslationProvider == .cloud
+        processingMode.provider == .cloud
     }
 
     private func selectCloudMode() {
@@ -269,15 +294,10 @@ struct MenuBarContentView: View {
             onOpenMainWindow(.account)
             return
         }
-        let settings = SettingsStorage.shared
-        settings.transcriptionProvider = .cloud
-        settings.translationProvider = .cloud
+        processingMode.select(.cloud)
     }
 
     private func selectLocalMode() {
-        let settings = SettingsStorage.shared
-        settings.transcriptionProvider = .local
-        settings.translationProvider = .local
-        settings.meetingRealtimeTranscriptionEnabled = false
+        processingMode.select(.local)
     }
 }
