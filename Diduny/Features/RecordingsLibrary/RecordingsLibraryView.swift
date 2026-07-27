@@ -12,25 +12,39 @@ struct RecordingsLibraryView: View {
     @State private var recordingToDelete: Recording? = nil
     @State private var isSelectionMode = false
     @State private var selectedRecordingIds = Set<UUID>()
+    @State private var recordingToRetranscribe: Recording?
 
     enum RecordingTypeFilter: String, CaseIterable {
         case all = "All"
         case meetings = "Meetings"
         case voiceNotes = "Voice notes"
+        case files = "Files"
+        case youtube = "YouTube"
+
+        func matches(_ recording: Recording) -> Bool {
+            switch self {
+            case .all:
+                true
+            case .meetings:
+                recording.type.isMeetingLike
+            case .voiceNotes:
+                recording.type == .voice || recording.type == .translation
+            case .files:
+                recording.type == .fileTranscription && !recording.isYouTubeVideo
+            case .youtube:
+                recording.isYouTubeVideo
+            }
+        }
     }
 
     private var filteredRecordings: [Recording] {
         storage.recordings.filter { recording in
-            let matchesFilter: Bool
-            switch filter {
-            case .all: matchesFilter = true
-            case .meetings: matchesFilter = recording.type.isMeetingLike
-            case .voiceNotes: matchesFilter = !recording.type.isMeetingLike
-            }
-            guard matchesFilter else { return false }
+            guard filter.matches(recording) else { return false }
             guard !searchText.isEmpty else { return true }
             let query = searchText.lowercased()
-            return recording.type.displayName.lowercased().contains(query)
+            return recording.libraryDisplayName.lowercased().contains(query)
+                || (recording.sourceFileName?.lowercased().contains(query) ?? false)
+                || (recording.remoteSource?.channelName?.lowercased().contains(query) ?? false)
                 || (recording.transcriptionText?.lowercased().contains(query) ?? false)
         }
     }
@@ -75,6 +89,15 @@ struct RecordingsLibraryView: View {
             RecordingDetailView(recording: recording)
                 .frame(minWidth: 640, idealWidth: 700, minHeight: 500)
         }
+        .onAppear {
+            openRequestedRecordingIfAvailable()
+        }
+        .onChange(of: MainWindowController.shared.requestedRecordingID) {
+            openRequestedRecordingIfAvailable()
+        }
+        .onChange(of: storage.recordings) {
+            openRequestedRecordingIfAvailable()
+        }
         .alert("Delete Recording", isPresented: $showDeleteConfirmation) {
             Button("Delete", role: .destructive) {
                 if let r = recordingToDelete {
@@ -99,6 +122,25 @@ struct RecordingsLibraryView: View {
         } message: {
             Text("Delete \(selectedRecordingIds.count) selected recordings? This cannot be undone.")
         }
+        .alert(
+            "Transcribe Again?",
+            isPresented: Binding(
+                get: { recordingToRetranscribe != nil },
+                set: { if !$0 { recordingToRetranscribe = nil } }
+            )
+        ) {
+            Button("Replace Generated Transcript", role: .destructive) {
+                if let recordingToRetranscribe {
+                    queueService.enqueue([recordingToRetranscribe.id], action: .transcribe)
+                }
+                recordingToRetranscribe = nil
+            }
+            Button("Cancel", role: .cancel) {
+                recordingToRetranscribe = nil
+            }
+        } message: {
+            Text("This replaces the generated transcript. Source captions and YouTube identity stay unchanged.")
+        }
     }
 
     // MARK: - Header
@@ -109,9 +151,33 @@ struct RecordingsLibraryView: View {
                 .font(.title2.bold())
             Spacer()
             Button {
+                BatchTranscriptionWindowController.shared.selectFilesForNewBatch()
+            } label: {
+                Label("Transcribe Files…", systemImage: "waveform.badge.plus")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .keyboardShortcut("o", modifiers: [.command, .shift])
+            .help("Select audio or video files to transcribe (⇧⌘O)")
+            .accessibilityIdentifier("Transcribe files")
+
+            Button {
+                BatchTranscriptionWindowController.shared.selectYouTubeURLsForNewBatch()
+            } label: {
+                Label("Transcribe YouTube URLs…", systemImage: "play.rectangle.on.rectangle")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .keyboardShortcut("u", modifiers: [.command, .shift])
+            .help("Transcribe YouTube URLs (⇧⌘U)")
+
+            Button {
                 toggleSelectionMode()
             } label: {
-                Label(isSelectionMode ? "Done" : "Select", systemImage: isSelectionMode ? "checkmark.circle" : "checklist")
+                Label(
+                    isSelectionMode ? "Done" : "Select",
+                    systemImage: isSelectionMode ? "checkmark.circle" : "checklist"
+                )
             }
             .labelStyle(.titleAndIcon)
             .buttonStyle(.bordered)
@@ -140,7 +206,10 @@ struct RecordingsLibraryView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(Color(.quaternaryLabelColor).opacity(0.1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(
+                Color(.quaternaryLabelColor).opacity(0.1),
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
         }
     }
 
@@ -214,7 +283,7 @@ struct RecordingsLibraryView: View {
                         isSelected: selectedRecordingIds.contains(recording.id),
                         onToggleSelection: { toggleSelection(for: recording) }
                     )
-                        .contextMenu { recordingContextMenu(for: recording) }
+                    .contextMenu { recordingContextMenu(for: recording) }
                     if index < filteredRecordings.count - 1 {
                         Divider()
                             .padding(.horizontal, 16)
@@ -230,11 +299,21 @@ struct RecordingsLibraryView: View {
         )
     }
 
+    private func openRequestedRecordingIfAvailable() {
+        let controller = MainWindowController.shared
+        guard let id = controller.requestedRecordingID,
+              let recording = storage.recordings.first(where: { $0.id == id })
+        else { return }
+
+        selectedRecording = recording
+        controller.requestedRecordingID = nil
+    }
+
     // MARK: - Context Menu
 
     @ViewBuilder
     private func recordingContextMenu(for recording: Recording) -> some View {
-        Button("Transcribe") {
+        Button(recording.remoteSource == nil ? "Transcribe" : "Transcribe Again…") {
             transcribe(recording)
         }
         .disabled(recording.status == .processing)
@@ -263,7 +342,7 @@ struct RecordingsLibraryView: View {
         }
         .disabled(recording.status == .processing)
 
-        if let text = recording.transcriptionText, !text.isEmpty {
+        if let text = recording.displayTranscriptText {
             Divider()
             Button("Copy Text") {
                 ClipboardService.shared.copy(text: text, behavior: recording.type.clipboardCopyBehavior)
@@ -278,7 +357,13 @@ struct RecordingsLibraryView: View {
     }
 
     private func transcribe(_ recording: Recording) {
-        queueService.enqueue([recording.id], action: .transcribe)
+        if recording.remoteSource != nil,
+           !(recording.transcriptionText?.isEmpty ?? true)
+        {
+            recordingToRetranscribe = recording
+        } else {
+            queueService.enqueue([recording.id], action: .transcribe)
+        }
     }
 
     private func requestDelete(_ recording: Recording) {

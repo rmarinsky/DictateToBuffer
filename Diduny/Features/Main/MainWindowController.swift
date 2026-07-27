@@ -7,13 +7,16 @@ import SwiftUI
 final class MainWindowController {
     static let shared = MainWindowController()
 
-    var requestedSection: MainSection? = nil
+    var requestedSection: MainSection?
+    var requestedRecordingID: UUID?
 
     private var window: NSWindow?
     private var windowDelegate: MainWindowDelegate?
     private weak var appDelegate: AppDelegate?
 
-    var isVisible: Bool { window?.isVisible ?? false }
+    var isVisible: Bool {
+        window?.isVisible ?? false
+    }
 
     private init() {}
 
@@ -38,6 +41,11 @@ final class MainWindowController {
             guard self?.isVisible != true else { return }
             self?.presentWindow()
         }
+    }
+
+    func showRecording(id: UUID) {
+        requestedRecordingID = id
+        showWindow(section: .recordings)
     }
 
     func closeWindow() {
@@ -65,7 +73,12 @@ final class MainWindowController {
             makeWindow()
         }
 
-        Log.app.info("[Window] presentWindow policy=\(NSApp.activationPolicy().rawValue, privacy: .public) window=\(self.window != nil, privacy: .public) visible=\((self.window?.isVisible ?? false), privacy: .public)")
+        let windowExists = window != nil
+        let windowVisible = window?.isVisible ?? false
+        Log.app
+            .info(
+                "[Window] presentWindow policy=\(NSApp.activationPolicy().rawValue, privacy: .public) window=\(windowExists, privacy: .public) visible=\(windowVisible, privacy: .public)"
+            )
         NSLog("[Diduny] showWindow: policy=%d window=%d visible=%d",
               NSApp.activationPolicy().rawValue, window != nil ? 1 : 0, window?.isVisible ?? false ? 1 : 0)
 

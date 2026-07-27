@@ -9,7 +9,8 @@ struct MenuBarContentView: View {
     var onToggleTranslationRecording: @MainActor () -> Void
     var onToggleMeetingRecording: @MainActor () -> Void
     var onToggleMeetingTranslationRecording: @MainActor () -> Void
-    var onTranscribeFile: @MainActor () -> Void
+    var onTranscribeFiles: @MainActor () -> Void
+    var onTranscribeURL: @MainActor () -> Void
     var onOpenMainWindow: @MainActor (MainSection) -> Void
     var onCheckForUpdates: @MainActor () -> Void
 
@@ -96,7 +97,11 @@ struct MenuBarContentView: View {
                 onOpenMainWindow(.overview)
             }
 
-            Button("Transcribe File…", action: onTranscribeFile)
+            Button(transcribeFilesTitle, action: onTranscribeFiles)
+                .disabled(appState.recordingState == .processing)
+
+            Button("Transcribe URL…", action: onTranscribeURL)
+                .keyboardShortcut("u", modifiers: [.command, .shift])
                 .disabled(appState.recordingState == .processing)
 
             Button("Recordings") {
@@ -147,6 +152,12 @@ struct MenuBarContentView: View {
         case .error:
             "Dictation"
         }
+    }
+
+    private var transcribeFilesTitle: String {
+        let batch = FileTranscriptionBatchService.shared
+        guard batch.isProcessing else { return "Transcribe Files…" }
+        return "Transcription Batch (\(batch.finishedCount)/\(batch.items.count))…"
     }
 
     private func isInProgress(_ state: RecordingState) -> Bool {

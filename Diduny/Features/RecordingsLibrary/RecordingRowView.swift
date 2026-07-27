@@ -7,7 +7,7 @@ struct RecordingRowView: View {
     let onDelete: () -> Void
     var isSelectionMode = false
     var isSelected = false
-    var onToggleSelection: (() -> Void)? = nil
+    var onToggleSelection: (() -> Void)?
 
     @State private var playbackService = AudioPlaybackService.shared
 
@@ -118,12 +118,12 @@ struct RecordingRowView: View {
     }
 
     private var typeBadge: some View {
-        Text(recording.type.displayName)
+        Text(recording.libraryDisplayName)
             .font(.system(size: 11, weight: .medium))
-            .foregroundColor(recording.type.brandColor)
+            .foregroundColor(recording.libraryBrandColor)
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
-            .background(recording.type.brandColor.opacity(0.12), in: Capsule())
+            .background(recording.libraryBrandColor.opacity(0.12), in: Capsule())
     }
 
     private var actionButtons: some View {
@@ -168,7 +168,7 @@ struct RecordingRowView: View {
         case .translation: return "Translation — \(time)"
         case .meeting: return "Meeting — \(time)"
         case .meetingTranslation: return "Meeting translation — \(time)"
-        case .fileTranscription: return "File — \(time)"
+        case .fileTranscription: return recording.sourceFileName ?? "File — \(time)"
         }
     }
 

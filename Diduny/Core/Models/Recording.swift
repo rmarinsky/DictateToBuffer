@@ -12,11 +12,40 @@ struct RecordingDeviceInfo: Codable, Equatable {
 
 /// Describes how a recording entered the library via a non-normal stop path.
 /// `nil` on `Recording.recoverySource` means the recording was stopped normally.
-enum RecoverySource: String, Codable, Sendable {
+enum RecoverySource: String, Codable {
     /// The recording was assembled from an orphaned in-progress session directory
     /// (e.g. after a crash, force-quit, or sleep interruption).
     case orphanedSession
     // Future cases: .importedFile, .crashRecovery — out of scope for M0.
+}
+
+struct TimedTranscriptSegment: Codable, Equatable {
+    let startMilliseconds: Int
+    let endMilliseconds: Int?
+    let speaker: String?
+    let text: String
+
+    init(
+        startMilliseconds: Int,
+        endMilliseconds: Int? = nil,
+        speaker: String? = nil,
+        text: String
+    ) {
+        self.startMilliseconds = startMilliseconds
+        self.endMilliseconds = endMilliseconds
+        self.speaker = speaker
+        self.text = text
+    }
+
+    var timestampLabel: String {
+        let totalSeconds = max(0, startMilliseconds) / 1000
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+        return hours > 0
+            ? String(format: "%d:%02d:%02d", hours, minutes, seconds)
+            : String(format: "%02d:%02d", minutes, seconds)
+    }
 }
 
 struct Recording: Identifiable, Codable, Equatable {
@@ -37,12 +66,47 @@ struct Recording: Identifiable, Codable, Equatable {
     /// stop; intended to drive the "Recovered" badge in the library and the
     /// detail-view notice. Once set it is preserved (never cleared), including
     /// across `RecordingsLibraryStorage.replaceStoredAudioFile`.
-    ///
-    /// NOTE: no production save path sets this yet — `saveRecording(...)` doesn't
-    /// accept it and `recoverRecording(from:)` transcribes then discards without
-    /// creating a library entry. So in practice this is currently always nil.
-    /// TODO: populate it when the recovery-save-to-library flow is implemented.
     var recoverySource: RecoverySource?
+    /// Original Finder name for explicitly imported media. Optional so metadata
+    /// written by older releases remains decodable.
+    var sourceFileName: String?
+    /// Byte size of the original imported media. Combined with `sourceFileName`
+    /// to avoid treating unrelated same-named files as duplicates.
+    var sourceFileSizeBytes: Int64?
+    /// Canonical provider identity for recordings acquired from a remote source.
+    /// Optional so recordings written before URL transcription remain decodable.
+    var remoteSource: RemoteMediaSourceMetadata?
+    /// Provider captions stay separate from Diduny's generated transcript.
+    var sourceCaptionArtifacts: [TranscriptArtifact]?
+    /// Identifies which Diduny provider produced `transcriptionText`.
+    var generatedTranscriptProvenance: GeneratedTranscriptProvenance?
+    /// Phrase-level timestamps from the generated transcript provider.
+    /// Optional so recordings created by older releases remain decodable.
+    var transcriptSegments: [TimedTranscriptSegment]?
+
+    var isYouTubeVideo: Bool {
+        remoteSource?.provider == YouTubeRemoteMediaSource.provider
+    }
+
+    var libraryDisplayName: String {
+        isYouTubeVideo ? "YouTube Video" : type.displayName
+    }
+
+    var libraryIconName: String {
+        isYouTubeVideo ? "play.rectangle.fill" : type.iconName
+    }
+
+    var libraryBrandColor: Color {
+        isYouTubeVideo ? .red : type.brandColor
+    }
+
+    var displayTranscriptText: String? {
+        guard let transcriptionText, !transcriptionText.isEmpty else { return nil }
+        guard let transcriptSegments, !transcriptSegments.isEmpty else { return transcriptionText }
+        return transcriptSegments
+            .map { "[\($0.timestampLabel)] \($0.text)" }
+            .joined(separator: "\n\n")
+    }
 
     /// Nested to avoid conflict with RecoveryState.RecordingType
     enum RecordingType: String, Codable, CaseIterable {

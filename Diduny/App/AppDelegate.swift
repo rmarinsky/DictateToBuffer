@@ -432,35 +432,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func recoverRecording(from state: RecoveryState) {
         Task {
-            do {
-                let audioURL = URL(fileURLWithPath: state.tempFilePath)
-                let audioData = try await loadAudioData(from: audioURL)
-                Log.app.info("Recovered audio data: \(audioData.count) bytes")
-
-                let rawText: String
-                switch state.recordingType {
-                case .voice:
-                    let service = activeTranscriptionService
-                    rawText = try await service.transcribe(audioData: audioData)
-                case .meeting:
-                    if SettingsStorage.shared.effectiveTranscriptionProvider == .cloud {
-                        rawText = try await transcriptionService.transcribeMeeting(audioData: audioData)
-                    } else {
-                        rawText = try await whisperTranscriptionService.transcribe(audioData: audioData)
-                    }
-                case .translation, .meetingTranslation:
-                    let service: TranscriptionServiceProtocol = SettingsStorage.shared
-                        .effectiveTranslationProvider == .local
-                        ? whisperTranscriptionService : transcriptionService
-                    rawText = try await service.translateAndTranscribe(audioData: audioData)
+            var recoveredRecordingID: UUID?
+            let processor = RecoveryRecordingProcessor(
+                save: { audioData, state, duration in
+                    let recordingID = RecordingsLibraryStorage.shared.saveRecording(
+                        audioData: audioData,
+                        type: state.recordingType.libraryType,
+                        duration: duration,
+                        createdAt: state.startTime,
+                        recoverySource: .orphanedSession,
+                        forceSave: true
+                    )
+                    recoveredRecordingID = recordingID
+                    return recordingID
+                },
+                update: { recordingID, status, text, error in
+                    RecordingsLibraryStorage.shared.updateRecording(
+                        id: recordingID,
+                        status: status,
+                        text: text,
+                        error: error
+                    )
+                },
+                cleanupSource: { state in
+                    try? FileManager.default.removeItem(atPath: state.tempFilePath)
+                    RecoveryStateManager.shared.clearState()
                 }
+            )
 
-                // Apply server-side cleanup for all recovery types;
-                // TranscriptCleanupService falls back silently when auth/network unavailable.
-                let text = await TranscriptCleanupService.shared.clean(
-                    rawText,
-                    fillerWords: SettingsStorage.shared.fillerWords
-                )
+            do {
+                let result = try await processor.process(state: state) { audioData, recordingType in
+                    Log.app.info("Recovered audio data: \(audioData.count) bytes")
+                    let rawText: String
+                    switch recordingType {
+                    case .voice:
+                        rawText = try await self.activeTranscriptionService.transcribe(audioData: audioData)
+                    case .meeting:
+                        if SettingsStorage.shared.effectiveTranscriptionProvider == .cloud {
+                            rawText = try await self.transcriptionService.transcribeMeeting(audioData: audioData)
+                        } else {
+                            rawText = try await self.whisperTranscriptionService.transcribe(audioData: audioData)
+                        }
+                    case .translation, .meetingTranslation:
+                        let service: TranscriptionServiceProtocol = SettingsStorage.shared
+                            .effectiveTranslationProvider == .local
+                            ? self.whisperTranscriptionService : self.transcriptionService
+                        rawText = try await service.translateAndTranscribe(audioData: audioData)
+                    }
+
+                    return await TranscriptCleanupService.shared.clean(
+                        rawText,
+                        fillerWords: SettingsStorage.shared.fillerWords
+                    )
+                }
 
                 let copyBehavior: ClipboardCopyBehavior = switch state.recordingType {
                 case .voice, .translation:
@@ -469,19 +493,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     .raw
                 }
 
-                clipboardService.copy(text: text, behavior: copyBehavior)
+                clipboardService.copy(text: result.text, behavior: copyBehavior)
                 Log.app.info("Recovery transcription successful")
+                MainWindowController.shared.showRecording(id: result.recordingID)
 
                 if SettingsStorage.shared.playSoundOnCompletion {
                     NSSound(named: .init("Funk"))?.play()
                 }
-
             } catch {
                 Log.app.error("Recovery transcription failed: \(error.localizedDescription)")
+                if let recoveredRecordingID {
+                    MainWindowController.shared.showRecording(id: recoveredRecordingID)
+                    NotchManager.shared.showInfo(
+                        message: "Recording recovered. Transcription can be retried from Recordings.",
+                        duration: 5
+                    )
+                } else {
+                    NotchManager.shared.showInfo(
+                        message: "Recovery failed. The original audio was kept for another attempt.",
+                        duration: 5
+                    )
+                }
             }
-
-            // Clean up
-            discardRecovery(state: state)
         }
     }
 
@@ -491,10 +524,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Log.app.info("Orphaned recording discarded")
     }
 
-    // Called when the app is already running and the user activates it again
-    // (Spotlight press Enter, Dock click). If no windows are visible, open
-    // the main window so the UI actually appears.
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+    /// Called when the app is already running and the user activates it again
+    /// (Spotlight press Enter, Dock click). If no windows are visible, open
+    /// the main window so the UI actually appears.
+    func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows: Bool) -> Bool {
         NSLog("[Diduny] applicationShouldHandleReopen: hasVisibleWindows=%d", hasVisibleWindows)
         if !hasVisibleWindows {
             NSLog("[Diduny] applicationShouldHandleReopen: calling showWindow")
@@ -668,6 +701,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func refreshActivationPolicy() {
         let shouldShowInAppSwitcher = isStateInProgress(appState.meetingRecordingState)
             || MainWindowController.shared.isVisible
+            || BatchTranscriptionWindowController.shared.isVisible
             || isSettingsWindowVisible()
         NSApp.setActivationPolicy(shouldShowInAppSwitcher ? .regular : .accessory)
     }

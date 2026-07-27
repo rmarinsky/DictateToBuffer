@@ -11,6 +11,7 @@ final class RecordingsLibraryStorage {
     private let appSupportDir: URL
     private let recordingsDir: URL
     private let metadataURL: URL
+    private let metadataWriteQueue = DispatchQueue(label: "ua.com.rmarinsky.diduny.recordings-metadata")
 
     private init() {
         let fm = FileManager.default
@@ -33,6 +34,7 @@ final class RecordingsLibraryStorage {
 
     // MARK: - Save (from Data — voice/translation)
 
+    @discardableResult
     func saveRecording(
         id: UUID? = nil,
         audioData: Data,
@@ -40,9 +42,18 @@ final class RecordingsLibraryStorage {
         duration: TimeInterval,
         transcriptionText: String? = nil,
         sourceDevice: RecordingDeviceInfo? = nil,
-        translationTargetLanguageCode: String? = nil
-    ) {
-        guard shouldSaveRecording(type: type) else { return }
+        translationTargetLanguageCode: String? = nil,
+        sourceFileName: String? = nil,
+        sourceFileSizeBytes: Int64? = nil,
+        remoteSource: RemoteMediaSourceMetadata? = nil,
+        sourceCaptionArtifacts: [TranscriptArtifact]? = nil,
+        generatedTranscriptProvenance: GeneratedTranscriptProvenance? = nil,
+        transcriptSegments: [TimedTranscriptSegment]? = nil,
+        createdAt: Date = Date(),
+        recoverySource: RecoverySource? = nil,
+        forceSave: Bool = false
+    ) -> UUID? {
+        guard forceSave || shouldSaveRecording(type: type) else { return nil }
 
         let recordingID = id ?? UUID()
         let fileExtension = detectedAudioFileExtension(for: audioData)
@@ -53,7 +64,7 @@ final class RecordingsLibraryStorage {
             try audioData.write(to: fileURL)
         } catch {
             Log.app.error("Failed to save recording audio: \(error.localizedDescription)")
-            return
+            return nil
         }
 
         let status: Recording.ProcessingStatus = if transcriptionText != nil {
@@ -63,7 +74,7 @@ final class RecordingsLibraryStorage {
         }
         let recording = Recording(
             id: recordingID,
-            createdAt: Date(),
+            createdAt: createdAt,
             type: type,
             audioFileName: fileName,
             durationSeconds: duration,
@@ -72,17 +83,36 @@ final class RecordingsLibraryStorage {
             transcriptionText: transcriptionText,
             processedAt: transcriptionText != nil ? Date() : nil,
             sourceDevice: sourceDevice,
-            translationTargetLanguageCode: translationTargetLanguageCode
+            translationTargetLanguageCode: translationTargetLanguageCode,
+            recoverySource: recoverySource,
+            sourceFileName: sourceFileName,
+            sourceFileSizeBytes: sourceFileSizeBytes,
+            remoteSource: remoteSource,
+            sourceCaptionArtifacts: sourceCaptionArtifacts,
+            generatedTranscriptProvenance: generatedTranscriptProvenance,
+            transcriptSegments: transcriptSegments
         )
 
         recordings.insert(recording, at: 0)
-        saveMetadata()
-        pruneExpiredRecordingsIfEnabled()
+        if forceSave {
+            guard saveMetadataSynchronously() else {
+                recordings.removeAll { $0.id == recordingID }
+                try? fileManager.removeItem(at: fileURL)
+                return nil
+            }
+        } else {
+            saveMetadata()
+        }
+        if !forceSave {
+            pruneExpiredRecordingsIfEnabled()
+        }
         Log.app.info("Recording saved: \(type.rawValue), \(audioData.count) bytes")
+        return recordingID
     }
 
     // MARK: - Save (from URL — meetings, copies file)
 
+    @discardableResult
     func saveRecording(
         id: UUID? = nil,
         audioURL: URL,
@@ -90,9 +120,18 @@ final class RecordingsLibraryStorage {
         duration: TimeInterval,
         transcriptionText: String? = nil,
         sourceDevice: RecordingDeviceInfo? = nil,
-        translationTargetLanguageCode: String? = nil
-    ) {
-        guard shouldSaveRecording(type: type) else { return }
+        translationTargetLanguageCode: String? = nil,
+        sourceFileName: String? = nil,
+        sourceFileSizeBytes: Int64? = nil,
+        remoteSource: RemoteMediaSourceMetadata? = nil,
+        sourceCaptionArtifacts: [TranscriptArtifact]? = nil,
+        generatedTranscriptProvenance: GeneratedTranscriptProvenance? = nil,
+        transcriptSegments: [TimedTranscriptSegment]? = nil,
+        createdAt: Date = Date(),
+        recoverySource: RecoverySource? = nil,
+        forceSave: Bool = false
+    ) -> UUID? {
+        guard forceSave || shouldSaveRecording(type: type) else { return nil }
 
         let recordingID = id ?? UUID()
         let ext = audioURL.pathExtension.isEmpty ? "wav" : audioURL.pathExtension
@@ -103,7 +142,7 @@ final class RecordingsLibraryStorage {
             try fileManager.copyItem(at: audioURL, to: destURL)
         } catch {
             Log.app.error("Failed to copy recording file: \(error.localizedDescription)")
-            return
+            return nil
         }
 
         let fileSize: Int64 = if let attrs = try? fileManager.attributesOfItem(atPath: destURL.path),
@@ -122,7 +161,7 @@ final class RecordingsLibraryStorage {
 
         let recording = Recording(
             id: recordingID,
-            createdAt: Date(),
+            createdAt: createdAt,
             type: type,
             audioFileName: fileName,
             durationSeconds: duration,
@@ -131,13 +170,31 @@ final class RecordingsLibraryStorage {
             transcriptionText: transcriptionText,
             processedAt: transcriptionText != nil ? Date() : nil,
             sourceDevice: sourceDevice,
-            translationTargetLanguageCode: translationTargetLanguageCode
+            translationTargetLanguageCode: translationTargetLanguageCode,
+            recoverySource: recoverySource,
+            sourceFileName: sourceFileName,
+            sourceFileSizeBytes: sourceFileSizeBytes,
+            remoteSource: remoteSource,
+            sourceCaptionArtifacts: sourceCaptionArtifacts,
+            generatedTranscriptProvenance: generatedTranscriptProvenance,
+            transcriptSegments: transcriptSegments
         )
 
         recordings.insert(recording, at: 0)
-        saveMetadata()
-        pruneExpiredRecordingsIfEnabled()
+        if forceSave {
+            guard saveMetadataSynchronously() else {
+                recordings.removeAll { $0.id == recordingID }
+                try? fileManager.removeItem(at: destURL)
+                return nil
+            }
+        } else {
+            saveMetadata()
+        }
+        if !forceSave {
+            pruneExpiredRecordingsIfEnabled()
+        }
         Log.app.info("Recording saved from file: \(type.rawValue), \(fileSize) bytes")
+        return recordingID
     }
 
     // MARK: - Delete
@@ -200,6 +257,48 @@ final class RecordingsLibraryStorage {
         saveMetadata()
     }
 
+    func updateRemoteArtifacts(
+        id: UUID,
+        remoteSource: RemoteMediaSourceMetadata? = nil,
+        sourceCaptionArtifacts: [TranscriptArtifact]? = nil,
+        generatedTranscriptProvenance: GeneratedTranscriptProvenance? = nil
+    ) {
+        guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
+        if let remoteSource {
+            recordings[index].remoteSource = remoteSource
+        }
+        if let sourceCaptionArtifacts {
+            recordings[index].sourceCaptionArtifacts = sourceCaptionArtifacts
+        }
+        if let generatedTranscriptProvenance {
+            recordings[index].generatedTranscriptProvenance = generatedTranscriptProvenance
+        }
+        saveMetadata()
+    }
+
+    func completeTranscription(
+        id: UUID,
+        status: Recording.ProcessingStatus,
+        text: String,
+        segments: [TimedTranscriptSegment]?,
+        translationTargetLanguageCode: String? = nil,
+        generatedTranscriptProvenance: GeneratedTranscriptProvenance? = nil
+    ) {
+        guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
+        recordings[index].status = status
+        recordings[index].transcriptionText = text
+        recordings[index].errorMessage = nil
+        recordings[index].processedAt = Date()
+        recordings[index].transcriptSegments = segments
+        if let translationTargetLanguageCode {
+            recordings[index].translationTargetLanguageCode = translationTargetLanguageCode
+        }
+        if let generatedTranscriptProvenance {
+            recordings[index].generatedTranscriptProvenance = generatedTranscriptProvenance
+        }
+        saveMetadataSynchronously()
+    }
+
     func optimizeStoredRecordingIfNeeded(id: UUID) async -> URL? {
         guard let index = recordings.firstIndex(where: { $0.id == id }) else { return nil }
 
@@ -253,12 +352,15 @@ final class RecordingsLibraryStorage {
     private func loadAndPruneAsync() async {
         let url = metadataURL
         let recDir = recordingsDir
-        let result = await Task.detached(priority: .utility) { () -> [Recording]? in
+        let result = await Task.detached(
+            priority: .utility
+        ) { () -> (recordings: [Recording], resetInterrupted: Bool)? in
             guard let data = try? Data(contentsOf: url) else { return nil }
             do {
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .iso8601
                 var loaded = try decoder.decode([Recording].self, from: data)
+                let resetInterrupted = Self.resetInterruptedProcessingStates(in: &loaded)
                 // Prune orphans with a single directory scan instead of per-file fileExists
                 if let contents = try? FileManager.default.contentsOfDirectory(
                     at: recDir, includingPropertiesForKeys: nil
@@ -266,7 +368,7 @@ final class RecordingsLibraryStorage {
                     let names = Set(contents.map(\.lastPathComponent))
                     loaded.removeAll { !names.contains($0.audioFileName) }
                 }
-                return loaded
+                return (loaded, resetInterrupted)
             } catch {
                 Log.app.error("Failed to load recordings metadata: \(error.localizedDescription)")
                 return nil
@@ -274,33 +376,62 @@ final class RecordingsLibraryStorage {
         }.value
         if let result {
             if recordings.isEmpty {
-                recordings = result
+                recordings = result.recordings
             } else {
                 // A save landed while we were loading from disk. Don't clobber the
                 // freshly inserted in-memory entries — merge the disk snapshot in,
                 // keeping in-memory (newer) records on id conflicts.
                 let existingIDs = Set(recordings.map(\.id))
-                recordings.append(contentsOf: result.filter { !existingIDs.contains($0.id) })
+                recordings.append(contentsOf: result.recordings.filter { !existingIDs.contains($0.id) })
+            }
+            if result.resetInterrupted {
+                saveMetadata()
             }
             pruneExpiredRecordings()
         }
     }
 
+    @discardableResult
+    nonisolated static func resetInterruptedProcessingStates(
+        in recordings: inout [Recording]
+    ) -> Bool {
+        var didReset = false
+        for index in recordings.indices where recordings[index].status == .processing {
+            recordings[index].status = .unprocessed
+            recordings[index].errorMessage = nil
+            didReset = true
+        }
+        return didReset
+    }
+
     private func saveMetadata() {
         let snapshot = recordings
         let url = metadataURL
-        Task.detached(priority: .utility) {
-            do {
-                let encoder = JSONEncoder()
-                encoder.dateEncodingStrategy = .iso8601
-                let data = try encoder.encode(snapshot)
-                try data.write(to: url, options: .atomic)
-            } catch {
-                Log.app.error("Failed to save recordings metadata: \(error.localizedDescription)")
-            }
+        metadataWriteQueue.async {
+            _ = Self.writeMetadataSnapshot(snapshot, to: url)
         }
     }
 
+    private func saveMetadataSynchronously() -> Bool {
+        let snapshot = recordings
+        let url = metadataURL
+        return metadataWriteQueue.sync {
+            Self.writeMetadataSnapshot(snapshot, to: url)
+        }
+    }
+
+    private nonisolated static func writeMetadataSnapshot(_ snapshot: [Recording], to url: URL) -> Bool {
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(snapshot)
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch {
+            Log.app.error("Failed to save recordings metadata: \(error.localizedDescription)")
+            return false
+        }
+    }
 
     private func shouldSaveRecording(type: Recording.RecordingType) -> Bool {
         let policy = SettingsStorage.shared.historyRetentionPolicy(for: type)
@@ -352,7 +483,13 @@ final class RecordingsLibraryStorage {
                 chapters: recording.chapters,
                 sourceDevice: recording.sourceDevice,
                 translationTargetLanguageCode: recording.translationTargetLanguageCode,
-                recoverySource: recording.recoverySource
+                recoverySource: recording.recoverySource,
+                sourceFileName: recording.sourceFileName,
+                sourceFileSizeBytes: recording.sourceFileSizeBytes,
+                remoteSource: recording.remoteSource,
+                sourceCaptionArtifacts: recording.sourceCaptionArtifacts,
+                generatedTranscriptProvenance: recording.generatedTranscriptProvenance,
+                transcriptSegments: recording.transcriptSegments
             )
             saveMetadata()
 
