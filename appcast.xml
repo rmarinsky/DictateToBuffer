@@ -208,5 +208,17 @@
       length="9161355"
       type="application/octet-stream" />
   </item>
+      <item>
+    <title>Version 1.18.1</title>
+    <pubDate>Mon, 27 Jul 2026 14:48:26 +0000</pubDate>
+    <sparkle:version>98</sparkle:version>
+    <sparkle:shortVersionString>1.18.1</sparkle:shortVersionString>
+    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+    <enclosure
+      url="https://github.com/rmarinsky/Diduny/releases/download/v1.18.1/Diduny-1.18.1.dmg"
+      sparkle:edSignature="5cOHjKzDpk1QrdvLQg8jYyyUS5mHxi8bWoFKWjBqtWriW8elbugqdsdYFxtDYuKqHUMRkpItcD5M2fNVc33iCw=="
+      length="9196010"
+      type="application/octet-stream" />
+  </item>
   </channel>
 </rss>
