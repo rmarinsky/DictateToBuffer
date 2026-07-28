@@ -223,8 +223,8 @@ struct NewTranscriptionBatchSheet: View {
     @State private var urlText = ""
     @State private var selectedRecordingIDs = Set<UUID>()
     @State private var validationError: String?
-    @State private var showURLField = false
     @State private var showRecordingPicker = false
+    @FocusState private var isYouTubeURLInputFocused: Bool
 
     private var canCreate: Bool {
         !files.isEmpty || !urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -243,7 +243,7 @@ struct NewTranscriptionBatchSheet: View {
                     files.append(contentsOf: ImportedMediaPicker.selectFiles() ?? [])
                 }
                 Button("Add YouTube URLs", systemImage: "link") {
-                    showURLField.toggle()
+                    isYouTubeURLInputFocused = true
                 }
                 Button("Add from Recordings", systemImage: "waveform") {
                     showRecordingPicker.toggle()
@@ -251,9 +251,13 @@ struct NewTranscriptionBatchSheet: View {
             }
             .controlSize(.small)
 
-            if showURLField {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("YOUTUBE URLS")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
                 TextEditor(text: $urlText)
                     .font(.body.monospaced())
+                    .focused($isYouTubeURLInputFocused)
                     .frame(height: 64)
                     .padding(6)
                     .overlay {
