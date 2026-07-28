@@ -74,7 +74,24 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         XCTAssertTrue(persisted.markdown(recordings: []).contains("Network unavailable"))
     }
 
-    func test_batchDerivesStatusSearchAndMarkdownFromCurrentRecordings() throws {
+    func test_corruptMetadataIsPreservedAndBlocksWritesInsteadOfCrashing() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TranscriptionBatchStorageTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let metadataURL = directory.appendingPathComponent("transcription_batches.json")
+        let corruptData = Data("not-json".utf8)
+        try corruptData.write(to: metadataURL)
+
+        let store = try TranscriptionBatchStorage(baseDirectory: directory)
+
+        XCTAssertTrue(store.batches.isEmpty)
+        XCTAssertNotNil(store.loadErrorMessage)
+        XCTAssertThrowsError(try store.create(name: "Must not overwrite", recordingIDs: []))
+        XCTAssertEqual(try Data(contentsOf: metadataURL), corruptData)
+    }
+
+    func test_batchDerivesStatusSearchAndMarkdownFromCurrentRecordings() {
         let completed = makeRecording(title: "Quarterly planning", transcript: "Revenue grew")
         let failed = makeRecording(title: "Customer call", status: .failed, transcript: nil)
         let batch = TranscriptionBatch(
@@ -184,7 +201,7 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         let target = try batchStore.create(name: "Target", recordingIDs: [firstID, secondID])
         _ = try batchStore.create(name: "Other", recordingIDs: [secondID])
 
-        recordingStore.deleteRecording(try XCTUnwrap(
+        try recordingStore.deleteRecording(XCTUnwrap(
             recordingStore.recordings.first(where: { $0.id == firstID })
         ))
         XCTAssertTrue(batchStore.batches.allSatisfy { !$0.recordingIDs.contains(firstID) })
@@ -213,6 +230,41 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         let recording = try XCTUnwrap(store.recordings.first(where: { $0.id == id }))
         XCTAssertEqual(recording.title, "Interview")
         XCTAssertEqual(recording.description, "Research notes")
+    }
+
+    func test_audioExtensionOptimizationPreservesDetailsAndTranscriptHistory() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RecordingOptimizationTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let sourceURL = directory.appendingPathComponent("source.wav")
+        try Data("fLaC-audio".utf8).write(to: sourceURL)
+        let batchStore = try TranscriptionBatchStorage(baseDirectory: directory)
+        let store = RecordingsLibraryStorage(baseDirectory: directory, batchStorage: batchStore)
+        let id = try XCTUnwrap(store.saveRecording(
+            audioURL: sourceURL,
+            type: .fileTranscription,
+            duration: 1,
+            transcriptionText: "Original",
+            forceSave: true
+        ))
+        store.updateDetails(id: id, title: "Interview", description: "Research notes")
+        store.completeTranscription(
+            id: id,
+            status: .transcribed,
+            text: "Local revision",
+            segments: nil,
+            kind: .local,
+            provider: "local"
+        )
+
+        _ = await store.optimizeStoredRecordingIfNeeded(id: id)
+
+        let recording = try XCTUnwrap(store.recordings.first(where: { $0.id == id }))
+        XCTAssertEqual(recording.audioFileName, "\(id.uuidString).flac")
+        XCTAssertEqual(recording.title, "Interview")
+        XCTAssertEqual(recording.description, "Research notes")
+        XCTAssertEqual(recording.resolvedTranscriptHistory.map(\.text), ["Original", "Local revision"])
     }
 
     func test_completedTranscriptionsAppendHistoryInsteadOfReplacingIt() throws {
@@ -255,7 +307,7 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         XCTAssertEqual(recording.resolvedTranscriptHistory.map(\.text), [
             "Cloud original",
             "Local revision",
-            "Revisión local",
+            "Revisión local"
         ])
         XCTAssertEqual(recording.resolvedTranscriptHistory.map(\.kind), [.cloud, .local, .translation])
         XCTAssertEqual(recording.resolvedTranscriptHistory[1].modelIdentifier, "whisper-small")
@@ -264,10 +316,10 @@ final class TranscriptionBatchStorageTests: XCTestCase {
     }
 
     func test_batchSearchAndMarkdownIncludeDetailsSourceAndEveryTranscriptVersion() throws {
-        let source = RemoteMediaSourceMetadata(
+        let source = try RemoteMediaSourceMetadata(
             provider: YouTubeRemoteMediaSource.provider,
             mediaID: "dQw4w9WgXcQ",
-            canonicalURL: try XCTUnwrap(URL(string: "https://www.youtube.com/watch?v=dQw4w9WgXcQ")),
+            canonicalURL: XCTUnwrap(URL(string: "https://www.youtube.com/watch?v=dQw4w9WgXcQ")),
             title: "Original YouTube title",
             channelName: "Channel",
             description: "YouTube source notes"
@@ -300,7 +352,7 @@ final class TranscriptionBatchStorageTests: XCTestCase {
                     sourceLanguageCode: "en",
                     targetLanguageCode: "es",
                     text: "Texto actual"
-                ),
+                )
             ]
         )
         let batch = TranscriptionBatch(

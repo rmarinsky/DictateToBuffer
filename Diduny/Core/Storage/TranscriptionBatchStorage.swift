@@ -67,14 +67,14 @@ struct TranscriptionBatch: Codable, Equatable, Identifiable {
                     recording.remoteSource?.description,
                     recording.remoteSource?.canonicalURL.absoluteString,
                     recording.libraryDisplayName,
-                    recording.transcriptionText,
+                    recording.transcriptionText
                 ].compactMap { $0 }.contains {
                     $0.localizedCaseInsensitiveContains(normalized)
                 }
                 || memberIDs.contains(recording.id)
-                    && recording.resolvedTranscriptHistory.contains {
-                        $0.text.localizedCaseInsensitiveContains(normalized)
-                    }
+                && recording.resolvedTranscriptHistory.contains {
+                    $0.text.localizedCaseInsensitiveContains(normalized)
+                }
         } || workItems?.contains {
             $0.displayName.localizedCaseInsensitiveContains(normalized)
                 || ($0.errorMessage?.localizedCaseInsensitiveContains(normalized) ?? false)
@@ -84,10 +84,11 @@ struct TranscriptionBatch: Codable, Equatable, Identifiable {
     func markdown(recordings: [Recording]) -> String {
         let byID = Dictionary(uniqueKeysWithValues: recordings.map { ($0.id, $0) })
         let workItemRecordingIDs = Set((workItems ?? []).compactMap(\.recordingID))
-        let recordingsMarkdown = recordingIDs.filter { !workItemRecordingIDs.contains($0) }.compactMap { id -> String? in
-            guard let recording = byID[id] else { return nil }
-            return recordingMarkdown(recording)
-        }
+        let recordingsMarkdown = recordingIDs.filter { !workItemRecordingIDs.contains($0) }
+            .compactMap { id -> String? in
+                guard let recording = byID[id] else { return nil }
+                return recordingMarkdown(recording)
+            }
         let workItemsMarkdown = (workItems ?? []).compactMap { item -> String? in
             if let recordingID = item.recordingID, let recording = byID[recordingID] {
                 return recordingMarkdown(recording)
@@ -112,7 +113,7 @@ struct TranscriptionBatch: Codable, Equatable, Identifiable {
         var metadata = [
             "Type: \(recording.libraryDisplayName)",
             "Duration: \(duration)",
-            "Date: \(recording.createdAt.formatted(.iso8601))",
+            "Date: \(recording.createdAt.formatted(.iso8601))"
         ]
         if let description = recording.description, !description.isEmpty {
             metadata.append("Description: \(description)")
@@ -147,9 +148,18 @@ struct TranscriptionBatch: Codable, Equatable, Identifiable {
 @Observable
 @MainActor
 final class TranscriptionBatchStorage {
-    enum StorageError: Error {
+    enum StorageError: LocalizedError {
         case batchNotFound
         case membershipClosed
+        case unreadableMetadata
+
+        var errorDescription: String? {
+            switch self {
+            case .batchNotFound: "Batch not found."
+            case .membershipClosed: "Completed batch membership cannot be changed."
+            case .unreadableMetadata: "Batch data could not be loaded, so it was left unchanged."
+            }
+        }
     }
 
     static let shared: TranscriptionBatchStorage = {
@@ -158,12 +168,16 @@ final class TranscriptionBatchStorage {
             in: .userDomainMask
         ).first!
         let bundleID = Bundle.main.bundleIdentifier ?? "Diduny"
-        return try! TranscriptionBatchStorage(
-            baseDirectory: appSupport.appendingPathComponent(bundleID)
-        )
+        let baseDirectory = appSupport.appendingPathComponent(bundleID)
+        do {
+            return try TranscriptionBatchStorage(baseDirectory: baseDirectory)
+        } catch {
+            return TranscriptionBatchStorage(unavailableAt: baseDirectory, error: error)
+        }
     }()
 
     private(set) var batches: [TranscriptionBatch]
+    private(set) var loadErrorMessage: String?
     private let metadataURL: URL
 
     init(baseDirectory: URL) throws {
@@ -172,14 +186,27 @@ final class TranscriptionBatchStorage {
             withIntermediateDirectories: true
         )
         metadataURL = baseDirectory.appendingPathComponent("transcription_batches.json")
+        loadErrorMessage = nil
         guard let data = try? Data(contentsOf: metadataURL) else {
             batches = []
             return
         }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        batches = try decoder.decode([TranscriptionBatch].self, from: data)
+        do {
+            batches = try decoder.decode([TranscriptionBatch].self, from: data)
+        } catch {
+            batches = []
+            loadErrorMessage = "Diduny couldn't load batches. The original data remains at \(metadataURL.path)."
+            return
+        }
         batches.sort { $0.createdAt > $1.createdAt }
+    }
+
+    private init(unavailableAt baseDirectory: URL, error: Error) {
+        metadataURL = baseDirectory.appendingPathComponent("transcription_batches.json")
+        batches = []
+        loadErrorMessage = "Diduny couldn't access batch storage: \(error.localizedDescription)"
     }
 
     @discardableResult
@@ -305,6 +332,7 @@ final class TranscriptionBatchStorage {
     }
 
     private func save() throws {
+        guard loadErrorMessage == nil else { throw StorageError.unreadableMetadata }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(batches).write(to: metadataURL, options: .atomic)

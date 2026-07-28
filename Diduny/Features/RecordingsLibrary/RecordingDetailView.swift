@@ -130,7 +130,9 @@ struct RecordingDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This permanently deletes the recording, stored media, transcript history, translations, and every batch reference.")
+            Text(
+                "This permanently deletes the recording, stored media, transcript history, translations, and every batch reference."
+            )
         }
     }
 
@@ -430,7 +432,7 @@ struct RecordingDetailView: View {
                     ForEach(favoriteLanguages) { lang in
                         Button(lang.name) { translate(to: lang.code) }
                     }
-                    if !favoriteLanguages.isEmpty && !otherLanguages.isEmpty { Divider() }
+                    if !favoriteLanguages.isEmpty, !otherLanguages.isEmpty { Divider() }
                     ForEach(otherLanguages) { lang in
                         Button(lang.name) { translate(to: lang.code) }
                     }

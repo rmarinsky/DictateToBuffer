@@ -537,7 +537,10 @@ final class RecordingsLibraryStorage {
                 remoteSource: recording.remoteSource,
                 sourceCaptionArtifacts: recording.sourceCaptionArtifacts,
                 generatedTranscriptProvenance: recording.generatedTranscriptProvenance,
-                transcriptSegments: recording.transcriptSegments
+                transcriptSegments: recording.transcriptSegments,
+                title: recording.title,
+                description: recording.description,
+                transcriptHistory: recording.transcriptHistory
             )
             saveMetadata()
 

@@ -29,6 +29,7 @@ struct RecordingsLibraryView: View {
     @State private var isSelectionMode = false
     @State private var selectedRecordingIds = Set<UUID>()
     @State private var recordingToRetranscribe: Recording?
+    @State private var batchLoadErrorMessage: String?
 
     enum RecordingTypeFilter: String, CaseIterable {
         case all = "All"
@@ -39,7 +40,9 @@ struct RecordingsLibraryView: View {
         case youtube = "YouTube"
         case batches = "Batches"
 
-        var showsBatches: Bool { self == .batches }
+        var showsBatches: Bool {
+            self == .batches
+        }
 
         func matches(_ recording: Recording) -> Bool {
             switch self {
@@ -139,6 +142,7 @@ struct RecordingsLibraryView: View {
             NewTranscriptionBatchSheet(recordings: storage.recordings)
         }
         .onAppear {
+            batchLoadErrorMessage = batchStorage.loadErrorMessage
             openRequestedRecordingIfAvailable()
         }
         .onChange(of: MainWindowController.shared.requestedRecordingID) {
@@ -191,6 +195,17 @@ struct RecordingsLibraryView: View {
             }
         } message: {
             Text("This adds a new transcript version. Earlier transcripts and source captions stay available.")
+        }
+        .alert(
+            "Batches Couldn't Be Loaded",
+            isPresented: Binding(
+                get: { batchLoadErrorMessage != nil },
+                set: { if !$0 { batchLoadErrorMessage = nil } }
+            )
+        ) {
+            Button("OK") { batchLoadErrorMessage = nil }
+        } message: {
+            Text(batchLoadErrorMessage ?? "Unknown error")
         }
     }
 
@@ -288,7 +303,7 @@ struct RecordingsLibraryView: View {
                 Spacer()
             }
 
-            if isSelectionMode && !filter.showsBatches {
+            if isSelectionMode, !filter.showsBatches {
                 bulkSelectionBar
             }
         }

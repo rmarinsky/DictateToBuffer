@@ -10,6 +10,7 @@ struct TranscriptionBatchInspectorView: View {
     @State private var name: String
     @State private var description: String
     @State private var showDeleteConfirmation = false
+    @State private var saveErrorMessage: String?
 
     init(
         batch: TranscriptionBatch,
@@ -63,11 +64,15 @@ struct TranscriptionBatchInspectorView: View {
                             .foregroundStyle(.secondary)
                             Spacer()
                             Button("Save Details") {
-                                try? batches.update(
-                                    batchID: currentBatch.id,
-                                    name: name,
-                                    description: description
-                                )
+                                do {
+                                    try batches.update(
+                                        batchID: currentBatch.id,
+                                        name: name,
+                                        description: description
+                                    )
+                                } catch {
+                                    saveErrorMessage = error.localizedDescription
+                                }
                             }
                             .controlSize(.small)
                         }
@@ -159,6 +164,17 @@ struct TranscriptionBatchInspectorView: View {
                 "This permanently deletes all \(currentBatch.recordingIDs.count) linked recordings and removes shared references from every other batch."
             )
         }
+        .alert(
+            "Couldn't Save Batch",
+            isPresented: Binding(
+                get: { saveErrorMessage != nil },
+                set: { if !$0 { saveErrorMessage = nil } }
+            )
+        ) {
+            Button("OK") { saveErrorMessage = nil }
+        } message: {
+            Text(saveErrorMessage ?? "Unknown error")
+        }
     }
 }
 
@@ -217,7 +233,7 @@ struct NewTranscriptionBatchSheet: View {
 
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        if files.isEmpty && urlLines.isEmpty && selectedRecordingIDs.isEmpty && !showRecordingPicker {
+                        if files.isEmpty, urlLines.isEmpty, selectedRecordingIDs.isEmpty, !showRecordingPicker {
                             Text("Add files, YouTube URLs, or existing recordings.")
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .center)
@@ -248,18 +264,18 @@ struct NewTranscriptionBatchSheet: View {
                                 .padding(.horizontal, 10)
                                 .padding(.bottom, 6)
                             ForEach(recordings.filter { !selectedRecordingIDs.contains($0.id) }) { recording in
-                            Toggle(isOn: Binding(
-                                get: { selectedRecordingIDs.contains(recording.id) },
-                                set: { selected in
-                                    if selected { selectedRecordingIDs.insert(recording.id) }
-                                    else { selectedRecordingIDs.remove(recording.id) }
+                                Toggle(isOn: Binding(
+                                    get: { selectedRecordingIDs.contains(recording.id) },
+                                    set: { selected in
+                                        if selected { selectedRecordingIDs.insert(recording.id) }
+                                        else { selectedRecordingIDs.remove(recording.id) }
+                                    }
+                                )) {
+                                    Text(recording.displayTitle).lineLimit(1)
                                 }
-                            )) {
-                                Text(recording.displayTitle).lineLimit(1)
-                            }
-                            .toggleStyle(.checkbox)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
+                                .toggleStyle(.checkbox)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
                             }
                         }
                     }

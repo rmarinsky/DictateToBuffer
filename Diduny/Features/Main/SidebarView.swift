@@ -117,9 +117,12 @@ struct SidebarView: View {
             }
             .focusable(false)
             .accessibilityLabel(Text(section.label))
-            .accessibilityValue(Text(section.isBetaDisabled ? "Beta, unavailable" : selectedSection == section ? "Selected" : ""))
+            .accessibilityValue(Text(section
+                    .isBetaDisabled ? "Beta, unavailable" : selectedSection == section ? "Selected" : ""))
             .accessibilityIdentifier("Sidebar \(section.label)")
-            .help(section.isBetaDisabled ? "Meetings is in beta. Meeting recordings are available in Recordings." : section.label)
+            .help(section
+                .isBetaDisabled ? "Meetings is in beta. Meeting recordings are available in Recordings." : section
+                .label)
     }
 }
 

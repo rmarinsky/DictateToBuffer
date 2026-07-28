@@ -195,7 +195,7 @@ final class RecordingModelMigrationTests: XCTestCase {
                     startMilliseconds: 3_661_000,
                     endMilliseconds: 3_662_000,
                     text: "Later phrase."
-                ),
+                )
             ]
         )
 
