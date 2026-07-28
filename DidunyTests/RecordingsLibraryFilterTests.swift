@@ -28,6 +28,31 @@ final class RecordingsLibraryFilterTests: XCTestCase {
         XCTAssertTrue(RecordingsLibraryView.RecordingTypeFilter.hasTranslation.matches(recording))
     }
 
+    func test_batchesFilterShowsBatchesInsteadOfIndividualRecordings() {
+        let recording = makeRecording(remoteSource: nil)
+
+        XCTAssertTrue(RecordingsLibraryView.RecordingTypeFilter.batches.showsBatches)
+        XCTAssertFalse(RecordingsLibraryView.RecordingTypeFilter.batches.matches(recording))
+    }
+
+    func test_recordingOpenedFromBatchCanNavigateBackButDirectRecordingCannot() {
+        let batchID = UUID()
+        let recordingID = UUID()
+        let nested = RecordingsInspectorSelection.recording(
+            recordingID,
+            parentBatchID: batchID
+        )
+        let direct = RecordingsInspectorSelection.recording(
+            recordingID,
+            parentBatchID: nil
+        )
+
+        XCTAssertEqual(nested.parentBatchID, batchID)
+        XCTAssertEqual(nested.backDestination, .batch(batchID))
+        XCTAssertNil(direct.parentBatchID)
+        XCTAssertNil(direct.backDestination)
+    }
+
     private func makeRecording(remoteSource: RemoteMediaSourceMetadata?) -> Recording {
         Recording(
             id: UUID(),

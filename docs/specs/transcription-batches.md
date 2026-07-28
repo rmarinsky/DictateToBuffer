@@ -8,7 +8,7 @@ Let a user create a durable batch from new files, YouTube URLs, and existing Lib
 
 ## Scope
 
-- Keep Batches in the existing Library sidebar design.
+- Show Batches as a filter in Recordings; do not add a sidebar destination.
 - Create a batch when the user chooses Create and Transcribe.
 - Generate `Batch — <date>, <time>` when no name is supplied.
 - Allow the name and optional description to be edited later.
@@ -18,7 +18,10 @@ Let a user create a durable batch from new files, YouTube URLs, and existing Lib
 - Treat translation as an artifact and `Has Translation` as a Library filter.
 - Search batches by name, description, member title, and member transcript.
 - Sort batches by immutable creation date, newest first.
-- Copy all member transcripts as Markdown with a heading and source type for each member. Include a status placeholder when a transcript is unavailable.
+- Open recordings and batches in the same right inspector, with contextual `Back to Batch` navigation.
+- Persist editable titles and descriptions for recordings and batches.
+- Retain every cloud, local, and translated transcript as history instead of replacing earlier output.
+- Copy all history as Markdown with recording metadata and a status placeholder when a transcript is unavailable.
 
 Projects, folders, and Calendar integration are outside this scope.
 
@@ -45,3 +48,5 @@ Projects, folders, and Calendar integration are outside this scope.
 4. A completed batch remains available with editable name and description, searchable members, creation date, and computed status.
 5. Copy Markdown includes every member in batch order and clearly labels unavailable transcripts.
 6. Destructive deletion requires confirmation and leaves no dangling batch references.
+7. Batch creation uses one compact selected-sources list for files, YouTube URLs, and existing recordings.
+8. A recording inspector supports playback, cloud/local transcription, translation, per-version copy, source metadata, and deletion.

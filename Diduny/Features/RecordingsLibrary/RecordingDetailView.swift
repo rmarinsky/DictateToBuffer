@@ -3,9 +3,10 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct RecordingDetailView: View {
-    @Environment(\.dismiss) private var dismiss
-
     let recording: Recording
+    let parentBatchName: String?
+    let onBack: (() -> Void)?
+    let onClose: () -> Void
 
     @State private var playbackService = AudioPlaybackService.shared
     @State private var queueService = RecordingQueueService.shared
@@ -15,6 +16,23 @@ struct RecordingDetailView: View {
     @State private var showRetranscriptionConfirmation = false
     @State private var requestedRetranscriptionProvider: TranscriptionProvider = .cloud
     @State private var requestedWhisperModel: String?
+    @State private var title: String
+    @State private var description: String
+    @State private var showDeleteConfirmation = false
+
+    init(
+        recording: Recording,
+        parentBatchName: String? = nil,
+        onBack: (() -> Void)? = nil,
+        onClose: @escaping () -> Void = {}
+    ) {
+        self.recording = recording
+        self.parentBatchName = parentBatchName
+        self.onBack = onBack
+        self.onClose = onClose
+        _title = State(initialValue: recording.title ?? recording.displayTitle)
+        _description = State(initialValue: recording.description ?? recording.remoteSource?.description ?? "")
+    }
 
     private var currentRecording: Recording {
         storage.recordings.first(where: { $0.id == recording.id }) ?? recording
@@ -32,6 +50,10 @@ struct RecordingDetailView: View {
     private var otherLanguages: [SupportedLanguage] {
         let favCodes = Set(SettingsStorage.shared.favoriteLanguages)
         return SupportedLanguage.allLanguages.filter { !favCodes.contains($0.code) }
+    }
+
+    private var translationPair: TranslationLanguagePair {
+        SettingsStorage.shared.resolveTranslationLanguagePair()
     }
 
     private var queueStatusText: String? {
@@ -65,6 +87,11 @@ struct RecordingDetailView: View {
 
             Divider()
 
+            detailsSection
+                .padding(12)
+
+            Divider()
+
             // Playback
             playbackSection
                 .padding(12)
@@ -81,17 +108,29 @@ struct RecordingDetailView: View {
                 .padding(12)
         }
         .onExitCommand {
-            dismiss()
+            onClose()
         }
         .alert("Transcribe Again?", isPresented: $showRetranscriptionConfirmation) {
-            Button("Replace Generated Transcript", role: .destructive) {
+            Button("Transcribe Again") {
                 enqueueRequestedRetranscription()
             }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "This replaces the generated transcript in this recording. Source captions and YouTube identity stay unchanged."
+                "This adds a new transcript version. Earlier transcripts, source captions, and YouTube identity stay available."
             )
+        }
+        .alert("Delete Recording and Files?", isPresented: $showDeleteConfirmation) {
+            Button("Delete Recording", role: .destructive) {
+                if playbackService.playingRecordingId == currentRecording.id {
+                    playbackService.stop()
+                }
+                storage.deleteRecording(currentRecording)
+                onClose()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes the recording, stored media, transcript history, translations, and every batch reference.")
         }
     }
 
@@ -99,12 +138,20 @@ struct RecordingDetailView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
+            if let onBack {
+                Button(action: onBack) {
+                    Label("Back to \(parentBatchName ?? "Batch")", systemImage: "chevron.left")
+                }
+                .buttonStyle(.plain)
+                .help("Back to \(parentBatchName ?? "Batch")")
+            }
+
             Image(systemName: currentRecording.libraryIconName)
                 .font(.title2)
                 .foregroundColor(iconColor)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(currentRecording.libraryDisplayName)
+                Text(currentRecording.displayTitle)
                     .font(.headline)
 
                 HStack(spacing: 8) {
@@ -143,11 +190,45 @@ struct RecordingDetailView: View {
                     )
 
                 Button("Close") {
-                    dismiss()
+                    onClose()
                 }
                 .keyboardShortcut(.cancelAction)
                 .controlSize(.small)
                 .accessibilityIdentifier("Close recording detail")
+            }
+        }
+    }
+
+    private var detailsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("DETAILS")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            TextField("Recording title", text: $title)
+            TextField("Description", text: $description, axis: .vertical)
+                .lineLimit(2 ... 4)
+            if let remoteSource = currentRecording.remoteSource {
+                HStack(spacing: 6) {
+                    Link(destination: remoteSource.canonicalURL) {
+                        Label("Open YouTube Source", systemImage: "link")
+                    }
+                    .lineLimit(1)
+                    if let channel = remoteSource.channelName {
+                        Text("· \(channel)").foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                .font(.caption)
+            }
+            HStack {
+                Spacer()
+                Button("Save Details") {
+                    storage.updateDetails(
+                        id: currentRecording.id,
+                        title: title,
+                        description: description
+                    )
+                }
+                .controlSize(.small)
             }
         }
     }
@@ -167,38 +248,33 @@ struct RecordingDetailView: View {
     private var transcriptionSection: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Group {
-                    if currentRecording.status == .processing {
-                        HStack {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text(queueStatusText ?? "Processing...")
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if let text = currentRecording.displayTranscriptText {
-                        VStack(alignment: .leading, spacing: 8) {
-                            if currentRecording.isYouTubeVideo,
-                               currentRecording.transcriptSegments?.isEmpty ?? true
-                            {
-                                Text("Timestamps were not stored for this transcript. Transcribe Again to add them.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            Text(text)
-                                .textSelection(.enabled)
-                                .font(.body)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    } else if currentRecording.status == .failed {
-                        Text(currentRecording.errorMessage ?? "Transcription failed")
-                            .foregroundColor(.red)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        Text("No transcription yet")
-                            .foregroundColor(.secondary)
-                            .italic()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Text("TRANSCRIPT HISTORY")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                if currentRecording.status == .processing {
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Text(queueStatusText ?? "Processing...").foregroundStyle(.secondary)
+                    }
+                } else if currentRecording.status == .failed {
+                    Label(
+                        currentRecording.errorMessage ?? "Transcription failed",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .foregroundStyle(.red)
+                }
+
+                let versions = currentRecording.resolvedTranscriptHistory.sorted {
+                    $0.createdAt > $1.createdAt
+                }
+                if versions.isEmpty {
+                    Text("No transcription yet")
+                        .foregroundStyle(.secondary)
+                        .italic()
+                } else {
+                    ForEach(versions) { version in
+                        transcriptCard(version)
                     }
                 }
 
@@ -247,6 +323,51 @@ struct RecordingDetailView: View {
         .frame(maxHeight: .infinity)
     }
 
+    private func transcriptCard(_ version: TranscriptVersion) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(transcriptVersionTitle(version)).font(.headline)
+                    Text(version.createdAt.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    ClipboardService.shared.copy(text: version.text, behavior: .raw)
+                } label: {
+                    Label("Copy Transcript", systemImage: "doc.on.doc")
+                }
+                .controlSize(.small)
+            }
+            Text(transcriptVersionText(version))
+                .textSelection(.enabled)
+                .font(.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .background(Color(.textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func transcriptVersionTitle(_ version: TranscriptVersion) -> String {
+        switch version.kind {
+        case .cloud:
+            return "Cloud Transcript"
+        case .local:
+            return version.modelIdentifier.map { "Local Transcript · \($0)" } ?? "Local Transcript"
+        case .translation:
+            if let source = version.sourceLanguageCode, let target = version.targetLanguageCode {
+                return "Translation · \(source.uppercased()) → \(target.uppercased())"
+            }
+            return "Translation"
+        }
+    }
+
+    private func transcriptVersionText(_ version: TranscriptVersion) -> String {
+        guard let segments = version.segments, !segments.isEmpty else { return version.text }
+        return segments.map { "[\($0.timestampLabel)] \($0.text)" }.joined(separator: "\n\n")
+    }
+
     // MARK: - Actions
 
     private func exportCaption(_ artifact: TranscriptArtifact) {
@@ -268,20 +389,10 @@ struct RecordingDetailView: View {
             // Local (Whisper) section
             localActionsSection
 
-            // Copy text button
-            if let text = currentRecording.displayTranscriptText {
-                Divider()
-                HStack {
-                    Spacer()
-                    Button("Copy Text") {
-                        ClipboardService.shared.copy(
-                            text: text,
-                            behavior: currentRecording.remoteSource == nil
-                                ? currentRecording.type.clipboardCopyBehavior
-                                : .raw
-                        )
-                    }
-                }
+            Divider()
+
+            Button("Delete Recording", role: .destructive) {
+                showDeleteConfirmation = true
             }
         }
     }
@@ -295,7 +406,11 @@ struct RecordingDetailView: View {
                 .foregroundColor(Color("BrandAccentDeep"))
 
             VStack(alignment: .leading, spacing: 6) {
-                Button(currentRecording.remoteSource == nil ? "Transcribe" : "Transcribe Again…") {
+                Button(
+                    currentRecording.resolvedTranscriptHistory.isEmpty
+                        ? "Transcribe in Cloud"
+                        : "Transcribe Again in Cloud…"
+                ) {
                     requestRetranscription(provider: .cloud)
                 }
                 .disabled(currentRecording.status == .processing)
@@ -311,48 +426,33 @@ struct RecordingDetailView: View {
                     .disabled(currentRecording.status == .processing)
                 }
 
-                HStack(spacing: 6) {
-                    Text("Translate:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 4) {
-                            ForEach(favoriteLanguages) { lang in
-                                Button(lang.code.uppercased()) {
-                                    queueService.enqueue(
-                                        [currentRecording.id],
-                                        action: .translate,
-                                        providerOverride: .cloud,
-                                        targetLanguage: lang.code
-                                    )
-                                }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                                .disabled(currentRecording.status == .processing)
-                                .help(lang.name)
-                            }
-
-                            if !otherLanguages.isEmpty {
-                                Menu("...") {
-                                    ForEach(otherLanguages) { lang in
-                                        Button(lang.name) {
-                                            queueService.enqueue(
-                                                [currentRecording.id],
-                                                action: .translate,
-                                                providerOverride: .cloud,
-                                                targetLanguage: lang.code
-                                            )
-                                        }
-                                    }
-                                }
-                                .menuStyle(.borderlessButton)
-                                .controlSize(.small)
-                                .disabled(currentRecording.status == .processing)
-                            }
-                        }
+                Menu {
+                    ForEach(favoriteLanguages) { lang in
+                        Button(lang.name) { translate(to: lang.code) }
                     }
+                    if !favoriteLanguages.isEmpty && !otherLanguages.isEmpty { Divider() }
+                    ForEach(otherLanguages) { lang in
+                        Button(lang.name) { translate(to: lang.code) }
+                    }
+                } label: {
+                    HStack {
+                        Text(
+                            "Translate: \(translationPair.languageA.uppercased()) → \(currentRecording.translationTargetLanguageCode?.uppercased() ?? "Choose Language")"
+                        )
+                        Spacer()
+                        Image(systemName: "chevron.down")
+                            .font(.caption2)
+                    }
+                    .frame(maxWidth: .infinity)
                 }
+                .menuStyle(.borderlessButton)
+                .disabled(currentRecording.status == .processing)
+
+                Text(
+                    "Translation direction: \(translationPair.languageA.uppercased()) → \(currentRecording.translationTargetLanguageCode?.uppercased() ?? "choose a language")"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         }
     }
@@ -396,6 +496,15 @@ struct RecordingDetailView: View {
     }
 
     // MARK: - Helpers
+
+    private func translate(to languageCode: String) {
+        queueService.enqueue(
+            [currentRecording.id],
+            action: .translate,
+            providerOverride: .cloud,
+            targetLanguage: languageCode
+        )
+    }
 
     private func requestRetranscription(
         provider: TranscriptionProvider,
