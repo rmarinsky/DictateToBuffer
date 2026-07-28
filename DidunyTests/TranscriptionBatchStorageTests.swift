@@ -494,6 +494,61 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         ))
     }
 
+    @MainActor
+    func test_immediateSaveAfterStartupPreservesExistingRecordingMetadata() async throws {
+        let originalPolicy = SettingsStorage.shared.dictationTranslationHistoryRetentionPolicy
+        SettingsStorage.shared.dictationTranslationHistoryRetentionPolicy = .forever
+        defer {
+            SettingsStorage.shared.dictationTranslationHistoryRetentionPolicy = originalPolicy
+        }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RecordingStartupSaveTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recordingsDirectory = directory.appendingPathComponent("Recordings")
+        try FileManager.default.createDirectory(
+            at: recordingsDirectory,
+            withIntermediateDirectories: true
+        )
+        let existing = Recording(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            type: .fileTranscription,
+            audioFileName: "existing.wav",
+            durationSeconds: 1,
+            fileSizeBytes: 8,
+            status: .transcribed,
+            transcriptionText: "Existing",
+            sourceDevice: nil
+        )
+        try Data("existing".utf8).write(
+            to: recordingsDirectory.appendingPathComponent(existing.audioFileName)
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode([existing]).write(
+            to: directory.appendingPathComponent("recordings_metadata.json"),
+            options: .atomic
+        )
+        let batchStore = try TranscriptionBatchStorage(baseDirectory: directory)
+
+        let store = RecordingsLibraryStorage(baseDirectory: directory, batchStorage: batchStore)
+        let newID = try XCTUnwrap(store.saveRecording(
+            audioData: Data("new".utf8),
+            type: .fileTranscription,
+            duration: 1,
+            transcriptionText: "New",
+            forceSave: true
+        ))
+        await Task.yield()
+        try await Task.sleep(for: .milliseconds(100))
+
+        let data = try Data(contentsOf: directory.appendingPathComponent("recordings_metadata.json"))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let persisted = try decoder.decode([Recording].self, from: data)
+        XCTAssertEqual(Set(persisted.map(\.id)), Set([existing.id, newID]))
+    }
+
     func test_startupRestoresRecordingMetadataFromDeletionRecoveryJournal() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("RecordingDeleteRecoveryTests-\(UUID())")

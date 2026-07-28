@@ -44,9 +44,7 @@ final class RecordingsLibraryStorage {
         metadataURL = appDir.appendingPathComponent("recordings_metadata.json")
         deletionRecoveryURL = appDir.appendingPathComponent("recordings_delete_recovery.json")
 
-        Task { @MainActor [weak self] in
-            await self?.loadAndPruneAsync()
-        }
+        loadAndPrune()
     }
 
     // MARK: - Save (from Data — voice/translation)
@@ -483,13 +481,11 @@ final class RecordingsLibraryStorage {
 
     // MARK: - Persistence
 
-    private func loadAndPruneAsync() async {
+    private func loadAndPrune() {
         let url = metadataURL
         let recoveryURL = deletionRecoveryURL
         let recDir = recordingsDir
-        let result = await Task.detached(
-            priority: .utility
-        ) { () -> (recordings: [Recording], resetInterrupted: Bool)? in
+        let result: (recordings: [Recording], resetInterrupted: Bool)? = {
             let data: Data
             if let recoveryData = try? Data(contentsOf: recoveryURL),
                let recovery = try? Self.decodeDeletionRecovery(recoveryData)
@@ -540,17 +536,9 @@ final class RecordingsLibraryStorage {
                 Log.app.error("Failed to load recordings metadata: \(error.localizedDescription)")
                 return nil
             }
-        }.value
+        }()
         if let result {
-            if recordings.isEmpty {
-                recordings = result.recordings
-            } else {
-                // A save landed while we were loading from disk. Don't clobber the
-                // freshly inserted in-memory entries — merge the disk snapshot in,
-                // keeping in-memory (newer) records on id conflicts.
-                let existingIDs = Set(recordings.map(\.id))
-                recordings.append(contentsOf: result.recordings.filter { !existingIDs.contains($0.id) })
-            }
+            recordings = result.recordings
             if result.resetInterrupted {
                 saveMetadata()
             }
