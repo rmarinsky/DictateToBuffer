@@ -1,5 +1,15 @@
 import Foundation
 
+struct RecordingDeletionStagedFile: Codable, Equatable {
+    let originalPath: String
+    let stagedPath: String
+}
+
+struct RecordingDeletionRecovery: Codable, Equatable {
+    let recordings: [Recording]
+    let stagedFiles: [RecordingDeletionStagedFile]
+}
+
 @Observable
 @MainActor
 final class RecordingsLibraryStorage {
@@ -234,16 +244,32 @@ final class RecordingsLibraryStorage {
     ) -> Bool {
         let previousRecordings = recordings
         let targets = recordings.filter { ids.contains($0.id) }
-        var stagedFiles: [(original: URL, staged: URL)] = []
+        let stagedFiles = targets.compactMap { recording -> RecordingDeletionStagedFile? in
+            let original = recordingsDir.appendingPathComponent(recording.audioFileName)
+            guard fileManager.fileExists(atPath: original.path) else { return nil }
+            return RecordingDeletionStagedFile(
+                originalPath: original.path,
+                stagedPath: recordingsDir.appendingPathComponent(
+                    ".\(recording.audioFileName).deleting-\(UUID().uuidString)"
+                ).path
+            )
+        }
+        let recovery = RecordingDeletionRecovery(
+            recordings: previousRecordings,
+            stagedFiles: stagedFiles
+        )
 
-        guard Self.writeMetadataSnapshot(previousRecordings, to: deletionRecoveryURL) else {
+        guard Self.writeDeletionRecovery(recovery, to: deletionRecoveryURL) else {
             return false
         }
 
         func restoreStagedFiles() {
-            for file in stagedFiles.reversed() where fileManager.fileExists(atPath: file.staged.path) {
+            for file in stagedFiles.reversed() where fileManager.fileExists(atPath: file.stagedPath) {
                 do {
-                    try fileManager.moveItem(at: file.staged, to: file.original)
+                    try fileManager.moveItem(
+                        at: URL(fileURLWithPath: file.stagedPath),
+                        to: URL(fileURLWithPath: file.originalPath)
+                    )
                 } catch {
                     Log.app.error("Failed to restore staged recording file: \(error.localizedDescription)")
                 }
@@ -251,14 +277,11 @@ final class RecordingsLibraryStorage {
         }
 
         do {
-            for recording in targets {
-                let original = recordingsDir.appendingPathComponent(recording.audioFileName)
-                guard fileManager.fileExists(atPath: original.path) else { continue }
-                let staged = recordingsDir.appendingPathComponent(
-                    ".\(recording.audioFileName).deleting-\(UUID().uuidString)"
+            for file in stagedFiles {
+                try fileManager.moveItem(
+                    at: URL(fileURLWithPath: file.originalPath),
+                    to: URL(fileURLWithPath: file.stagedPath)
                 )
-                try fileManager.moveItem(at: original, to: staged)
-                stagedFiles.append((original, staged))
             }
         } catch {
             restoreStagedFiles()
@@ -290,7 +313,7 @@ final class RecordingsLibraryStorage {
 
         for file in stagedFiles {
             do {
-                try fileManager.removeItem(at: file.staged)
+                try fileManager.removeItem(at: URL(fileURLWithPath: file.stagedPath))
             } catch {
                 Log.app.warning("Failed to clean staged recording file: \(error.localizedDescription)")
             }
@@ -468,10 +491,30 @@ final class RecordingsLibraryStorage {
             priority: .utility
         ) { () -> (recordings: [Recording], resetInterrupted: Bool)? in
             let data: Data
-            if let recoveryData = try? Data(contentsOf: recoveryURL) {
-                data = recoveryData
+            if let recoveryData = try? Data(contentsOf: recoveryURL),
+               let recovery = try? Self.decodeDeletionRecovery(recoveryData)
+            {
+                for file in recovery.stagedFiles {
+                    let original = URL(fileURLWithPath: file.originalPath)
+                    let staged = URL(fileURLWithPath: file.stagedPath)
+                    if FileManager.default.fileExists(atPath: staged.path),
+                       !FileManager.default.fileExists(atPath: original.path)
+                    {
+                        try? FileManager.default.moveItem(at: staged, to: original)
+                    }
+                }
+                guard recovery.stagedFiles.allSatisfy({
+                    FileManager.default.fileExists(atPath: $0.originalPath)
+                }) else {
+                    Log.app.error("Recording deletion recovery still has missing media files")
+                    return nil
+                }
+                let encoder = JSONEncoder()
+                encoder.dateEncodingStrategy = .iso8601
+                guard let restoredData = try? encoder.encode(recovery.recordings) else { return nil }
+                data = restoredData
                 do {
-                    try recoveryData.write(to: url, options: .atomic)
+                    try restoredData.write(to: url, options: .atomic)
                     try FileManager.default.removeItem(at: recoveryURL)
                 } catch {
                     Log.app.error("Failed to restore recording deletion recovery: \(error.localizedDescription)")
@@ -555,6 +598,27 @@ final class RecordingsLibraryStorage {
             Log.app.error("Failed to save recordings metadata: \(error.localizedDescription)")
             return false
         }
+    }
+
+    private nonisolated static func writeDeletionRecovery(
+        _ recovery: RecordingDeletionRecovery,
+        to url: URL
+    ) -> Bool {
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            try encoder.encode(recovery).write(to: url, options: .atomic)
+            return true
+        } catch {
+            Log.app.error("Failed to save recording deletion recovery: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private nonisolated static func decodeDeletionRecovery(_ data: Data) throws -> RecordingDeletionRecovery {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(RecordingDeletionRecovery.self, from: data)
     }
 
     private func shouldSaveRecording(type: Recording.RecordingType) -> Bool {

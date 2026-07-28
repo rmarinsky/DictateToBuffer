@@ -450,13 +450,20 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let recordingID = UUID()
         let batchStore = try TranscriptionBatchStorage(baseDirectory: directory)
-        _ = try batchStore.create(name: "Protected", recordingIDs: [recordingID])
+        let checkpointURL = directory.appendingPathComponent("checkpoint.m4a")
+        try Data("checkpoint".utf8).write(to: checkpointURL)
+        var item = BatchTranscriptionItem(sourceURL: URL(fileURLWithPath: "/tmp/source.m4a"))
+        item.recordingID = recordingID
+        item.downloadedAudioURL = checkpointURL
+        let batch = try batchStore.create(name: "Protected", recordingIDs: [recordingID])
+        try batchStore.replaceWorkItems([item], in: batch.id)
         let metadataURL = directory.appendingPathComponent("transcription_batches.json")
         try FileManager.default.removeItem(at: metadataURL)
         try FileManager.default.createDirectory(at: metadataURL, withIntermediateDirectories: true)
 
         XCTAssertThrowsError(try batchStore.removeRecordingReferences(Set([recordingID])))
         XCTAssertEqual(batchStore.batches.first?.recordingIDs, [recordingID])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: checkpointURL.path))
     }
 
     func test_failedRecordingMetadataWriteKeepsRecordingFileAndBatchReference() throws {
@@ -505,12 +512,18 @@ final class TranscriptionBatchStorageTests: XCTestCase {
             sourceDevice: nil,
             title: "Recovered"
         )
-        try Data("audio".utf8).write(
-            to: recordingsDirectory.appendingPathComponent(recording.audioFileName)
-        )
+        let originalURL = recordingsDirectory.appendingPathComponent(recording.audioFileName)
+        let stagedURL = recordingsDirectory.appendingPathComponent(".recovered.deleting-test")
+        try Data("audio".utf8).write(to: stagedURL)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        try encoder.encode([recording]).write(
+        try encoder.encode(RecordingDeletionRecovery(
+            recordings: [recording],
+            stagedFiles: [RecordingDeletionStagedFile(
+                originalPath: originalURL.path,
+                stagedPath: stagedURL.path
+            )]
+        )).write(
             to: directory.appendingPathComponent("recordings_delete_recovery.json")
         )
         try Data("[]".utf8).write(to: directory.appendingPathComponent("recordings_metadata.json"))
@@ -522,6 +535,7 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         }
 
         XCTAssertEqual(store.recordings.map(\.id), [recording.id])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: originalURL.path))
         XCTAssertFalse(FileManager.default.fileExists(
             atPath: directory.appendingPathComponent("recordings_delete_recovery.json").path
         ))

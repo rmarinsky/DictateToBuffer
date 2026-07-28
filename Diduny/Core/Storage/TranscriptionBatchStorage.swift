@@ -309,13 +309,20 @@ final class TranscriptionBatchStorage {
         let removedItems = batches.flatMap { batch in
             (batch.workItems ?? []).filter { $0.recordingID.map(ids.contains) == true }
         }
-        try removedItems.forEach(removeDownloadedArtifact)
+        try removedItems.forEach(validateDownloadedArtifact)
         try mutateAndSave {
             for index in batches.indices {
                 batches[index].recordingIDs.removeAll(where: ids.contains)
                 batches[index].workItems?.removeAll { item in
                     item.recordingID.map(ids.contains) == true
                 }
+            }
+        }
+        for item in removedItems {
+            do {
+                try removeDownloadedArtifact(item)
+            } catch {
+                Log.app.error("Failed to clean downloaded batch artifact: \(error.localizedDescription)")
             }
         }
     }
@@ -331,7 +338,7 @@ final class TranscriptionBatchStorage {
                 candidate.id == batchID || item.recordingID.map(affected.contains) == true
             }
         }
-        try removedItems.forEach(removeDownloadedArtifact)
+        try removedItems.forEach(validateDownloadedArtifact)
         try mutateAndSave {
             batches.removeAll { $0.id == batchID }
             for index in batches.indices {
@@ -341,16 +348,29 @@ final class TranscriptionBatchStorage {
                 }
             }
         }
+        for item in removedItems {
+            do {
+                try removeDownloadedArtifact(item)
+            } catch {
+                Log.app.error("Failed to clean downloaded batch artifact: \(error.localizedDescription)")
+            }
+        }
         return affected
     }
 
-    private func removeDownloadedArtifact(_ item: BatchTranscriptionItem) throws {
+    private func validateDownloadedArtifact(_ item: BatchTranscriptionItem) throws {
         guard let url = item.downloadedAudioURL?.standardizedFileURL else { return }
-        let fileManager = FileManager.default
-        let temporaryRoot = fileManager.temporaryDirectory.standardizedFileURL.path + "/"
+        let temporaryRoot = FileManager.default.temporaryDirectory.standardizedFileURL.path + "/"
         guard url.path.hasPrefix(temporaryRoot) else {
             throw CocoaError(.fileWriteNoPermission, userInfo: [NSFilePathErrorKey: url.path])
         }
+    }
+
+    private func removeDownloadedArtifact(_ item: BatchTranscriptionItem) throws {
+        try validateDownloadedArtifact(item)
+        guard let url = item.downloadedAudioURL?.standardizedFileURL else { return }
+        let fileManager = FileManager.default
+        let temporaryRoot = fileManager.temporaryDirectory.standardizedFileURL.path + "/"
         if fileManager.fileExists(atPath: url.path) {
             try fileManager.removeItem(at: url)
         }
