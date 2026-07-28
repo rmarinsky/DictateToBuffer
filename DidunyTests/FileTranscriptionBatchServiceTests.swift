@@ -104,6 +104,7 @@ final class YouTubeRemoteMediaSourceTests: XCTestCase {
           "id": "dQw4w9WgXcQ",
           "title": "A video",
           "uploader": "A channel",
+          "description": "Source description",
           "duration": 125.5,
           "original_language": "uk",
           "is_live": false,
@@ -123,6 +124,7 @@ final class YouTubeRemoteMediaSourceTests: XCTestCase {
 
         XCTAssertEqual(metadata.source.title, "A video")
         XCTAssertEqual(metadata.source.channelName, "A channel")
+        XCTAssertEqual(metadata.source.description, "Source description")
         XCTAssertEqual(metadata.audioFormatID, "audio-best")
         XCTAssertEqual(metadata.preferredCaption?.kind, .authored)
         XCTAssertEqual(metadata.durationSeconds, 125.5, accuracy: 0.001)

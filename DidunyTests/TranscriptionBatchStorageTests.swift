@@ -269,7 +269,8 @@ final class TranscriptionBatchStorageTests: XCTestCase {
             mediaID: "dQw4w9WgXcQ",
             canonicalURL: try XCTUnwrap(URL(string: "https://www.youtube.com/watch?v=dQw4w9WgXcQ")),
             title: "Original YouTube title",
-            channelName: "Channel"
+            channelName: "Channel",
+            description: "YouTube source notes"
         )
         let recording = Recording(
             id: UUID(),
@@ -313,6 +314,7 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         XCTAssertTrue(batch.matches("Customer workflow", recordings: [recording]))
         XCTAssertTrue(batch.matches("Research interview", recordings: [recording]))
         XCTAssertTrue(batch.matches("Original phrase", recordings: [recording]))
+        XCTAssertTrue(batch.matches("YouTube source notes", recordings: [recording]))
 
         let markdown = batch.markdown(recordings: [recording])
         XCTAssertTrue(markdown.contains("# Product research"))

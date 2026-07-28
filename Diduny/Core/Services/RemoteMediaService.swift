@@ -7,6 +7,23 @@ struct RemoteMediaSourceMetadata: Codable, Equatable, Hashable {
     let canonicalURL: URL
     let title: String
     let channelName: String?
+    let description: String?
+
+    init(
+        provider: String,
+        mediaID: String,
+        canonicalURL: URL,
+        title: String,
+        channelName: String?,
+        description: String? = nil
+    ) {
+        self.provider = provider
+        self.mediaID = mediaID
+        self.canonicalURL = canonicalURL
+        self.title = title
+        self.channelName = channelName
+        self.description = description
+    }
 }
 
 struct TranscriptArtifact: Codable, Equatable {
@@ -284,7 +301,8 @@ struct RemoteMediaMetadata: Codable, Equatable {
                 mediaID: payload.id,
                 canonicalURL: expectedSource.canonicalURL,
                 title: payload.title,
-                channelName: payload.channelName
+                channelName: payload.channelName,
+                description: payload.description
             ),
             durationSeconds: payload.duration,
             audioFormatID: compatibleAudio.id,
@@ -316,6 +334,7 @@ private struct YTDLPPayload: Decodable {
     let id: String
     let title: String
     let channelName: String?
+    let description: String?
     let duration: TimeInterval
     let originalLanguage: String?
     let isLive: Bool?
@@ -325,7 +344,7 @@ private struct YTDLPPayload: Decodable {
     let automaticCaptions: [String: [YTDLPCaption]]?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, duration, availability, formats, subtitles
+        case id, title, description, duration, availability, formats, subtitles
         case channelName = "uploader"
         case originalLanguage = "original_language"
         case isLive = "is_live"

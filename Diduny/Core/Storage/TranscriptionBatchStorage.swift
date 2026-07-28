@@ -64,6 +64,7 @@ struct TranscriptionBatch: Codable, Equatable, Identifiable {
                     recording.sourceFileName,
                     recording.remoteSource?.title,
                     recording.remoteSource?.channelName,
+                    recording.remoteSource?.description,
                     recording.remoteSource?.canonicalURL.absoluteString,
                     recording.libraryDisplayName,
                     recording.transcriptionText,
