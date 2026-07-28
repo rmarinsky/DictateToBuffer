@@ -258,6 +258,7 @@ struct NewTranscriptionBatchSheet: View {
                 TextEditor(text: $urlText)
                     .font(.body.monospaced())
                     .focused($isYouTubeURLInputFocused)
+                    .accessibilityLabel("YouTube URLs")
                     .frame(height: 64)
                     .padding(6)
                     .overlay {
