@@ -840,6 +840,36 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertTrue(batchStore.didClose)
     }
 
+    func test_resumedLocalBatchMarksTranscriptAsLocal() async throws {
+        let recordingID = UUID()
+        var item = BatchTranscriptionItem(sourceURL: URL(fileURLWithPath: "/tmp/source.m4a"))
+        item.recordingID = recordingID
+        item.status = .failed
+        let batch = TranscriptionBatch(
+            name: "Local retry",
+            isProcessingClosed: true,
+            recordingIDs: [recordingID],
+            workItems: [item]
+        )
+        let store = BatchTestRecordingStore(
+            existingRecordingID: recordingID,
+            audioFileURL: URL(fileURLWithPath: "/tmp/saved.m4a")
+        )
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(),
+            recordingStore: store,
+            batchPersistence: BatchTestPersistence(),
+            settingsSnapshot: { .localTestValue },
+            playCompletionSound: {}
+        )
+
+        service.resume(batch: batch)
+        try await waitUntil { !service.isProcessing }
+
+        XCTAssertEqual(store.completedProvenance?.provider, "local")
+    }
+
     func test_remoteDuplicateWithMissingCaptionsRetrievesOnlyCaptionArtifact() async throws {
         let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
         let caption = TranscriptArtifact(
@@ -1486,6 +1516,7 @@ private final class BatchTestRecordingStore: FileTranscriptionBatchRecordingStor
     private var storedAudioURLs: [UUID: URL] = [:]
     private(set) var updatedCaptionArtifacts: [TranscriptArtifact] = []
     private(set) var completedTranscript: GeneratedTranscript?
+    private(set) var completedProvenance: GeneratedTranscriptProvenance?
 
     init(
         duplicate: BatchTranscriptionDuplicate? = nil,
@@ -1553,9 +1584,10 @@ private final class BatchTestRecordingStore: FileTranscriptionBatchRecordingStor
     func markCompleted(
         recordingID _: UUID,
         transcript: GeneratedTranscript,
-        provenance _: GeneratedTranscriptProvenance?
+        provenance: GeneratedTranscriptProvenance?
     ) {
         completedTranscript = transcript
+        completedProvenance = provenance
     }
 
     func markFailed(recordingID _: UUID, error _: String) {}

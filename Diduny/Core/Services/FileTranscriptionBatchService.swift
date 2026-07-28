@@ -1185,7 +1185,7 @@ final class FileTranscriptionBatchService {
                 recordingStore.markCompleted(
                     recordingID: recordingID,
                     transcript: transcript,
-                    provenance: nil
+                    provenance: GeneratedTranscriptProvenance(provider: settings.provider.rawValue)
                 )
             }
             update(itemID) {
@@ -1531,14 +1531,15 @@ private final class LiveFileTranscriptionBatchRecordingStore: FileTranscriptionB
         transcript: GeneratedTranscript,
         provenance: GeneratedTranscriptProvenance?
     ) {
+        let provider = provenance?.provider ?? TranscriptionProvider.cloud.rawValue
         storage.completeTranscription(
             id: recordingID,
             status: .transcribed,
             text: transcript.text,
             segments: transcript.segments.isEmpty ? nil : transcript.segments,
             generatedTranscriptProvenance: provenance,
-            kind: .cloud,
-            provider: provenance?.provider ?? "cloud"
+            kind: provider == TranscriptionProvider.local.rawValue ? .local : .cloud,
+            provider: provider
         )
     }
 
