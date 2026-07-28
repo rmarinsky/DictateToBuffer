@@ -37,6 +37,31 @@ final class YouTubeRemoteMediaSourceTests: XCTestCase {
         XCTAssertEqual(sources.map(\.mediaID), ["dQw4w9WgXcQ", "aqz-KE-bpKQ"])
     }
 
+    func test_validateBatch_reportsValidDuplicateAndInvalidLines() {
+        let validation = YouTubeRemoteMediaSource.validateBatch(
+            """
+            https://youtu.be/dQw4w9WgXcQ
+            https://youtube.com/watch?v=dQw4w9WgXcQ&t=10
+            not-a-youtube-url
+            https://youtube.com/shorts/aqz-KE-bpKQ
+            """
+        )
+
+        XCTAssertEqual(validation.sources.map(\.mediaID), ["dQw4w9WgXcQ", "aqz-KE-bpKQ"])
+        XCTAssertEqual(validation.duplicateCount, 1)
+        XCTAssertEqual(validation.invalidValues, ["not-a-youtube-url"])
+    }
+
+    func test_validateBatch_reportsURLsAlreadyInBatchAsDuplicates() {
+        let validation = YouTubeRemoteMediaSource.validateBatch(
+            "https://youtu.be/dQw4w9WgXcQ",
+            excludingMediaIDs: ["dQw4w9WgXcQ"]
+        )
+
+        XCTAssertTrue(validation.sources.isEmpty)
+        XCTAssertEqual(validation.duplicateCount, 1)
+    }
+
     func test_captionSelection_prefersAuthoredOriginalLanguageThenAutomatic() {
         let authored = RemoteCaptionTrack(
             languageCode: "uk",
@@ -802,6 +827,86 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
 
         XCTAssertEqual(batchStore.recordingIDs, [existingID, fileID, remoteID])
         XCTAssertTrue(batchStore.didClose)
+    }
+
+    func test_appendToCompletedBatchReopensAndPreservesAllMembership() throws {
+        let existingID = UUID()
+        let addedExistingID = UUID()
+        let fileID = UUID()
+        let remoteID = UUID()
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+        let batchStore = BatchTestPersistence()
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(),
+            recordingStore: BatchTestRecordingStore(
+                duplicate: BatchTranscriptionDuplicate(
+                    recordingID: fileID,
+                    transcriptionText: "File",
+                    durationSeconds: 1
+                ),
+                remoteDuplicate: BatchTranscriptionDuplicate(
+                    recordingID: remoteID,
+                    transcriptionText: "Remote",
+                    durationSeconds: 1,
+                    sourceCaptionArtifacts: []
+                ),
+                matchingRemoteMediaID: source.mediaID
+            ),
+            remoteExtractor: BatchTestRemoteExtractor(),
+            chromeProfile: { ChromeProfile(id: "Default", name: "Roman") },
+            batchPersistence: batchStore,
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+        let batch = TranscriptionBatch(
+            name: "Research",
+            isProcessingClosed: true,
+            recordingIDs: [existingID]
+        )
+
+        let accepted = service.append(
+            to: batch,
+            urls: [URL(fileURLWithPath: "/tmp/file.m4a")],
+            remoteSources: [source],
+            existingRecordingIDs: [addedExistingID]
+        )
+
+        XCTAssertTrue(accepted)
+        XCTAssertTrue(batchStore.didReopen)
+        XCTAssertTrue(batchStore.didClose)
+        XCTAssertEqual(batchStore.createCount, 0)
+        XCTAssertEqual(batchStore.recordingIDs, [existingID, addedExistingID, fileID, remoteID])
+    }
+
+    func test_appendRemoteSourceRequiresRightsBeforeReopeningBatch() throws {
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+        let batchStore = BatchTestPersistence()
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(),
+            recordingStore: BatchTestRecordingStore(),
+            remoteExtractor: BatchTestRemoteExtractor(),
+            chromeProfile: { ChromeProfile(id: "Default", name: "Roman") },
+            remoteMediaAuthorized: { false },
+            batchPersistence: batchStore,
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+
+        let accepted = service.append(
+            to: TranscriptionBatch(name: "Research", isProcessingClosed: true),
+            urls: [],
+            remoteSources: [source],
+            existingRecordingIDs: []
+        )
+
+        XCTAssertFalse(accepted)
+        XCTAssertFalse(batchStore.didReopen)
+        XCTAssertEqual(
+            service.batchError,
+            "Confirm that you own this content or have permission to transcribe it."
+        )
     }
 
     func test_resumePersistedBatchReusesPreparedRecordingCheckpoint() async throws {

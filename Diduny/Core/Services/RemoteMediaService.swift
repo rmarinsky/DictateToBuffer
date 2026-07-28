@@ -77,6 +77,12 @@ struct YouTubeRemoteMediaSource: Codable, Equatable, Hashable {
     let mediaID: String
     let canonicalURL: URL
 
+    struct BatchValidation: Equatable {
+        let sources: [YouTubeRemoteMediaSource]
+        let duplicateCount: Int
+        let invalidValues: [String]
+    }
+
     enum ValidationError: LocalizedError, Equatable {
         case malformedURL
         case unsupportedProvider
@@ -145,6 +151,38 @@ struct YouTubeRemoteMediaSource: Codable, Equatable, Hashable {
             let source = try normalize(value)
             return seen.insert(source.mediaID).inserted ? source : nil
         }
+    }
+
+    static func validateBatch(
+        _ rawValue: String,
+        excludingMediaIDs: Set<String> = []
+    ) -> BatchValidation {
+        let values = rawValue
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        var sources: [Self] = []
+        var seen = excludingMediaIDs
+        var duplicateCount = 0
+        var invalidValues: [String] = []
+
+        for value in values {
+            do {
+                let source = try normalize(value)
+                if seen.insert(source.mediaID).inserted {
+                    sources.append(source)
+                } else {
+                    duplicateCount += 1
+                }
+            } catch {
+                invalidValues.append(value)
+            }
+        }
+        return BatchValidation(
+            sources: sources,
+            duplicateCount: duplicateCount,
+            invalidValues: invalidValues
+        )
     }
 
     private static func isValidVideoID(_ value: String) -> Bool {

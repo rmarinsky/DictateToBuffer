@@ -305,6 +305,9 @@ final class FileTranscriptionBatchService {
             guard let id = SettingsStorage.shared.selectedChromeProfileID else { return nil }
             return ChromeProfileStore.discover().first(where: { $0.id == id })
         },
+        remoteMediaAuthorized: {
+            SettingsStorage.shared.remoteMediaRightsAcknowledged
+        },
         batchPersistence: TranscriptionBatchStorage.shared,
         settingsSnapshot: { .current() },
         playCompletionSound: {
@@ -361,6 +364,7 @@ final class FileTranscriptionBatchService {
     private let batchPersistence: FileTranscriptionBatchPersisting?
     private let remoteExtractor: RemoteMediaExtracting?
     private let chromeProfile: @MainActor () -> ChromeProfile?
+    private let remoteMediaAuthorized: @MainActor () -> Bool
     private let settingsSnapshot: @MainActor () -> FileTranscriptionSettingsSnapshot
     private let playCompletionSound: @MainActor () -> Void
 
@@ -383,6 +387,7 @@ final class FileTranscriptionBatchService {
         recordingStore: FileTranscriptionBatchRecordingStoring,
         remoteExtractor: RemoteMediaExtracting? = nil,
         chromeProfile: @escaping @MainActor () -> ChromeProfile? = { nil },
+        remoteMediaAuthorized: @escaping @MainActor () -> Bool = { true },
         batchPersistence: FileTranscriptionBatchPersisting? = nil,
         settingsSnapshot: @escaping @MainActor () -> FileTranscriptionSettingsSnapshot,
         playCompletionSound: @escaping @MainActor () -> Void
@@ -393,6 +398,7 @@ final class FileTranscriptionBatchService {
         self.batchPersistence = batchPersistence
         self.remoteExtractor = remoteExtractor
         self.chromeProfile = chromeProfile
+        self.remoteMediaAuthorized = remoteMediaAuthorized
         self.settingsSnapshot = settingsSnapshot
         self.playCompletionSound = playCompletionSound
     }
@@ -463,6 +469,52 @@ final class FileTranscriptionBatchService {
             description: description,
             existingRecordingIDs: existingRecordingIDs
         ) else { return false }
+        add(urls: urls)
+        add(remoteSources: remoteSources)
+        startIfNeeded()
+        finalizePersistentBatchIfFinished()
+        return true
+    }
+
+    @discardableResult
+    func append(
+        to batch: TranscriptionBatch,
+        urls: [URL],
+        remoteSources: [YouTubeRemoteMediaSource],
+        existingRecordingIDs: [UUID]
+    ) -> Bool {
+        guard !isProcessing else { return false }
+        guard !urls.isEmpty || !remoteSources.isEmpty || !existingRecordingIDs.isEmpty else {
+            return false
+        }
+        if !remoteSources.isEmpty {
+            guard remoteMediaAuthorized() else {
+                batchError = "Confirm that you own this content or have permission to transcribe it."
+                return false
+            }
+            guard chromeProfile() != nil else {
+                batchError = "Select a Google Chrome profile to transcribe YouTube URLs."
+                return false
+            }
+        }
+        resetFinishedBatchIfNeeded()
+        guard currentBatchID == nil else { return false }
+
+        do {
+            try batchPersistence?.reopenBatch(batch.id)
+            try batchPersistence?.addRecordingIDs(existingRecordingIDs, to: batch.id)
+        } catch {
+            batchError = "Could not reopen the transcription batch."
+            return false
+        }
+
+        var seenRecordingIDs = Set<UUID>()
+        currentBatchID = batch.id
+        initialRecordingIDs = (batch.recordingIDs + existingRecordingIDs).filter {
+            seenRecordingIDs.insert($0).inserted
+        }
+        items = batch.workItems ?? []
+        batchError = nil
         add(urls: urls)
         add(remoteSources: remoteSources)
         startIfNeeded()

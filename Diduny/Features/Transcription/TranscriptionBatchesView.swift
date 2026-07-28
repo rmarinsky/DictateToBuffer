@@ -1,9 +1,16 @@
 import SwiftUI
 
+private enum BatchSourceEditor {
+    case youtube
+    case recordings
+}
+
 struct TranscriptionBatchInspectorView: View {
     let batch: TranscriptionBatch
     let onOpenRecording: (UUID) -> Void
     let onClose: () -> Void
+    private let chromeProfiles: [ChromeProfile]
+    private let showsYouTubeAuthorizationControls: Bool
 
     @State private var batches = TranscriptionBatchStorage.shared
     @State private var recordings = RecordingsLibraryStorage.shared
@@ -12,6 +19,12 @@ struct TranscriptionBatchInspectorView: View {
     @State private var description: String
     @State private var showDeleteConfirmation = false
     @State private var saveErrorMessage: String?
+    @State private var sourceEditor: BatchSourceEditor?
+    @State private var youtubeURLText = ""
+    @State private var selectedRecordingIDs = Set<UUID>()
+    @State private var selectedChromeProfileID: String
+    @State private var rightsAcknowledged: Bool
+    @FocusState private var isYouTubeURLInputFocused: Bool
 
     init(
         batch: TranscriptionBatch,
@@ -21,8 +34,20 @@ struct TranscriptionBatchInspectorView: View {
         self.batch = batch
         self.onOpenRecording = onOpenRecording
         self.onClose = onClose
+        let profiles = ChromeProfileStore.discover()
+        let settings = SettingsStorage.shared
+        let storedProfileID = settings.selectedChromeProfileID
+        self.chromeProfiles = profiles
+        self.showsYouTubeAuthorizationControls = !settings.remoteMediaRightsAcknowledged
+            || !profiles.contains(where: { $0.id == storedProfileID })
         _name = State(initialValue: batch.name)
         _description = State(initialValue: batch.description)
+        _selectedChromeProfileID = State(
+            initialValue: profiles.contains(where: { $0.id == storedProfileID })
+                ? storedProfileID ?? ""
+                : profiles.first?.id ?? ""
+        )
+        _rightsAcknowledged = State(initialValue: settings.remoteMediaRightsAcknowledged)
     }
 
     private var currentBatch: TranscriptionBatch {
@@ -36,6 +61,35 @@ struct TranscriptionBatchInspectorView: View {
 
     private var unattachedWorkItems: [BatchTranscriptionItem] {
         (currentBatch.workItems ?? []).filter { $0.recordingID == nil }
+    }
+
+    private var youtubeURLValidation: YouTubeRemoteMediaSource.BatchValidation {
+        YouTubeRemoteMediaSource.validateBatch(
+            youtubeURLText,
+            excludingMediaIDs: existingYouTubeMediaIDs
+        )
+    }
+
+    private var existingYouTubeMediaIDs: Set<String> {
+        Set(
+            (currentBatch.workItems ?? []).compactMap { $0.remoteSource?.mediaID }
+                + members.compactMap { recording in
+                    guard recording.remoteSource?.provider == YouTubeRemoteMediaSource.provider else {
+                        return nil
+                    }
+                    return recording.remoteSource?.mediaID
+                }
+        )
+    }
+
+    private var canAuthorizeYouTube: Bool {
+        rightsAcknowledged
+            && chromeProfiles.contains(where: { $0.id == selectedChromeProfileID })
+    }
+
+    private var availableRecordings: [Recording] {
+        let attachedIDs = Set(currentBatch.recordingIDs)
+        return recordings.recordings.filter { !attachedIDs.contains($0.id) }
     }
 
     var body: some View {
@@ -104,10 +158,32 @@ struct TranscriptionBatchInspectorView: View {
                                     behavior: .raw
                                 )
                             } label: {
-                                Label("Copy All Transcriptions", systemImage: "doc.on.doc")
+                                Label("Copy All", systemImage: "doc.on.doc")
                             }
                             .controlSize(.small)
+                            .help("Copy All Transcriptions")
+                            Menu {
+                                Button("Choose Files…", systemImage: "doc.badge.plus") {
+                                    addFiles()
+                                }
+                                Button("Paste YouTube URLs…", systemImage: "link") {
+                                    sourceEditor = .youtube
+                                    selectedRecordingIDs.removeAll()
+                                    isYouTubeURLInputFocused = true
+                                }
+                                Button("Add from Recordings…", systemImage: "waveform") {
+                                    sourceEditor = .recordings
+                                    selectedRecordingIDs.removeAll()
+                                }
+                            } label: {
+                                Label("Add", systemImage: "plus")
+                            }
+                            .menuStyle(.borderlessButton)
+                            .fixedSize()
+                            .disabled(batchService.isProcessing)
                         }
+
+                        sourceEditorContent
 
                         if members.isEmpty {
                             Text(unattachedWorkItems.isEmpty ? "No attached recordings" : "No completed recordings yet")
@@ -211,6 +287,190 @@ struct TranscriptionBatchInspectorView: View {
         } message: {
             Text(saveErrorMessage ?? "Unknown error")
         }
+    }
+
+    @ViewBuilder
+    private var sourceEditorContent: some View {
+        if sourceEditor == .youtube {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Add YouTube URLs").font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Button {
+                        sourceEditor = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close YouTube URL editor")
+                }
+                Text("Paste one video URL per line. Duplicates are ignored.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $youtubeURLText)
+                    .font(.body.monospaced())
+                    .focused($isYouTubeURLInputFocused)
+                    .accessibilityLabel("YouTube URLs to add")
+                    .frame(height: 112)
+                    .padding(6)
+                    .background(Color(.textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Color(.separatorColor), lineWidth: 0.5)
+                    }
+                if showsYouTubeAuthorizationControls {
+                    if chromeProfiles.isEmpty {
+                        Text("No Google Chrome profiles were found. Open Chrome once, then try again.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    } else {
+                        Picker("Chrome profile", selection: $selectedChromeProfileID) {
+                            ForEach(chromeProfiles) { profile in
+                                Text(profile.name).tag(profile.id)
+                            }
+                        }
+                        .controlSize(.small)
+                    }
+                    if !SettingsStorage.shared.remoteMediaRightsAcknowledged {
+                        Toggle(
+                            "I own this content or have permission to transcribe it.",
+                            isOn: $rightsAcknowledged
+                        )
+                        .toggleStyle(.checkbox)
+                        .font(.caption)
+                    }
+                }
+                HStack(spacing: 10) {
+                    Text("\(youtubeURLValidation.sources.count) valid")
+                        .foregroundStyle(.green)
+                    if youtubeURLValidation.duplicateCount > 0 {
+                        Text("\(youtubeURLValidation.duplicateCount) duplicate\(youtubeURLValidation.duplicateCount == 1 ? "" : "s")")
+                    }
+                    if !youtubeURLValidation.invalidValues.isEmpty {
+                        Text("\(youtubeURLValidation.invalidValues.count) invalid")
+                            .foregroundStyle(.red)
+                    }
+                    Spacer()
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                HStack {
+                    Spacer()
+                    Button("Paste") {
+                        youtubeURLText = NSPasteboard.general.string(forType: .string) ?? youtubeURLText
+                    }
+                    Button("Add \(youtubeURLValidation.sources.count) URL\(youtubeURLValidation.sources.count == 1 ? "" : "s")") {
+                        addYouTubeURLs()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(youtubeURLValidation.sources.isEmpty || !canAuthorizeYouTube)
+                }
+            }
+            .padding(10)
+            .background(
+                Color(.quaternaryLabelColor).opacity(0.08),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+        } else if sourceEditor == .recordings {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Add from Recordings").font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Button {
+                        sourceEditor = nil
+                        selectedRecordingIDs.removeAll()
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close recording picker")
+                }
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 6) {
+                        ForEach(availableRecordings) { recording in
+                            Toggle(isOn: Binding(
+                                get: { selectedRecordingIDs.contains(recording.id) },
+                                set: { selected in
+                                    if selected { selectedRecordingIDs.insert(recording.id) }
+                                    else { selectedRecordingIDs.remove(recording.id) }
+                                }
+                            )) {
+                                Text(recording.displayTitle).lineLimit(1)
+                            }
+                            .toggleStyle(.checkbox)
+                        }
+                    }
+                }
+                .frame(maxHeight: 180)
+                HStack {
+                    Spacer()
+                    Button("Add \(selectedRecordingIDs.count) Recording\(selectedRecordingIDs.count == 1 ? "" : "s")") {
+                        addExistingRecordings()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(selectedRecordingIDs.isEmpty)
+                }
+            }
+            .padding(10)
+            .background(
+                Color(.quaternaryLabelColor).opacity(0.08),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+        }
+    }
+
+    private func addFiles() {
+        guard let files = ImportedMediaPicker.selectFiles(), !files.isEmpty else { return }
+        append(urls: files, remoteSources: [], existingRecordingIDs: [])
+    }
+
+    private func addYouTubeURLs() {
+        let validation = youtubeURLValidation
+        guard !validation.sources.isEmpty, canAuthorizeYouTube else { return }
+        SettingsStorage.shared.selectedChromeProfileID = selectedChromeProfileID
+        SettingsStorage.shared.remoteMediaRightsAcknowledged = true
+        guard append(urls: [], remoteSources: validation.sources, existingRecordingIDs: []) else {
+            return
+        }
+        youtubeURLText = validation.invalidValues.joined(separator: "\n")
+        if validation.invalidValues.isEmpty {
+            sourceEditor = nil
+        }
+    }
+
+    private func addExistingRecordings() {
+        guard append(
+            urls: [],
+            remoteSources: [],
+            existingRecordingIDs: availableRecordings
+                .filter { selectedRecordingIDs.contains($0.id) }
+                .map(\.id)
+        ) else { return }
+        selectedRecordingIDs.removeAll()
+        sourceEditor = nil
+    }
+
+    @discardableResult
+    private func append(
+        urls: [URL],
+        remoteSources: [YouTubeRemoteMediaSource],
+        existingRecordingIDs: [UUID]
+    ) -> Bool {
+        let accepted = batchService.append(
+            to: currentBatch,
+            urls: urls,
+            remoteSources: remoteSources,
+            existingRecordingIDs: existingRecordingIDs
+        )
+        guard accepted else {
+            saveErrorMessage = batchService.batchError
+                ?? "Another transcription batch is active. Finish it before updating this batch."
+            return false
+        }
+        if !urls.isEmpty || !remoteSources.isEmpty {
+            BatchTranscriptionWindowController.shared.showWindow()
+        }
+        return true
     }
 }
 
