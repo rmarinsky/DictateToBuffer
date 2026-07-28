@@ -7,6 +7,7 @@ struct TranscriptionBatchInspectorView: View {
 
     @State private var batches = TranscriptionBatchStorage.shared
     @State private var recordings = RecordingsLibraryStorage.shared
+    @State private var batchService = FileTranscriptionBatchService.shared
     @State private var name: String
     @State private var description: String
     @State private var showDeleteConfirmation = false
@@ -31,6 +32,10 @@ struct TranscriptionBatchInspectorView: View {
     private var members: [Recording] {
         let byID = Dictionary(uniqueKeysWithValues: recordings.recordings.map { ($0.id, $0) })
         return currentBatch.recordingIDs.compactMap { byID[$0] }
+    }
+
+    private var unattachedWorkItems: [BatchTranscriptionItem] {
+        (currentBatch.workItems ?? []).filter { $0.recordingID == nil }
     }
 
     var body: some View {
@@ -86,6 +91,13 @@ struct TranscriptionBatchInspectorView: View {
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
                             Spacer()
+                            if !currentBatch.retryableWorkItems.isEmpty {
+                                Button("Retry Failed (\(currentBatch.retryableWorkItems.count))") {
+                                    batchService.resume(batch: currentBatch)
+                                }
+                                .controlSize(.small)
+                                .disabled(batchService.isProcessing)
+                            }
                             Button {
                                 ClipboardService.shared.copy(
                                     text: currentBatch.markdown(recordings: recordings.recordings),
@@ -98,7 +110,7 @@ struct TranscriptionBatchInspectorView: View {
                         }
 
                         if members.isEmpty {
-                            Text("No attached recordings")
+                            Text(unattachedWorkItems.isEmpty ? "No attached recordings" : "No completed recordings yet")
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .center)
                                 .padding(.vertical, 24)
@@ -140,6 +152,27 @@ struct TranscriptionBatchInspectorView: View {
                                     in: RoundedRectangle(cornerRadius: 8)
                                 )
                             }
+                        }
+
+                        ForEach(unattachedWorkItems) { item in
+                            HStack(spacing: 10) {
+                                Image(systemName: "exclamationmark.circle")
+                                    .foregroundStyle(.red)
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.displayName).lineLimit(1)
+                                    Text(item.errorMessage ?? "Ready to retry")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .padding(10)
+                            .background(
+                                Color(.quaternaryLabelColor).opacity(0.08),
+                                in: RoundedRectangle(cornerRadius: 8)
+                            )
                         }
                     }
 

@@ -47,6 +47,10 @@ struct TranscriptionBatch: Codable, Equatable, Identifiable {
         } ? .completed : .completedWithIssues
     }
 
+    var retryableWorkItems: [BatchTranscriptionItem] {
+        (workItems ?? []).filter { $0.status != .completed && $0.status != .duplicate }
+    }
+
     func matches(_ query: String, recordings: [Recording]) -> Bool {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return true }

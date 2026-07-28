@@ -114,6 +114,22 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         XCTAssertTrue(markdown.contains("[Transcript unavailable — Failed]"))
     }
 
+    func test_retryableWorkItemsExcludeCompletedAndDuplicateResults() {
+        var failed = BatchTranscriptionItem(sourceURL: URL(fileURLWithPath: "/tmp/failed.m4a"))
+        failed.status = .failed
+        var completed = BatchTranscriptionItem(sourceURL: URL(fileURLWithPath: "/tmp/completed.m4a"))
+        completed.status = .completed
+        var duplicate = BatchTranscriptionItem(sourceURL: URL(fileURLWithPath: "/tmp/duplicate.m4a"))
+        duplicate.status = .duplicate
+        let batch = TranscriptionBatch(
+            name: "Retry",
+            isProcessingClosed: true,
+            workItems: [failed, completed, duplicate]
+        )
+
+        XCTAssertEqual(batch.retryableWorkItems.map(\.id), [failed.id])
+    }
+
     func test_markdownKeepsFailedAndCompletedWorkItemOrder() throws {
         let completed = makeRecording(title: "Second", transcript: "Done")
         var failedItem = BatchTranscriptionItem(sourceURL: URL(fileURLWithPath: "/tmp/first.m4a"))
