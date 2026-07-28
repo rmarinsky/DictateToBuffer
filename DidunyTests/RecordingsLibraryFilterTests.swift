@@ -2,6 +2,23 @@
 import XCTest
 
 final class RecordingsLibraryFilterTests: XCTestCase {
+    @MainActor
+    func test_batchComposerActionTargetsRecordingsWithSharedTitle() {
+        let controller = MainWindowController.shared
+        controller.requestedSection = nil
+        controller.requestedBatchComposer = false
+        defer {
+            controller.requestedSection = nil
+            controller.requestedBatchComposer = false
+        }
+
+        controller.requestBatchComposer()
+
+        XCTAssertEqual(MainWindowController.batchComposerActionTitle, "Batch Files and URLs…")
+        XCTAssertEqual(controller.requestedSection, .recordings)
+        XCTAssertTrue(controller.requestedBatchComposer)
+    }
+
     func test_filesFilterMatchesOnlyImportedFileTranscriptions() {
         let file = makeRecording(remoteSource: nil)
         let youtube = makeRecording(remoteSource: makeYouTubeSource())

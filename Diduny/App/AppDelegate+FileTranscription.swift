@@ -3,15 +3,8 @@ import Foundation
 // MARK: - File Transcription
 
 extension AppDelegate {
-    func transcribeFiles() {
-        if FileTranscriptionBatchService.shared.isProcessing {
-            BatchTranscriptionWindowController.shared.showWindow()
-        } else {
-            BatchTranscriptionWindowController.shared.selectFilesForNewBatch()
-        }
-    }
-
-    func transcribeURL() {
-        BatchTranscriptionWindowController.shared.selectYouTubeURLsForNewBatch()
+    func batchFilesAndURLs() {
+        MainWindowController.shared.requestBatchComposer()
+        MainWindowController.shared.showWindow()
     }
 }

@@ -6,9 +6,11 @@ import SwiftUI
 @MainActor
 final class MainWindowController {
     static let shared = MainWindowController()
+    static let batchComposerActionTitle = "Batch Files and URLs…"
 
     var requestedSection: MainSection?
     var requestedRecordingID: UUID?
+    var requestedBatchComposer = false
 
     private var window: NSWindow?
     private var windowDelegate: MainWindowDelegate?
@@ -46,6 +48,11 @@ final class MainWindowController {
     func showRecording(id: UUID) {
         requestedRecordingID = id
         showWindow(section: .recordings)
+    }
+
+    func requestBatchComposer() {
+        requestedBatchComposer = true
+        requestedSection = .recordings
     }
 
     func closeWindow() {

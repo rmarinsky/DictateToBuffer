@@ -145,12 +145,16 @@ struct RecordingsLibraryView: View {
         .onAppear {
             batchLoadErrorMessage = batchStorage.loadErrorMessage
             openRequestedRecordingIfAvailable()
+            openRequestedBatchComposerIfAvailable()
         }
         .onChange(of: MainWindowController.shared.requestedRecordingID) {
             openRequestedRecordingIfAvailable()
         }
         .onChange(of: storage.recordings) {
             openRequestedRecordingIfAvailable()
+        }
+        .onChange(of: MainWindowController.shared.requestedBatchComposer) {
+            openRequestedBatchComposerIfAvailable()
         }
         .alert("Delete Recording", isPresented: $showDeleteConfirmation) {
             Button("Delete", role: .destructive) {
@@ -231,35 +235,16 @@ struct RecordingsLibraryView: View {
             Text("Recordings")
                 .font(.title2.bold())
             Spacer()
-            if filter.showsBatches {
-                Button {
-                    showBatchComposer = true
-                } label: {
-                    Label("New Batch", systemImage: "plus")
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-            }
             Button {
-                BatchTranscriptionWindowController.shared.selectFilesForNewBatch()
+                showBatchComposer = true
             } label: {
-                Label("Transcribe Files…", systemImage: "waveform.badge.plus")
+                Label(MainWindowController.batchComposerActionTitle, systemImage: "square.stack.3d.up")
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
-            .keyboardShortcut("o", modifiers: [.command, .shift])
-            .help("Select audio or video files to transcribe (⇧⌘O)")
-            .accessibilityIdentifier("Transcribe files")
-
-            Button {
-                BatchTranscriptionWindowController.shared.selectYouTubeURLsForNewBatch()
-            } label: {
-                Label("Transcribe YouTube URLs…", systemImage: "play.rectangle.on.rectangle")
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .keyboardShortcut("u", modifiers: [.command, .shift])
-            .help("Transcribe YouTube URLs (⇧⌘U)")
+            .keyboardShortcut("b", modifiers: [.command, .shift])
+            .help("Create a batch from files, URLs, or existing recordings (⇧⌘B)")
+            .accessibilityIdentifier("Batch files and URLs")
 
             if !filter.showsBatches {
                 Button {
@@ -303,6 +288,13 @@ struct RecordingsLibraryView: View {
                 in: RoundedRectangle(cornerRadius: 8, style: .continuous)
             )
         }
+    }
+
+    private func openRequestedBatchComposerIfAvailable() {
+        let controller = MainWindowController.shared
+        guard controller.requestedBatchComposer else { return }
+        controller.requestedBatchComposer = false
+        showBatchComposer = true
     }
 
     // MARK: - Filter Chips
