@@ -188,8 +188,11 @@ struct TranscriptionBatchInspectorView: View {
         }
         .alert("Delete Batch and Recordings?", isPresented: $showDeleteConfirmation) {
             Button("Delete Batch and \(currentBatch.recordingIDs.count) Recordings", role: .destructive) {
-                recordings.deleteBatch(currentBatch)
-                onClose()
+                if recordings.deleteBatch(currentBatch) {
+                    onClose()
+                } else {
+                    saveErrorMessage = "The batch and its recordings were left unchanged."
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -198,7 +201,7 @@ struct TranscriptionBatchInspectorView: View {
             )
         }
         .alert(
-            "Couldn't Save Batch",
+            "Batch Change Failed",
             isPresented: Binding(
                 get: { saveErrorMessage != nil },
                 set: { if !$0 { saveErrorMessage = nil } }

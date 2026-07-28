@@ -204,45 +204,89 @@ final class RecordingsLibraryStorage {
 
     // MARK: - Delete
 
-    func deleteRecording(_ recording: Recording) {
-        do {
+    @discardableResult
+    func deleteRecording(_ recording: Recording) -> Bool {
+        deleteStoredRecordings(Set([recording.id])) {
             try batchStorage.removeRecordingReferences(Set([recording.id]))
-        } catch {
-            Log.app.error("Failed to remove recording from transcription batches: \(error.localizedDescription)")
-            return
         }
-        let fileURL = recordingsDir.appendingPathComponent(recording.audioFileName)
-        try? fileManager.removeItem(at: fileURL)
-        recordings.removeAll { $0.id == recording.id }
-        saveMetadata()
     }
 
-    func deleteRecordings(_ ids: Set<UUID>) {
-        guard !ids.isEmpty else { return }
-        do {
+    @discardableResult
+    func deleteRecordings(_ ids: Set<UUID>) -> Bool {
+        guard !ids.isEmpty else { return true }
+        return deleteStoredRecordings(ids) {
             try batchStorage.removeRecordingReferences(ids)
-        } catch {
-            Log.app.error("Failed to remove recordings from transcription batches: \(error.localizedDescription)")
-            return
         }
+    }
 
-        for id in ids {
-            if let recording = recordings.first(where: { $0.id == id }) {
-                let fileURL = recordingsDir.appendingPathComponent(recording.audioFileName)
-                try? fileManager.removeItem(at: fileURL)
+    @discardableResult
+    func deleteBatch(_ batch: TranscriptionBatch) -> Bool {
+        deleteStoredRecordings(Set(batch.recordingIDs)) {
+            _ = try batchStorage.delete(batchID: batch.id)
+        }
+    }
+
+    private func deleteStoredRecordings(
+        _ ids: Set<UUID>,
+        updateBatchMetadata: () throws -> Void
+    ) -> Bool {
+        let previousRecordings = recordings
+        let targets = recordings.filter { ids.contains($0.id) }
+        var stagedFiles: [(original: URL, staged: URL)] = []
+
+        func restoreStagedFiles() {
+            for file in stagedFiles.reversed() where fileManager.fileExists(atPath: file.staged.path) {
+                do {
+                    try fileManager.moveItem(at: file.staged, to: file.original)
+                } catch {
+                    Log.app.error("Failed to restore staged recording file: \(error.localizedDescription)")
+                }
             }
         }
-        recordings.removeAll { ids.contains($0.id) }
-        saveMetadata()
-    }
 
-    func deleteBatch(_ batch: TranscriptionBatch) {
         do {
-            let recordingIDs = try batchStorage.delete(batchID: batch.id)
-            deleteRecordings(recordingIDs)
+            for recording in targets {
+                let original = recordingsDir.appendingPathComponent(recording.audioFileName)
+                guard fileManager.fileExists(atPath: original.path) else { continue }
+                let staged = recordingsDir.appendingPathComponent(
+                    ".\(recording.audioFileName).deleting-\(UUID().uuidString)"
+                )
+                try fileManager.moveItem(at: original, to: staged)
+                stagedFiles.append((original, staged))
+            }
         } catch {
-            Log.app.error("Failed to delete transcription batch: \(error.localizedDescription)")
+            restoreStagedFiles()
+            Log.app.error("Failed to stage recording deletion: \(error.localizedDescription)")
+            return false
         }
+
+        recordings.removeAll { ids.contains($0.id) }
+        guard saveMetadataSynchronously() else {
+            recordings = previousRecordings
+            restoreStagedFiles()
+            return false
+        }
+
+        do {
+            try updateBatchMetadata()
+        } catch {
+            recordings = previousRecordings
+            if !saveMetadataSynchronously() {
+                Log.app.error("Failed to restore recordings metadata after batch update failure")
+            }
+            restoreStagedFiles()
+            Log.app.error("Failed to update transcription batches during deletion: \(error.localizedDescription)")
+            return false
+        }
+
+        for file in stagedFiles {
+            do {
+                try fileManager.removeItem(at: file.staged)
+            } catch {
+                Log.app.warning("Failed to clean staged recording file: \(error.localizedDescription)")
+            }
+        }
+        return true
     }
 
     func pruneExpiredRecordings(now: Date = Date()) {
@@ -263,13 +307,19 @@ final class RecordingsLibraryStorage {
 
     // MARK: - Update
 
-    func updateDetails(id: UUID, title: String, description: String) {
-        guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
+    @discardableResult
+    func updateDetails(id: UUID, title: String, description: String) -> Bool {
+        guard let index = recordings.firstIndex(where: { $0.id == id }) else { return false }
+        let previous = recordings[index]
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedDescription = description.trimmingCharacters(in: .whitespacesAndNewlines)
         recordings[index].title = trimmedTitle.isEmpty ? nil : trimmedTitle
         recordings[index].description = trimmedDescription.isEmpty ? nil : trimmedDescription
-        saveMetadataSynchronously()
+        guard saveMetadataSynchronously() else {
+            recordings[index] = previous
+            return false
+        }
+        return true
     }
 
     func updateRecording(
@@ -324,6 +374,7 @@ final class RecordingsLibraryStorage {
         sourceLanguageCode: String? = nil
     ) {
         guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
+        let previous = recordings[index]
         let completedAt = Date()
         let version = TranscriptVersion(
             createdAt: completedAt,
@@ -344,7 +395,9 @@ final class RecordingsLibraryStorage {
         recordings[index].transcriptSegments = segments
         recordings[index].translationTargetLanguageCode = translationTargetLanguageCode
         recordings[index].generatedTranscriptProvenance = generatedTranscriptProvenance
-        saveMetadataSynchronously()
+        if !saveMetadataSynchronously() {
+            recordings[index] = previous
+        }
     }
 
     func optimizeStoredRecordingIfNeeded(id: UUID) async -> URL? {

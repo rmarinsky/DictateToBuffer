@@ -19,6 +19,7 @@ struct RecordingDetailView: View {
     @State private var title: String
     @State private var description: String
     @State private var showDeleteConfirmation = false
+    @State private var operationErrorMessage: String?
 
     init(
         recording: Recording,
@@ -125,14 +126,28 @@ struct RecordingDetailView: View {
                 if playbackService.playingRecordingId == currentRecording.id {
                     playbackService.stop()
                 }
-                storage.deleteRecording(currentRecording)
-                onClose()
+                if storage.deleteRecording(currentRecording) {
+                    onClose()
+                } else {
+                    operationErrorMessage = "The recording and its files were left unchanged."
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
                 "This permanently deletes the recording, stored media, transcript history, translations, and every batch reference."
             )
+        }
+        .alert(
+            "Recording Change Failed",
+            isPresented: Binding(
+                get: { operationErrorMessage != nil },
+                set: { if !$0 { operationErrorMessage = nil } }
+            )
+        ) {
+            Button("OK") { operationErrorMessage = nil }
+        } message: {
+            Text(operationErrorMessage ?? "Unknown error")
         }
     }
 
@@ -224,11 +239,13 @@ struct RecordingDetailView: View {
             HStack {
                 Spacer()
                 Button("Save Details") {
-                    storage.updateDetails(
+                    if !storage.updateDetails(
                         id: currentRecording.id,
                         title: title,
                         description: description
-                    )
+                    ) {
+                        operationErrorMessage = "The title and description were left unchanged."
+                    }
                 }
                 .controlSize(.small)
             }

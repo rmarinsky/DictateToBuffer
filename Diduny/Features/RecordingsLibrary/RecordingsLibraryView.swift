@@ -30,6 +30,7 @@ struct RecordingsLibraryView: View {
     @State private var selectedRecordingIds = Set<UUID>()
     @State private var recordingToRetranscribe: Recording?
     @State private var batchLoadErrorMessage: String?
+    @State private var deletionErrorMessage: String?
 
     enum RecordingTypeFilter: String, CaseIterable {
         case all = "All"
@@ -157,10 +158,13 @@ struct RecordingsLibraryView: View {
                     if playbackService.playingRecordingId == r.id {
                         playbackService.stop()
                     }
-                    storage.deleteRecording(r)
-                    selectedRecordingIds.remove(r.id)
-                    if case let .recording(id, _) = inspectorSelection, id == r.id {
-                        inspectorSelection = nil
+                    if storage.deleteRecording(r) {
+                        selectedRecordingIds.remove(r.id)
+                        if case let .recording(id, _) = inspectorSelection, id == r.id {
+                            inspectorSelection = nil
+                        }
+                    } else {
+                        deletionErrorMessage = "The recording and its files were left unchanged."
                     }
                 }
                 recordingToDelete = nil
@@ -206,6 +210,17 @@ struct RecordingsLibraryView: View {
             Button("OK") { batchLoadErrorMessage = nil }
         } message: {
             Text(batchLoadErrorMessage ?? "Unknown error")
+        }
+        .alert(
+            "Couldn't Delete Recording",
+            isPresented: Binding(
+                get: { deletionErrorMessage != nil },
+                set: { if !$0 { deletionErrorMessage = nil } }
+            )
+        ) {
+            Button("OK") { deletionErrorMessage = nil }
+        } message: {
+            Text(deletionErrorMessage ?? "Unknown error")
         }
     }
 
@@ -555,8 +570,11 @@ struct RecordingsLibraryView: View {
         if case let .recording(id, _) = inspectorSelection, ids.contains(id) {
             inspectorSelection = nil
         }
-        storage.deleteRecordings(ids)
-        cancelSelection()
+        if storage.deleteRecordings(ids) {
+            cancelSelection()
+        } else {
+            deletionErrorMessage = "The selected recordings and their files were left unchanged."
+        }
     }
 
     // MARK: - Empty States

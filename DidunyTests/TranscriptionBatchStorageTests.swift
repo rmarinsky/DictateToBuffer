@@ -428,4 +428,44 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: checkpointDirectory.path))
         XCTAssertTrue(batchStore.batches.allSatisfy { !$0.recordingIDs.contains(id) })
     }
+
+    func test_failedBatchMetadataWriteRollsBackInMemoryReferences() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BatchDeleteRollbackTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recordingID = UUID()
+        let batchStore = try TranscriptionBatchStorage(baseDirectory: directory)
+        _ = try batchStore.create(name: "Protected", recordingIDs: [recordingID])
+        let metadataURL = directory.appendingPathComponent("transcription_batches.json")
+        try FileManager.default.removeItem(at: metadataURL)
+        try FileManager.default.createDirectory(at: metadataURL, withIntermediateDirectories: true)
+
+        XCTAssertThrowsError(try batchStore.removeRecordingReferences(Set([recordingID])))
+        XCTAssertEqual(batchStore.batches.first?.recordingIDs, [recordingID])
+    }
+
+    func test_failedRecordingMetadataWriteKeepsRecordingFileAndBatchReference() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RecordingDeleteRollbackTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let batchStore = try TranscriptionBatchStorage(baseDirectory: directory)
+        let store = RecordingsLibraryStorage(baseDirectory: directory, batchStorage: batchStore)
+        let recordingID = try XCTUnwrap(store.saveRecording(
+            audioData: Data("audio".utf8),
+            type: .fileTranscription,
+            duration: 1,
+            forceSave: true
+        ))
+        let recording = try XCTUnwrap(store.recordings.first)
+        _ = try batchStore.create(name: "Protected", recordingIDs: [recordingID])
+        let metadataURL = directory.appendingPathComponent("recordings_metadata.json")
+        try FileManager.default.removeItem(at: metadataURL)
+        try FileManager.default.createDirectory(at: metadataURL, withIntermediateDirectories: true)
+
+        XCTAssertFalse(store.deleteRecording(recording))
+
+        XCTAssertTrue(store.recordings.contains(where: { $0.id == recordingID }))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.audioFileURL(for: recording).path))
+        XCTAssertEqual(batchStore.batches.first?.recordingIDs, [recordingID])
+    }
 }

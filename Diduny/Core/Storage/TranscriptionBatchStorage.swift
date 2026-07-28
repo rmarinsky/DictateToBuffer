@@ -227,8 +227,9 @@ final class TranscriptionBatchStorage {
             createdAt: createdAt,
             recordingIDs: unique(recordingIDs)
         )
-        batches.insert(batch, at: 0)
-        try save()
+        try mutateAndSave {
+            batches.insert(batch, at: 0)
+        }
         return batch
     }
 
@@ -237,11 +238,12 @@ final class TranscriptionBatchStorage {
             throw StorageError.batchNotFound
         }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        batches[index].name = trimmedName.isEmpty
-            ? Self.defaultName(for: batches[index].createdAt)
-            : trimmedName
-        batches[index].description = description.trimmingCharacters(in: .whitespacesAndNewlines)
-        try save()
+        try mutateAndSave {
+            batches[index].name = trimmedName.isEmpty
+                ? Self.defaultName(for: batches[index].createdAt)
+                : trimmedName
+            batches[index].description = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
     }
 
     func addRecordingIDs(_ recordingIDs: [UUID], to batchID: UUID) throws {
@@ -251,54 +253,63 @@ final class TranscriptionBatchStorage {
         guard !batches[index].isProcessingClosed else {
             throw StorageError.membershipClosed
         }
-        batches[index].recordingIDs = unique(batches[index].recordingIDs + recordingIDs)
-        try save()
+        let ids = unique(batches[index].recordingIDs + recordingIDs)
+        try mutateAndSave {
+            batches[index].recordingIDs = ids
+        }
     }
 
     func replaceRecordingIDs(_ recordingIDs: [UUID], in batchID: UUID) throws {
         guard let index = batches.firstIndex(where: { $0.id == batchID }) else {
             throw StorageError.batchNotFound
         }
-        batches[index].recordingIDs = unique(recordingIDs)
-        try save()
+        let ids = unique(recordingIDs)
+        try mutateAndSave {
+            batches[index].recordingIDs = ids
+        }
     }
 
     func replaceWorkItems(_ items: [BatchTranscriptionItem], in batchID: UUID) throws {
         guard let index = batches.firstIndex(where: { $0.id == batchID }) else {
             throw StorageError.batchNotFound
         }
-        batches[index].workItems = items
-        try save()
+        try mutateAndSave {
+            batches[index].workItems = items
+        }
     }
 
     func reopen(batchID: UUID) throws {
         guard let index = batches.firstIndex(where: { $0.id == batchID }) else {
             throw StorageError.batchNotFound
         }
-        batches[index].isProcessingClosed = false
-        try save()
+        try mutateAndSave {
+            batches[index].isProcessingClosed = false
+        }
     }
 
     func close(batchID: UUID) throws {
         guard let index = batches.firstIndex(where: { $0.id == batchID }) else {
             throw StorageError.batchNotFound
         }
-        batches[index].isProcessingClosed = true
-        try save()
+        try mutateAndSave {
+            batches[index].isProcessingClosed = true
+        }
     }
 
     func removeRecordingReferences(_ ids: Set<UUID>) throws {
         guard !ids.isEmpty else { return }
-        for index in batches.indices {
-            batches[index].workItems?.filter { item in
-                item.recordingID.map(ids.contains) == true
-            }.forEach(removeDownloadedArtifact)
-            batches[index].recordingIDs.removeAll(where: ids.contains)
-            batches[index].workItems?.removeAll { item in
-                item.recordingID.map(ids.contains) == true
+        let removedItems = batches.flatMap { batch in
+            (batch.workItems ?? []).filter { $0.recordingID.map(ids.contains) == true }
+        }
+        try mutateAndSave {
+            for index in batches.indices {
+                batches[index].recordingIDs.removeAll(where: ids.contains)
+                batches[index].workItems?.removeAll { item in
+                    item.recordingID.map(ids.contains) == true
+                }
             }
         }
-        try save()
+        removedItems.forEach(removeDownloadedArtifact)
     }
 
     @discardableResult
@@ -307,18 +318,21 @@ final class TranscriptionBatchStorage {
             throw StorageError.batchNotFound
         }
         let affected = Set(batch.recordingIDs)
-        batch.workItems?.forEach(removeDownloadedArtifact)
-        batches.removeAll { $0.id == batchID }
-        for index in batches.indices {
-            batches[index].workItems?.filter { item in
-                item.recordingID.map(affected.contains) == true
-            }.forEach(removeDownloadedArtifact)
-            batches[index].recordingIDs.removeAll(where: affected.contains)
-            batches[index].workItems?.removeAll { item in
-                item.recordingID.map(affected.contains) == true
+        let removedItems = batches.flatMap { candidate in
+            (candidate.workItems ?? []).filter { item in
+                candidate.id == batchID || item.recordingID.map(affected.contains) == true
             }
         }
-        try save()
+        try mutateAndSave {
+            batches.removeAll { $0.id == batchID }
+            for index in batches.indices {
+                batches[index].recordingIDs.removeAll(where: affected.contains)
+                batches[index].workItems?.removeAll { item in
+                    item.recordingID.map(affected.contains) == true
+                }
+            }
+        }
+        removedItems.forEach(removeDownloadedArtifact)
         return affected
     }
 
@@ -340,6 +354,17 @@ final class TranscriptionBatchStorage {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(batches).write(to: metadataURL, options: .atomic)
+    }
+
+    private func mutateAndSave(_ mutation: () -> Void) throws {
+        let previous = batches
+        mutation()
+        do {
+            try save()
+        } catch {
+            batches = previous
+            throw error
+        }
     }
 
     private func unique(_ ids: [UUID]) -> [UUID] {
