@@ -137,7 +137,8 @@ struct RecordingsLibraryView: View {
             set: { if !$0 { inspectorSelection = nil } }
         )) {
             inspectorContent
-                .frame(minWidth: 380, idealWidth: 430, minHeight: 500)
+                .inspectorColumnWidth(min: 380, ideal: 430, max: 500)
+                .frame(minHeight: 500)
         }
         .sheet(isPresented: $showBatchComposer) {
             NewTranscriptionBatchSheet(recordings: storage.recordings)
