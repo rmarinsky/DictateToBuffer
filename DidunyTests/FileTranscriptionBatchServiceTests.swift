@@ -829,7 +829,7 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertTrue(batchStore.didClose)
     }
 
-    func test_appendToCompletedBatchReopensAndPreservesAllMembership() throws {
+    func test_appendToCompletedBatchReopensAndPreservesAllMembership() async throws {
         let existingID = UUID()
         let addedExistingID = UUID()
         let fileID = UUID()
@@ -873,6 +873,7 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         )
 
         XCTAssertTrue(accepted)
+        try await waitUntil { batchStore.didClose }
         XCTAssertTrue(batchStore.didReopen)
         XCTAssertTrue(batchStore.didClose)
         XCTAssertEqual(batchStore.createCount, 0)
