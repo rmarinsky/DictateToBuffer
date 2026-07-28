@@ -840,6 +840,33 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertTrue(batchStore.didClose)
     }
 
+    func test_resumeDoesNotReplaceAnotherBlockedPersistentBatch() {
+        let persistence = BatchTestPersistence()
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(preflightError: "Offline"),
+            recordingStore: BatchTestRecordingStore(),
+            batchPersistence: persistence,
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+        service.beginBatch(
+            urls: [URL(fileURLWithPath: "/tmp/first.m4a")],
+            remoteSources: [],
+            name: "First",
+            description: "",
+            existingRecordingIDs: []
+        )
+        var item = BatchTranscriptionItem(sourceURL: URL(fileURLWithPath: "/tmp/second.m4a"))
+        item.status = .failed
+        let second = TranscriptionBatch(name: "Second", isProcessingClosed: true, workItems: [item])
+
+        XCTAssertFalse(service.canResume(batch: second))
+        service.resume(batch: second)
+
+        XCTAssertEqual(service.items.map(\.sourceURL.lastPathComponent), ["first.m4a"])
+    }
+
     func test_resumedLocalBatchMarksTranscriptAsLocal() async throws {
         let recordingID = UUID()
         var item = BatchTranscriptionItem(sourceURL: URL(fileURLWithPath: "/tmp/source.m4a"))

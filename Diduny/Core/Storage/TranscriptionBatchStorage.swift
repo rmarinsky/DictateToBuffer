@@ -191,8 +191,16 @@ final class TranscriptionBatchStorage {
         )
         metadataURL = baseDirectory.appendingPathComponent("transcription_batches.json")
         loadErrorMessage = nil
-        guard let data = try? Data(contentsOf: metadataURL) else {
+        guard FileManager.default.fileExists(atPath: metadataURL.path) else {
             batches = []
+            return
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: metadataURL)
+        } catch {
+            batches = []
+            loadErrorMessage = "Diduny couldn't read batches. The original data remains at \(metadataURL.path)."
             return
         }
         let decoder = JSONDecoder()
@@ -301,6 +309,7 @@ final class TranscriptionBatchStorage {
         let removedItems = batches.flatMap { batch in
             (batch.workItems ?? []).filter { $0.recordingID.map(ids.contains) == true }
         }
+        try removedItems.forEach(removeDownloadedArtifact)
         try mutateAndSave {
             for index in batches.indices {
                 batches[index].recordingIDs.removeAll(where: ids.contains)
@@ -309,7 +318,6 @@ final class TranscriptionBatchStorage {
                 }
             }
         }
-        removedItems.forEach(removeDownloadedArtifact)
     }
 
     @discardableResult
@@ -323,6 +331,7 @@ final class TranscriptionBatchStorage {
                 candidate.id == batchID || item.recordingID.map(affected.contains) == true
             }
         }
+        try removedItems.forEach(removeDownloadedArtifact)
         try mutateAndSave {
             batches.removeAll { $0.id == batchID }
             for index in batches.indices {
@@ -332,17 +341,21 @@ final class TranscriptionBatchStorage {
                 }
             }
         }
-        removedItems.forEach(removeDownloadedArtifact)
         return affected
     }
 
-    private func removeDownloadedArtifact(_ item: BatchTranscriptionItem) {
+    private func removeDownloadedArtifact(_ item: BatchTranscriptionItem) throws {
         guard let url = item.downloadedAudioURL?.standardizedFileURL else { return }
         let fileManager = FileManager.default
-        try? fileManager.removeItem(at: url)
+        let temporaryRoot = fileManager.temporaryDirectory.standardizedFileURL.path + "/"
+        guard url.path.hasPrefix(temporaryRoot) else {
+            throw CocoaError(.fileWriteNoPermission, userInfo: [NSFilePathErrorKey: url.path])
+        }
+        if fileManager.fileExists(atPath: url.path) {
+            try fileManager.removeItem(at: url)
+        }
 
         let parent = url.deletingLastPathComponent()
-        let temporaryRoot = fileManager.temporaryDirectory.standardizedFileURL.path + "/"
         guard parent.path.hasPrefix(temporaryRoot),
               (try? fileManager.contentsOfDirectory(atPath: parent.path).isEmpty) == true
         else { return }

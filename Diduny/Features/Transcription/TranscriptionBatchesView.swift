@@ -96,7 +96,7 @@ struct TranscriptionBatchInspectorView: View {
                                     batchService.resume(batch: currentBatch)
                                 }
                                 .controlSize(.small)
-                                .disabled(batchService.isProcessing)
+                                .disabled(!batchService.canResume(batch: currentBatch))
                             }
                             Button {
                                 ClipboardService.shared.copy(

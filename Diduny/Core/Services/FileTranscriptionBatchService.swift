@@ -465,7 +465,7 @@ final class FileTranscriptionBatchService {
     }
 
     func resume(batch: TranscriptionBatch) {
-        guard !isProcessing, let persistedItems = batch.workItems, !persistedItems.isEmpty else {
+        guard canResume(batch: batch), let persistedItems = batch.workItems else {
             return
         }
         do {
@@ -484,6 +484,12 @@ final class FileTranscriptionBatchService {
             return item
         }
         retry(ids: Set(items.filter { $0.status != .completed && $0.status != .duplicate }.map(\.id)))
+    }
+
+    func canResume(batch: TranscriptionBatch) -> Bool {
+        !isProcessing
+            && (currentBatchID == nil || currentBatchID == batch.id)
+            && !(batch.workItems?.isEmpty ?? true)
     }
 
     func add(urls: [URL]) {

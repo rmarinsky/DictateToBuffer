@@ -11,6 +11,7 @@ final class RecordingsLibraryStorage {
     private let appSupportDir: URL
     private let recordingsDir: URL
     private let metadataURL: URL
+    private let deletionRecoveryURL: URL
     private let batchStorage: TranscriptionBatchStorage
     private let metadataWriteQueue = DispatchQueue(label: "ua.com.rmarinsky.diduny.recordings-metadata")
 
@@ -31,6 +32,7 @@ final class RecordingsLibraryStorage {
 
         try? fm.createDirectory(at: appDir, withIntermediateDirectories: true)
         metadataURL = appDir.appendingPathComponent("recordings_metadata.json")
+        deletionRecoveryURL = appDir.appendingPathComponent("recordings_delete_recovery.json")
 
         Task { @MainActor [weak self] in
             await self?.loadAndPruneAsync()
@@ -234,6 +236,10 @@ final class RecordingsLibraryStorage {
         let targets = recordings.filter { ids.contains($0.id) }
         var stagedFiles: [(original: URL, staged: URL)] = []
 
+        guard Self.writeMetadataSnapshot(previousRecordings, to: deletionRecoveryURL) else {
+            return false
+        }
+
         func restoreStagedFiles() {
             for file in stagedFiles.reversed() where fileManager.fileExists(atPath: file.staged.path) {
                 do {
@@ -256,6 +262,7 @@ final class RecordingsLibraryStorage {
             }
         } catch {
             restoreStagedFiles()
+            try? fileManager.removeItem(at: deletionRecoveryURL)
             Log.app.error("Failed to stage recording deletion: \(error.localizedDescription)")
             return false
         }
@@ -271,7 +278,9 @@ final class RecordingsLibraryStorage {
             try updateBatchMetadata()
         } catch {
             recordings = previousRecordings
-            if !saveMetadataSynchronously() {
+            if saveMetadataSynchronously() {
+                try? fileManager.removeItem(at: deletionRecoveryURL)
+            } else {
                 Log.app.error("Failed to restore recordings metadata after batch update failure")
             }
             restoreStagedFiles()
@@ -286,6 +295,7 @@ final class RecordingsLibraryStorage {
                 Log.app.warning("Failed to clean staged recording file: \(error.localizedDescription)")
             }
         }
+        try? fileManager.removeItem(at: deletionRecoveryURL)
         return true
     }
 
@@ -452,11 +462,24 @@ final class RecordingsLibraryStorage {
 
     private func loadAndPruneAsync() async {
         let url = metadataURL
+        let recoveryURL = deletionRecoveryURL
         let recDir = recordingsDir
         let result = await Task.detached(
             priority: .utility
         ) { () -> (recordings: [Recording], resetInterrupted: Bool)? in
-            guard let data = try? Data(contentsOf: url) else { return nil }
+            let data: Data
+            if let recoveryData = try? Data(contentsOf: recoveryURL) {
+                data = recoveryData
+                do {
+                    try recoveryData.write(to: url, options: .atomic)
+                    try FileManager.default.removeItem(at: recoveryURL)
+                } catch {
+                    Log.app.error("Failed to restore recording deletion recovery: \(error.localizedDescription)")
+                }
+            } else {
+                guard let metadata = try? Data(contentsOf: url) else { return nil }
+                data = metadata
+            }
             do {
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .iso8601

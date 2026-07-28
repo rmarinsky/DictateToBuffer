@@ -91,6 +91,21 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: metadataURL), corruptData)
     }
 
+    func test_unreadableExistingMetadataBlocksWrites() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TranscriptionBatchStorageTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let metadataURL = directory.appendingPathComponent("transcription_batches.json")
+        try FileManager.default.createDirectory(at: metadataURL, withIntermediateDirectories: true)
+
+        let store = try TranscriptionBatchStorage(baseDirectory: directory)
+
+        XCTAssertNotNil(store.loadErrorMessage)
+        XCTAssertThrowsError(try store.create(name: "Must not overwrite", recordingIDs: []))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: metadataURL.path))
+    }
+
     func test_batchDerivesStatusSearchAndMarkdownFromCurrentRecordings() {
         let completed = makeRecording(title: "Quarterly planning", transcript: "Revenue grew")
         let failed = makeRecording(title: "Customer call", status: .failed, transcript: nil)
@@ -467,5 +482,62 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         XCTAssertTrue(store.recordings.contains(where: { $0.id == recordingID }))
         XCTAssertTrue(FileManager.default.fileExists(atPath: store.audioFileURL(for: recording).path))
         XCTAssertEqual(batchStore.batches.first?.recordingIDs, [recordingID])
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent("recordings_delete_recovery.json").path
+        ))
+    }
+
+    func test_startupRestoresRecordingMetadataFromDeletionRecoveryJournal() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RecordingDeleteRecoveryTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recordingsDirectory = directory.appendingPathComponent("Recordings")
+        try FileManager.default.createDirectory(at: recordingsDirectory, withIntermediateDirectories: true)
+        let recording = Recording(
+            id: UUID(),
+            createdAt: Date(),
+            type: .fileTranscription,
+            audioFileName: "recovered.m4a",
+            durationSeconds: 1,
+            fileSizeBytes: 5,
+            status: .transcribed,
+            transcriptionText: "Recovered",
+            sourceDevice: nil,
+            title: "Recovered"
+        )
+        try Data("audio".utf8).write(
+            to: recordingsDirectory.appendingPathComponent(recording.audioFileName)
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode([recording]).write(
+            to: directory.appendingPathComponent("recordings_delete_recovery.json")
+        )
+        try Data("[]".utf8).write(to: directory.appendingPathComponent("recordings_metadata.json"))
+        let batchStore = try TranscriptionBatchStorage(baseDirectory: directory)
+
+        let store = RecordingsLibraryStorage(baseDirectory: directory, batchStorage: batchStore)
+        for _ in 0 ..< 100 where store.recordings.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertEqual(store.recordings.map(\.id), [recording.id])
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent("recordings_delete_recovery.json").path
+        ))
+    }
+
+    func test_batchDeletionRejectsArtifactOutsideDidunyTemporaryDirectory() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BatchArtifactBoundaryTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let batchStore = try TranscriptionBatchStorage(baseDirectory: directory)
+        var item = BatchTranscriptionItem(sourceURL: URL(fileURLWithPath: "/tmp/source.m4a"))
+        item.downloadedAudioURL = URL(fileURLWithPath: "/Applications/not-a-diduny-checkpoint")
+        let batch = try batchStore.create(name: "Protected", recordingIDs: [])
+        try batchStore.replaceWorkItems([item], in: batch.id)
+
+        XCTAssertThrowsError(try batchStore.delete(batchID: batch.id))
+        XCTAssertEqual(batchStore.batches.map(\.id), [batch.id])
     }
 }
