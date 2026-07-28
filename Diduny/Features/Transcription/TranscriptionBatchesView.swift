@@ -363,7 +363,8 @@ struct NewTranscriptionBatchSheet: View {
     private func createBatch() {
         do {
             let remoteSources = try YouTubeRemoteMediaSource.normalizeBatch(urlText)
-            FileTranscriptionBatchService.shared.beginBatch(
+            let batchService = FileTranscriptionBatchService.shared
+            let accepted = batchService.beginBatch(
                 urls: files,
                 remoteSources: remoteSources,
                 name: name,
@@ -372,6 +373,11 @@ struct NewTranscriptionBatchSheet: View {
                     .filter { selectedRecordingIDs.contains($0.id) }
                     .map(\.id)
             )
+            guard accepted else {
+                validationError = batchService.batchError
+                    ?? "Another transcription batch is active. Finish or retry it before creating a new batch."
+                return
+            }
             if !files.isEmpty || !remoteSources.isEmpty {
                 BatchTranscriptionWindowController.shared.showWindow()
             }

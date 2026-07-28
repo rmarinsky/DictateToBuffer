@@ -16,12 +16,6 @@ final class BatchTranscriptionWindowController {
 
     private init() {}
 
-    func selectFilesForNewBatch() {
-        guard let urls = ImportedMediaPicker.selectFiles(), !urls.isEmpty else { return }
-        FileTranscriptionBatchService.shared.beginBatch(urls: urls)
-        showWindow()
-    }
-
     func addFiles() {
         guard let urls = ImportedMediaPicker.selectFiles(), !urls.isEmpty else { return }
         let service = FileTranscriptionBatchService.shared
@@ -30,12 +24,8 @@ final class BatchTranscriptionWindowController {
         showWindow()
     }
 
-    func selectYouTubeURLsForNewBatch() {
-        presentYouTubeURLImporter(startsNewBatch: true)
-    }
-
     func addYouTubeURLs() {
-        presentYouTubeURLImporter(startsNewBatch: false)
+        presentYouTubeURLImporter()
     }
 
     func openYouTubeInSelectedChrome() {
@@ -111,7 +101,7 @@ final class BatchTranscriptionWindowController {
         self.window = window
     }
 
-    private func presentYouTubeURLImporter(startsNewBatch: Bool) {
+    private func presentYouTubeURLImporter() {
         showWindow()
         guard urlImportWindow == nil, let window else { return }
 
@@ -121,12 +111,8 @@ final class BatchTranscriptionWindowController {
                 SettingsStorage.shared.selectedChromeProfileID = profileID
                 SettingsStorage.shared.remoteMediaRightsAcknowledged = true
                 let service = FileTranscriptionBatchService.shared
-                if startsNewBatch {
-                    service.beginBatch(remoteSources: sources)
-                } else {
-                    service.add(remoteSources: sources)
-                    service.startIfNeeded()
-                }
+                service.add(remoteSources: sources)
+                service.startIfNeeded()
                 self?.dismissYouTubeURLImporter()
             }
         )

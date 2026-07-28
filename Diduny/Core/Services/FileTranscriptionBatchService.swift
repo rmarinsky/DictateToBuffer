@@ -397,16 +397,18 @@ final class FileTranscriptionBatchService {
         self.playCompletionSound = playCompletionSound
     }
 
-    func beginBatch(urls: [URL]) {
+    @discardableResult
+    func beginBatch(urls: [URL]) -> Bool {
         beginBatch(urls: urls, name: "", description: "", existingRecordingIDs: [])
     }
 
+    @discardableResult
     func beginBatch(
         urls: [URL],
         name: String,
         description: String,
         existingRecordingIDs: [UUID]
-    ) {
+    ) -> Bool {
         beginBatch(
             urls: urls,
             remoteSources: [],
@@ -416,7 +418,8 @@ final class FileTranscriptionBatchService {
         )
     }
 
-    func beginBatch(remoteSources: [YouTubeRemoteMediaSource]) {
+    @discardableResult
+    func beginBatch(remoteSources: [YouTubeRemoteMediaSource]) -> Bool {
         beginBatch(
             remoteSources: remoteSources,
             name: "",
@@ -425,12 +428,13 @@ final class FileTranscriptionBatchService {
         )
     }
 
+    @discardableResult
     func beginBatch(
         remoteSources: [YouTubeRemoteMediaSource],
         name: String,
         description: String,
         existingRecordingIDs: [UUID]
-    ) {
+    ) -> Bool {
         beginBatch(
             urls: [],
             remoteSources: remoteSources,
@@ -440,28 +444,30 @@ final class FileTranscriptionBatchService {
         )
     }
 
+    @discardableResult
     func beginBatch(
         urls: [URL],
         remoteSources: [YouTubeRemoteMediaSource],
         name: String,
         description: String,
         existingRecordingIDs: [UUID]
-    ) {
-        guard !isProcessing else { return }
+    ) -> Bool {
+        guard !isProcessing else { return false }
         guard !urls.isEmpty || !remoteSources.isEmpty || !existingRecordingIDs.isEmpty else {
-            return
+            return false
         }
         resetFinishedBatchIfNeeded()
-        guard currentBatchID == nil else { return }
+        guard currentBatchID == nil else { return false }
         guard createPersistentBatch(
             name: name,
             description: description,
             existingRecordingIDs: existingRecordingIDs
-        ) else { return }
+        ) else { return false }
         add(urls: urls)
         add(remoteSources: remoteSources)
         startIfNeeded()
         finalizePersistentBatchIfFinished()
+        return true
     }
 
     func resume(batch: TranscriptionBatch) {

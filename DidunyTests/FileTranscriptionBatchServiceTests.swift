@@ -685,10 +685,11 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
             playCompletionSound: {}
         )
 
-        service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/first.m4a")])
+        XCTAssertTrue(service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/first.m4a")]))
         try await waitUntil { transcriber.transcribedFileNames == ["first.m4a"] }
-        service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/second.m4a")])
+        let accepted = service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/second.m4a")])
 
+        XCTAssertFalse(accepted)
         XCTAssertEqual(batchStore.createCount, 1)
         XCTAssertEqual(service.items.map(\.sourceURL.lastPathComponent), ["first.m4a"])
         transcriber.releaseAll()
@@ -706,9 +707,10 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
             playCompletionSound: {}
         )
 
-        service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/first.m4a")])
-        service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/second.m4a")])
+        XCTAssertTrue(service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/first.m4a")]))
+        let accepted = service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/second.m4a")])
 
+        XCTAssertFalse(accepted)
         XCTAssertEqual(batchStore.createCount, 1)
         XCTAssertEqual(service.items.map(\.sourceURL.lastPathComponent), ["first.m4a"])
     }
