@@ -59,13 +59,21 @@ struct TranscriptionBatch: Codable, Equatable, Identifiable {
         return recordings.contains { recording in
             memberIDs.contains(recording.id)
                 && [
+                    recording.title,
+                    recording.description,
                     recording.sourceFileName,
                     recording.remoteSource?.title,
+                    recording.remoteSource?.channelName,
+                    recording.remoteSource?.canonicalURL.absoluteString,
                     recording.libraryDisplayName,
                     recording.transcriptionText,
                 ].compactMap { $0 }.contains {
                     $0.localizedCaseInsensitiveContains(normalized)
                 }
+                || memberIDs.contains(recording.id)
+                    && recording.resolvedTranscriptHistory.contains {
+                        $0.text.localizedCaseInsensitiveContains(normalized)
+                    }
         } || workItems?.contains {
             $0.displayName.localizedCaseInsensitiveContains(normalized)
                 || ($0.errorMessage?.localizedCaseInsensitiveContains(normalized) ?? false)
@@ -77,26 +85,61 @@ struct TranscriptionBatch: Codable, Equatable, Identifiable {
         let workItemRecordingIDs = Set((workItems ?? []).compactMap(\.recordingID))
         let recordingsMarkdown = recordingIDs.filter { !workItemRecordingIDs.contains($0) }.compactMap { id -> String? in
             guard let recording = byID[id] else { return nil }
-            let title = recording.remoteSource?.title
-                ?? recording.sourceFileName
-                ?? recording.libraryDisplayName
-            let body = recording.displayTranscriptText
-                ?? "[Transcript unavailable — \(recording.status.displayName)]"
-            return "# \(title)\n\nSource: \(recording.libraryDisplayName)\n\n\(body)"
+            return recordingMarkdown(recording)
         }
         let workItemsMarkdown = (workItems ?? []).compactMap { item -> String? in
             if let recordingID = item.recordingID, let recording = byID[recordingID] {
-                let title = recording.remoteSource?.title
-                    ?? recording.sourceFileName
-                    ?? recording.libraryDisplayName
-                let body = recording.displayTranscriptText
-                    ?? "[Transcript unavailable — \(recording.status.displayName)]"
-                return "# \(title)\n\nSource: \(recording.libraryDisplayName)\n\n\(body)"
+                return recordingMarkdown(recording)
             }
             let source = item.remoteSource == nil ? "File Transcription" : "YouTube"
-            return "# \(item.displayName)\n\nSource: \(source)\n\n[Transcript unavailable — \(item.errorMessage ?? "Not completed")]"
+            return "## \(item.displayName)\n\nType: \(source)\n\n[Transcript unavailable — \(item.errorMessage ?? "Not completed")]"
         }
-        return (recordingsMarkdown + workItemsMarkdown).joined(separator: "\n\n")
+        var header = "# \(name)"
+        if !description.isEmpty { header += "\n\n\(description)" }
+        header += "\n\nCreated: \(createdAt.formatted(.iso8601))"
+        return ([header] + recordingsMarkdown + workItemsMarkdown).joined(separator: "\n\n")
+    }
+
+    private func recordingMarkdown(_ recording: Recording) -> String {
+        let totalSeconds = max(0, Int(recording.durationSeconds.rounded()))
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+        let duration = hours > 0
+            ? String(format: "%d:%02d:%02d", hours, minutes, seconds)
+            : String(format: "%d:%02d", minutes, seconds)
+        var metadata = [
+            "Type: \(recording.libraryDisplayName)",
+            "Duration: \(duration)",
+            "Date: \(recording.createdAt.formatted(.iso8601))",
+        ]
+        if let description = recording.description, !description.isEmpty {
+            metadata.append("Description: \(description)")
+        }
+        if let sourceURL = recording.remoteSource?.canonicalURL.absoluteString {
+            metadata.append("Source URL: \(sourceURL)")
+        }
+        let versions = recording.resolvedTranscriptHistory
+        let history = versions.isEmpty
+            ? "[Transcript unavailable — \(recording.status.displayName)]"
+            : versions.map { version in
+                var heading = switch version.kind {
+                case .cloud: "Cloud"
+                case .local: "Local"
+                case .translation: "Translation"
+                }
+                if version.kind == .translation,
+                   let source = version.sourceLanguageCode,
+                   let target = version.targetLanguageCode
+                {
+                    heading += " · \(source) → \(target)"
+                }
+                var details = ["Processed: \(version.createdAt.formatted(.iso8601))"]
+                if let provider = version.provider { details.append("Provider: \(provider)") }
+                if let model = version.modelIdentifier { details.append("Model: \(model)") }
+                return "### \(heading)\n\n\(details.joined(separator: "\n"))\n\n\(version.text)"
+            }.joined(separator: "\n\n")
+        return "## \(recording.displayTitle)\n\n\(metadata.joined(separator: "\n"))\n\n\(history)"
     }
 }
 
@@ -215,6 +258,9 @@ final class TranscriptionBatchStorage {
     func removeRecordingReferences(_ ids: Set<UUID>) throws {
         guard !ids.isEmpty else { return }
         for index in batches.indices {
+            batches[index].workItems?.filter { item in
+                item.recordingID.map(ids.contains) == true
+            }.forEach(removeDownloadedArtifact)
             batches[index].recordingIDs.removeAll(where: ids.contains)
             batches[index].workItems?.removeAll { item in
                 item.recordingID.map(ids.contains) == true
@@ -229,20 +275,32 @@ final class TranscriptionBatchStorage {
             throw StorageError.batchNotFound
         }
         let affected = Set(batch.recordingIDs)
+        batch.workItems?.forEach(removeDownloadedArtifact)
         batches.removeAll { $0.id == batchID }
         for index in batches.indices {
+            batches[index].workItems?.filter { item in
+                item.recordingID.map(affected.contains) == true
+            }.forEach(removeDownloadedArtifact)
             batches[index].recordingIDs.removeAll(where: affected.contains)
             batches[index].workItems?.removeAll { item in
                 item.recordingID.map(affected.contains) == true
             }
         }
-        for item in batch.workItems ?? [] {
-            if let url = item.downloadedAudioURL {
-                try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
-            }
-        }
         try save()
         return affected
+    }
+
+    private func removeDownloadedArtifact(_ item: BatchTranscriptionItem) {
+        guard let url = item.downloadedAudioURL?.standardizedFileURL else { return }
+        let fileManager = FileManager.default
+        try? fileManager.removeItem(at: url)
+
+        let parent = url.deletingLastPathComponent()
+        let temporaryRoot = fileManager.temporaryDirectory.standardizedFileURL.path + "/"
+        guard parent.path.hasPrefix(temporaryRoot),
+              (try? fileManager.contentsOfDirectory(atPath: parent.path).isEmpty) == true
+        else { return }
+        try? fileManager.removeItem(at: parent)
     }
 
     private func save() throws {

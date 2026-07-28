@@ -89,6 +89,18 @@ final class RecordingModelMigrationTests: XCTestCase {
         XCTAssertEqual(recording.transcriptionText, "Hello world.")
     }
 
+    func test_legacyJSON_surfacesScalarTranscriptAsHistoryWithoutDataLoss() throws {
+        let data = try XCTUnwrap(legacyJSON.data(using: .utf8))
+        let recording = try iso8601.decode([Recording].self, from: data)[0]
+
+        let version = try XCTUnwrap(recording.resolvedTranscriptHistory.first)
+        XCTAssertEqual(recording.resolvedTranscriptHistory.count, 1)
+        XCTAssertEqual(version.id, recording.id)
+        XCTAssertEqual(version.createdAt, recording.processedAt)
+        XCTAssertEqual(version.kind, .cloud)
+        XCTAssertEqual(version.text, "Hello world.")
+    }
+
     // MARK: - 2. Round-trip
 
     func test_roundTrip_orphanedSession_partiallyRecovered() throws {
@@ -237,6 +249,40 @@ final class RecordingModelMigrationTests: XCTestCase {
 
         XCTAssertEqual(decoded.sourceFileName, "Product walkthrough.mov")
         XCTAssertEqual(decoded.sourceFileSizeBytes, 81920)
+    }
+
+    func test_roundTrip_preservesEditableDetailsAndTranscriptHistory() throws {
+        let version = TranscriptVersion(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 1_700_100_100),
+            kind: .translation,
+            provider: "cloud",
+            sourceLanguageCode: "en",
+            targetLanguageCode: "es",
+            text: "Hola"
+        )
+        let original = Recording(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 1_700_100_000),
+            type: .fileTranscription,
+            audioFileName: "interview.m4a",
+            durationSeconds: 30,
+            fileSizeBytes: 4096,
+            status: .translated,
+            transcriptionText: "Hola",
+            sourceDevice: nil,
+            title: "Customer interview",
+            description: "Onboarding research",
+            transcriptHistory: [version]
+        )
+
+        let data = try iso8601Encoder.encode([original])
+        let decoded = try iso8601.decode([Recording].self, from: data)[0]
+
+        XCTAssertEqual(decoded.title, "Customer interview")
+        XCTAssertEqual(decoded.description, "Onboarding research")
+        XCTAssertEqual(decoded.displayTitle, "Customer interview")
+        XCTAssertEqual(decoded.resolvedTranscriptHistory, [version])
     }
 
     func test_interruptedProcessingResetsToUnprocessedAfterLoad() {

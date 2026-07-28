@@ -1536,7 +1536,9 @@ private final class LiveFileTranscriptionBatchRecordingStore: FileTranscriptionB
             status: .transcribed,
             text: transcript.text,
             segments: transcript.segments.isEmpty ? nil : transcript.segments,
-            generatedTranscriptProvenance: provenance
+            generatedTranscriptProvenance: provenance,
+            kind: .cloud,
+            provider: provenance?.provider ?? "cloud"
         )
     }
 

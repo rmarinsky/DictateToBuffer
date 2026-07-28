@@ -263,6 +263,15 @@ final class RecordingsLibraryStorage {
 
     // MARK: - Update
 
+    func updateDetails(id: UUID, title: String, description: String) {
+        guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedDescription = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        recordings[index].title = trimmedTitle.isEmpty ? nil : trimmedTitle
+        recordings[index].description = trimmedDescription.isEmpty ? nil : trimmedDescription
+        saveMetadataSynchronously()
+    }
+
     func updateRecording(
         id: UUID,
         status: Recording.ProcessingStatus,
@@ -308,20 +317,33 @@ final class RecordingsLibraryStorage {
         text: String,
         segments: [TimedTranscriptSegment]?,
         translationTargetLanguageCode: String? = nil,
-        generatedTranscriptProvenance: GeneratedTranscriptProvenance? = nil
+        generatedTranscriptProvenance: GeneratedTranscriptProvenance? = nil,
+        kind: TranscriptVersion.Kind,
+        provider: String? = nil,
+        modelIdentifier: String? = nil,
+        sourceLanguageCode: String? = nil
     ) {
         guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
+        let completedAt = Date()
+        let version = TranscriptVersion(
+            createdAt: completedAt,
+            kind: kind,
+            provider: provider,
+            modelIdentifier: modelIdentifier,
+            sourceLanguageCode: sourceLanguageCode,
+            targetLanguageCode: translationTargetLanguageCode,
+            text: text,
+            segments: segments,
+            provenance: generatedTranscriptProvenance
+        )
+        recordings[index].transcriptHistory = recordings[index].resolvedTranscriptHistory + [version]
         recordings[index].status = status
         recordings[index].transcriptionText = text
         recordings[index].errorMessage = nil
-        recordings[index].processedAt = Date()
+        recordings[index].processedAt = completedAt
         recordings[index].transcriptSegments = segments
-        if let translationTargetLanguageCode {
-            recordings[index].translationTargetLanguageCode = translationTargetLanguageCode
-        }
-        if let generatedTranscriptProvenance {
-            recordings[index].generatedTranscriptProvenance = generatedTranscriptProvenance
-        }
+        recordings[index].translationTargetLanguageCode = translationTargetLanguageCode
+        recordings[index].generatedTranscriptProvenance = generatedTranscriptProvenance
         saveMetadataSynchronously()
     }
 
