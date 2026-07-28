@@ -154,13 +154,13 @@ struct RecordingsLibraryView: View {
         }
         .alert("Delete Recording", isPresented: $showDeleteConfirmation) {
             Button("Delete", role: .destructive) {
-                if let r = recordingToDelete {
-                    if playbackService.playingRecordingId == r.id {
+                if let recording = recordingToDelete {
+                    if playbackService.playingRecordingId == recording.id {
                         playbackService.stop()
                     }
-                    if storage.deleteRecording(r) {
-                        selectedRecordingIds.remove(r.id)
-                        if case let .recording(id, _) = inspectorSelection, id == r.id {
+                    if storage.deleteRecording(recording) {
+                        selectedRecordingIds.remove(recording.id)
+                        if case let .recording(id, _) = inspectorSelection, id == recording.id {
                             inspectorSelection = nil
                         }
                     } else {
