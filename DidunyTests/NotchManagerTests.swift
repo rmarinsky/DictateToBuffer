@@ -232,3 +232,28 @@ struct NotchManagerTests {
                 "Timer must continue from original start time after ESC info")
     }
 }
+
+@Suite("Dictation overlay controls")
+@MainActor
+struct DictationOverlayControllerTests {
+    @Test("Stop cancels voice recording while it is still starting")
+    func stopCancelsStartingVoiceRecording() async {
+        let delegate = AppDelegate()
+        delegate.appState.recordingState = .processing
+
+        await delegate.stopActiveRecordingFromNotch()
+
+        #expect(delegate.appState.recordingState == .idle)
+    }
+
+    @Test("Stop does not cancel voice recording while it is finalizing")
+    func stopDoesNotCancelFinalizingVoiceRecording() async {
+        let delegate = AppDelegate()
+        delegate.appState.recordingState = .processing
+        delegate.appState.recordingStartTime = Date()
+
+        await delegate.stopActiveRecordingFromNotch()
+
+        #expect(delegate.appState.recordingState == .processing)
+    }
+}
