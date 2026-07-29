@@ -221,7 +221,6 @@ final class EdgeCommandPanelController: NSObject {
     private var panelContentView: EdgeCommandPanelContentView?
     private var model: EdgeCommandPanelModel?
     private var collapseTask: Task<Void, Never>?
-    private var compactFeedbackKind: RecordingKind?
     private var dock: EdgeCommandPanelDock?
     private var dragCursorOffset: NSPoint?
 
@@ -235,27 +234,27 @@ final class EdgeCommandPanelController: NSObject {
         showCollapsed()
     }
 
-    func usesCompactFeedback(for mode: RecordingMode) -> Bool {
-        switch (compactFeedbackKind, mode) {
-        case (.voice, .voice), (.translation, .translation), (.meeting, .meeting), (.meetingTranslation, .meetingTranslation):
-            true
-        default:
-            false
-        }
-    }
-
-    func finishCompactFeedback(for mode: RecordingMode) {
-        guard usesCompactFeedback(for: mode) else { return }
-        compactFeedbackKind = nil
-    }
-
     private func refreshModel() {
         let pairs = SettingsStorage.shared.translationLanguagePairs
         let selected = SettingsStorage.shared.resolveTranslationLanguagePair()
+        let isSignedIn = AuthService.hasStoredSession
+        let provider: TranscriptionProvider = isSignedIn
+            && SettingsStorage.shared.effectiveTranscriptionProvider == .cloud
+            && SettingsStorage.shared.effectiveTranslationProvider == .cloud ? .cloud : .local
         if let model {
-            model.refresh(pairs: pairs, selectedPair: selected)
+            model.refresh(
+                pairs: pairs,
+                selectedPair: selected,
+                provider: provider,
+                isSignedIn: isSignedIn
+            )
         } else {
-            model = EdgeCommandPanelModel(pairs: pairs, selectedPair: selected)
+            model = EdgeCommandPanelModel(
+                pairs: pairs,
+                selectedPair: selected,
+                provider: provider,
+                isSignedIn: isSignedIn
+            )
         }
     }
 
@@ -263,7 +262,8 @@ final class EdgeCommandPanelController: NSObject {
         collapseTask?.cancel()
         let panel = panel ?? makePanel()
         self.panel = panel
-        position(panel, expanded: false)
+        model?.isShowingLiveFeedback = false
+        position(panel, presentation: .collapsed)
         panel.orderFrontRegardless()
     }
 
@@ -272,11 +272,27 @@ final class EdgeCommandPanelController: NSObject {
         refreshModel()
         let panel = panel ?? makePanel()
         self.panel = panel
-        position(panel, expanded: true)
+        model?.isShowingLiveFeedback = false
+        position(panel, presentation: commandPresentation)
         panel.orderFrontRegardless()
     }
 
+    func showLiveFeedback(mode: RecordingMode) {
+        collapseTask?.cancel()
+        let panel = panel ?? makePanel()
+        self.panel = panel
+        model?.isShowingLiveFeedback = true
+        position(panel, presentation: .live(mode))
+        panel.orderFrontRegardless()
+    }
+
+    func dismissLiveFeedback() {
+        guard model?.isShowingLiveFeedback == true else { return }
+        showCollapsed()
+    }
+
     private func setHovering(_ hovering: Bool) {
+        guard model?.isShowingLiveFeedback != true else { return }
         if hovering {
             collapseTask?.cancel()
             guard model?.isExpanded != true else { return }
@@ -315,7 +331,7 @@ final class EdgeCommandPanelController: NSObject {
         let visibleFrame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         dock = EdgeCommandPanelPlacement.nearestDock(to: panel.frame, in: visibleFrame)
         model?.dockEdge = dock?.edge ?? .right
-        position(panel, expanded: true, on: visibleFrame)
+        position(panel, presentation: currentPresentation, on: visibleFrame)
     }
 
     private func perform(_ action: EdgeCommandAction) {
@@ -326,13 +342,11 @@ final class EdgeCommandPanelController: NSObject {
         case .transcribe:
             if appDelegate.appState.recordingState == .idle {
                 guard appDelegate.canStartRecording(kind: .voice) else { showCollapsed(); return }
-                compactFeedbackKind = .voice
             }
             appDelegate.toggleRecording()
         case .translate:
             if appDelegate.appState.translationRecordingState == .idle {
                 guard appDelegate.canStartRecording(kind: .translation), let pair else { showCollapsed(); return }
-                compactFeedbackKind = .translation
                 Task { await appDelegate.startTranslationRecording(languagePair: pair) }
             } else {
                 appDelegate.toggleTranslationRecording()
@@ -340,22 +354,38 @@ final class EdgeCommandPanelController: NSObject {
         case .meeting:
             if appDelegate.appState.meetingRecordingState == .idle {
                 guard appDelegate.canStartRecording(kind: .meeting) else { showCollapsed(); return }
-                compactFeedbackKind = .meeting
             }
             appDelegate.toggleMeetingRecording()
         case .translateMeeting:
             if appDelegate.appState.meetingTranslationRecordingState == .idle {
                 guard appDelegate.canStartRecording(kind: .meetingTranslation), let pair else { showCollapsed(); return }
-                compactFeedbackKind = .meetingTranslation
                 Task { await appDelegate.startMeetingTranslationRecording(languagePair: pair) }
             } else {
                 appDelegate.toggleMeetingTranslationRecording()
             }
         case .batch:
             appDelegate.batchFilesAndURLs()
+            showCollapsed()
         }
+    }
 
-        showCollapsed()
+    private func selectProvider(_ provider: TranscriptionProvider) {
+        guard let model, model.selectProvider(provider) else {
+            openAccount()
+            return
+        }
+        SettingsStorage.shared.transcriptionProvider = provider
+        SettingsStorage.shared.translationProvider = provider
+        if provider == .local {
+            SettingsStorage.shared.meetingRealtimeTranscriptionEnabled = false
+        }
+        if let panel {
+            position(panel, presentation: commandPresentation)
+        }
+    }
+
+    private func openAccount() {
+        appDelegate?.openMainWindow(section: .account)
     }
 
     private func makePanel() -> EdgeCommandPanel {
@@ -384,7 +414,13 @@ final class EdgeCommandPanelController: NSObject {
         )
         let expandedView = EdgeCommandExpandedView(
             model: model!,
+            liveStore: DictationOverlayController.shared.store,
             onAction: { [weak self] action in self?.perform(action) },
+            onProvider: { [weak self] provider in self?.selectProvider(provider) },
+            onSignIn: { [weak self] in self?.openAccount() },
+            onCopy: { DictationOverlayController.shared.copyCurrentTranscript() },
+            onStop: { DictationOverlayController.shared.requestStop() },
+            onDismissLive: { DictationOverlayController.shared.dismiss() },
             onCollapse: { [weak self] in self?.showCollapsed() },
             onDrag: { [weak self] in self?.dragPanel() },
             onDragEnd: { [weak self] in self?.finishDraggingPanel() }
@@ -399,7 +435,11 @@ final class EdgeCommandPanelController: NSObject {
         return panel
     }
 
-    private func position(_ panel: NSPanel, expanded: Bool, on explicitVisibleFrame: NSRect? = nil) {
+    private func position(
+        _ panel: NSPanel,
+        presentation: EdgeCommandPanelPresentation,
+        on explicitVisibleFrame: NSRect? = nil
+    ) {
         let screen = dock == nil ? activeScreen() : panel.screen ?? activeScreen()
         let visibleFrame = explicitVisibleFrame
             ?? screen?.visibleFrame
@@ -407,10 +447,15 @@ final class EdgeCommandPanelController: NSObject {
         let resolvedDock = dock ?? EdgeCommandPanelDock(edge: .right, offset: visibleFrame.midY)
         dock = resolvedDock
         model?.dockEdge = resolvedDock.edge
-        model?.isExpanded = expanded
-        panelContentView?.setExpanded(expanded)
+        let isExpanded = presentation != .collapsed
+        model?.isExpanded = isExpanded
+        panelContentView?.setExpanded(isExpanded)
 
-        let frame = EdgeCommandPanelPlacement.frame(in: visibleFrame, dock: resolvedDock, expanded: expanded)
+        let frame = EdgeCommandPanelPlacement.frame(
+            in: visibleFrame,
+            dock: resolvedDock,
+            presentation: presentation
+        )
         if panel.isVisible {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.24
@@ -424,6 +469,18 @@ final class EdgeCommandPanelController: NSObject {
 
     private func activeScreen() -> NSScreen? {
         NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
+    }
+
+    private var commandPresentation: EdgeCommandPanelPresentation {
+        .commands(isCloud: model?.provider == .cloud)
+    }
+
+    private var currentPresentation: EdgeCommandPanelPresentation {
+        guard let model else { return .collapsed }
+        if model.isShowingLiveFeedback {
+            return .live(DictationOverlayController.shared.store.mode)
+        }
+        return model.isExpanded ? commandPresentation : .collapsed
     }
 }
 
@@ -572,46 +629,58 @@ private struct EdgeCommandTabView: View {
 
 private struct EdgeCommandExpandedView: View {
     let model: EdgeCommandPanelModel
+    let liveStore: LiveDictationOverlayStore
     let onAction: (EdgeCommandAction) -> Void
+    let onProvider: (TranscriptionProvider) -> Void
+    let onSignIn: () -> Void
+    let onCopy: () -> Void
+    let onStop: () -> Void
+    let onDismissLive: () -> Void
     let onCollapse: () -> Void
     let onDrag: () -> Void
     let onDragEnd: () -> Void
 
     var body: some View {
+        ZStack {
+            if model.isShowingLiveFeedback {
+                LiveDictationOverlayView(
+                    store: liveStore,
+                    dockEdge: model.dockEdge,
+                    onCopy: onCopy,
+                    onStop: onStop,
+                    onDismiss: onDismissLive,
+                    onDrag: onDrag,
+                    onDragEnd: onDragEnd
+                )
+                .transition(.scale(scale: 0.96, anchor: .top).combined(with: .opacity))
+            } else {
+                commandView
+                    .transition(.scale(scale: 0.96, anchor: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.38, dampingFraction: 0.86), value: model.isShowingLiveFeedback)
+    }
+
+    private var commandView: some View {
         @Bindable var model = model
-        VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: 10) {
             header
 
+            providerControl
+
+            if model.showsTranslationControls {
+                translationTargetControl(model: model)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 7) {
-                ForEach(EdgeCommandAction.allCases.filter { $0 != .batch }) { action in
+                ForEach(model.availableActions) { action in
                     EdgeCommandActionButton(
                         action: action,
                         meta: actionMeta(action),
                         onAction: { onAction(action) }
                     )
                 }
-            }
-
-            HStack(spacing: 8) {
-                Text("Translate to")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 4)
-                Picker("Translate to", selection: $model.selectedPairID) {
-                    ForEach(model.pairs) { pair in
-                        Text(languageName(pair.languageB)).tag(pair.id)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .fixedSize()
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 28)
-            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
             }
 
             Button { onAction(.batch) } label: {
@@ -626,6 +695,80 @@ private struct EdgeCommandExpandedView: View {
         .padding(14)
         .background(.regularMaterial, in: panelShape)
         .overlay(panelShape.stroke(Color.primary.opacity(0.10), lineWidth: 0.5))
+        .animation(.spring(response: 0.32, dampingFraction: 0.9), value: model.provider)
+    }
+
+    private var providerControl: some View {
+        HStack(spacing: 7) {
+            Text("Provider")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 2) {
+                providerButton(.local, title: "Local", icon: "desktopcomputer")
+                providerButton(.cloud, title: "Cloud", icon: model.isSignedIn ? "cloud" : "lock.fill")
+            }
+            .padding(3)
+            .background(Color.black.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            if !model.isSignedIn {
+                Button("Sign in", action: onSignIn)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color("BrandAccentDeep"))
+                    .padding(.horizontal, 7)
+                    .frame(height: 26)
+                    .background(Color("BrandTintSoft"), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }
+        }
+        .frame(height: 30)
+    }
+
+    private func providerButton(
+        _ provider: TranscriptionProvider,
+        title: String,
+        icon: String
+    ) -> some View {
+        let selected = model.provider == provider
+        return Button { onProvider(provider) } label: {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 9, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 10.5, weight: .semibold))
+            }
+            .foregroundStyle(selected ? Color.primary : Color.secondary)
+            .frame(maxWidth: .infinity, minHeight: 24)
+            .padding(.horizontal, 6)
+            .background(selected ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private func translationTargetControl(model: EdgeCommandPanelModel) -> some View {
+        @Bindable var model = model
+        return HStack(spacing: 8) {
+            Text("Translate to")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 4)
+            Picker("Translate to", selection: $model.selectedPairID) {
+                ForEach(model.pairs) { pair in
+                    Text(languageName(pair.languageB)).tag(pair.id)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+        }
     }
 
     private var header: some View {
@@ -653,7 +796,7 @@ private struct EdgeCommandExpandedView: View {
             }
             Spacer(minLength: 4)
             Button(action: onCollapse) {
-                Image(systemName: collapseSymbol)
+                Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .semibold))
                     .frame(width: 26, height: 26)
                     .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -699,15 +842,6 @@ private struct EdgeCommandExpandedView: View {
         }
     }
 
-    private var collapseSymbol: String {
-        switch model.dockEdge {
-        case .left: "chevron.left"
-        case .right: "chevron.right"
-        case .top: "chevron.up"
-        case .bottom: "chevron.down"
-        }
-    }
-
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 2)
             .onChanged { _ in onDrag() }
@@ -748,7 +882,7 @@ private struct EdgeCommandActionButton: View {
                 Image(systemName: action.icon)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Color("BrandAccentDeep"))
-                    .frame(width: 28, height: 28)
+                    .frame(width: 24, height: 24)
                     .background(Color("BrandTintSoft"), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 Text(action.title)
                     .font(.system(size: 11.5, weight: .semibold))
@@ -757,8 +891,8 @@ private struct EdgeCommandActionButton: View {
                     .font(.system(size: 9.5))
                     .foregroundStyle(.secondary)
             }
-            .padding(9)
-            .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+            .padding(8)
+            .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
             .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
         }
         .buttonStyle(.plain)

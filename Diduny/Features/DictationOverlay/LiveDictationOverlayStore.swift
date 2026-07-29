@@ -29,13 +29,13 @@ final class LiveDictationOverlayStore {
     var title: String {
         switch mode {
         case .voice:
-            "Dictation"
+            "Transcribing"
         case .translation:
-            "Translation"
+            "Translating"
         case .meeting:
-            "Meeting"
+            "Recording meeting"
         case .meetingTranslation:
-            "Meeting Translation"
+            "Translating meeting"
         case .fileTranscription:
             "File Transcription"
         }
@@ -63,7 +63,7 @@ final class LiveDictationOverlayStore {
         case .processing:
             "Formatting"
         case .pasted:
-            "Pasted"
+            "Complete"
         case let .error(message):
             message
         case let .info(message):
@@ -81,6 +81,31 @@ final class LiveDictationOverlayStore {
 
     var canStop: Bool {
         phase == .recording || phase == .starting
+    }
+
+    var providerLabel: String {
+        let provider: TranscriptionProvider = switch mode {
+        case .translation, .meetingTranslation:
+            SettingsStorage.shared.effectiveTranslationProvider
+        case .voice, .meeting, .fileTranscription:
+            SettingsStorage.shared.effectiveTranscriptionProvider
+        }
+        return provider == .cloud ? "Cloud" : "Local"
+    }
+
+    var sourceLabel: String {
+        mode.isMeeting ? "System + microphone" : "Microphone"
+    }
+
+    var targetLabel: String? {
+        switch mode {
+        case let .translation(targetLanguage):
+            targetLanguage
+        case .meetingTranslation:
+            SettingsStorage.shared.resolveTranslationLanguagePair().displayLabel
+        case .voice, .meeting, .fileTranscription:
+            nil
+        }
     }
 
     func reset(mode: RecordingMode) {
