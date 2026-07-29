@@ -501,7 +501,6 @@ final class FileTranscriptionBatchService {
         remoteSources: [YouTubeRemoteMediaSource],
         existingRecordingIDs: [UUID]
     ) -> Bool {
-        guard !isProcessing else { return false }
         guard !urls.isEmpty || !remoteSources.isEmpty || !existingRecordingIDs.isEmpty else {
             return false
         }
@@ -514,6 +513,22 @@ final class FileTranscriptionBatchService {
                 batchError = "Select a browser session to transcribe YouTube URLs."
                 return false
             }
+        }
+        if let currentBatchID {
+            guard currentBatchID == batch.id else { return false }
+            do {
+                try batchPersistence?.addRecordingIDs(existingRecordingIDs, to: batch.id)
+            } catch {
+                batchError = "Could not update the transcription batch."
+                return false
+            }
+            initialRecordingIDs.append(contentsOf: existingRecordingIDs.filter {
+                !initialRecordingIDs.contains($0)
+            })
+            add(urls: urls)
+            add(remoteSources: remoteSources)
+            startIfNeeded()
+            return true
         }
         resetFinishedBatchIfNeeded()
         guard currentBatchID == nil else { return false }

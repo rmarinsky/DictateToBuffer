@@ -301,7 +301,6 @@ struct TranscriptionBatchInspectorView: View {
                             }
                             .menuStyle(.borderlessButton)
                             .fixedSize()
-                            .disabled(batchService.isProcessing)
                         }
 
                         sourceEditorContent

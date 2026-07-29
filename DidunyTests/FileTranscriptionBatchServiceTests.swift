@@ -835,6 +835,40 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         try await waitUntil { !service.isProcessing }
     }
 
+    func test_appendToActiveBatchAddsWorkWithoutOpeningAnotherBatch() async throws {
+        let transcriber = BatchTestTranscriber(waitsForRelease: true)
+        let batchStore = BatchTestPersistence()
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: transcriber,
+            recordingStore: BatchTestRecordingStore(),
+            batchPersistence: batchStore,
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+
+        XCTAssertTrue(service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/first.m4a")]))
+        try await waitUntil { transcriber.transcribedFileNames == ["first.m4a"] }
+
+        let accepted = service.append(
+            to: TranscriptionBatch(id: batchStore.batchID, name: "Active"),
+            urls: [URL(fileURLWithPath: "/tmp/second.m4a")],
+            remoteSources: [],
+            existingRecordingIDs: []
+        )
+
+        XCTAssertTrue(accepted)
+        XCTAssertEqual(batchStore.createCount, 1)
+        XCTAssertEqual(
+            service.items.map(\.sourceURL.lastPathComponent),
+            ["first.m4a", "second.m4a"]
+        )
+        transcriber.releaseAll()
+        try await waitUntil { transcriber.transcribedFileNames.count == 2 }
+        transcriber.releaseAll()
+        try await waitUntil { !service.isProcessing }
+    }
+
     func test_beginBatchRejectsOverlapWhileFirstBatchIsPreflightBlocked() {
         let batchStore = BatchTestPersistence()
         let service = FileTranscriptionBatchService(
