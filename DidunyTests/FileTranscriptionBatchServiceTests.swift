@@ -825,6 +825,7 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
 
         XCTAssertTrue(service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/first.m4a")]))
         try await waitUntil { transcriber.transcribedFileNames == ["first.m4a"] }
+        XCTAssertEqual(service.activeBatchID, batchStore.batchID)
         let accepted = service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/second.m4a")])
 
         XCTAssertFalse(accepted)

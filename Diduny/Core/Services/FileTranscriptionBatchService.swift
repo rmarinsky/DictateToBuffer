@@ -357,6 +357,10 @@ final class FileTranscriptionBatchService {
         activeItemIDs.count
     }
 
+    var activeBatchID: UUID? {
+        currentBatchID
+    }
+
     func isActive(_ itemID: UUID) -> Bool {
         activeItemIDs.contains(itemID)
     }
