@@ -84,7 +84,6 @@ final class SettingsStorage {
         case autoPaste
         case playSoundOnCompletion
         case launchAtLogin
-        case recordingFeedbackSurface
         case typingSpeedWordsPerMinute
         case pushToTalkKey
         case pushToTalkHoldEnabled
@@ -263,18 +262,6 @@ final class SettingsStorage {
     var launchAtLogin: Bool {
         get { LaunchAtLogin.isEnabled }
         set { LaunchAtLogin.isEnabled = newValue }
-    }
-
-    var recordingFeedbackSurface: RecordingFeedbackSurface {
-        get {
-            guard let rawValue = defaults.string(forKey: Key.recordingFeedbackSurface.rawValue),
-                  let surface = RecordingFeedbackSurface(rawValue: rawValue)
-            else {
-                return .compactPanel
-            }
-            return surface
-        }
-        set { defaults.set(newValue.rawValue, forKey: Key.recordingFeedbackSurface.rawValue) }
     }
 
     var typingSpeedWordsPerMinute: Double {
