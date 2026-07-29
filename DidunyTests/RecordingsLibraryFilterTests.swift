@@ -111,6 +111,7 @@ final class RecordingStatisticsTests: XCTestCase {
             makeRecording(type: .translation, duration: 20),
             makeRecording(type: .meeting, duration: 30),
             makeRecording(type: .meetingTranslation, duration: 40),
+            makeRecording(type: .meeting, duration: 5, remoteSource: makeYouTubeSource()),
             makeRecording(type: .fileTranscription, duration: 50),
             makeRecording(type: .fileTranscription, duration: 60, remoteSource: makeYouTubeSource())
         ]
@@ -119,10 +120,10 @@ final class RecordingStatisticsTests: XCTestCase {
 
         XCTAssertEqual(statistics.voiceDurationSeconds, 10)
         XCTAssertEqual(statistics.translationDurationSeconds, 20)
-        XCTAssertEqual(statistics.meetingDurationSeconds, 70)
+        XCTAssertEqual(statistics.meetingDurationSeconds, 75)
         XCTAssertEqual(statistics.importedFileDurationSeconds, 50)
         XCTAssertEqual(statistics.youtubeDurationSeconds, 60)
-        XCTAssertEqual(statistics.totalDurationSeconds, 210)
+        XCTAssertEqual(statistics.totalDurationSeconds, 215)
         XCTAssertEqual(
             statistics.voiceDurationSeconds
                 + statistics.translationDurationSeconds

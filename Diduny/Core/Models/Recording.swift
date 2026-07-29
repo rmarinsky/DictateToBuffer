@@ -310,7 +310,9 @@ struct RecordingStatistics {
         importedFileDurationSeconds = recordings
             .filter { $0.type == .fileTranscription && !$0.isYouTubeVideo }
             .reduce(0) { $0 + $1.durationSeconds }
-        youtubeDurationSeconds = recordings.filter(\.isYouTubeVideo).reduce(0) { $0 + $1.durationSeconds }
+        youtubeDurationSeconds = recordings
+            .filter { $0.type == .fileTranscription && $0.isYouTubeVideo }
+            .reduce(0) { $0 + $1.durationSeconds }
         transcribedWordCount = recordings.reduce(0) { $0 + Self.wordCount(in: $1.transcriptionText) }
 
         let typingRecordings = recordings.filter { $0.type != .fileTranscription }
