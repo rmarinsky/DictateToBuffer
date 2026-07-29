@@ -147,6 +147,7 @@ final class EdgeCommandPanelController: NSObject {
 
     private weak var appDelegate: AppDelegate?
     private var panel: EdgeCommandPanel?
+    private var panelContentView: EdgeCommandPanelContentView?
     private var model: EdgeCommandPanelModel?
     private var collapseTask: Task<Void, Never>?
     private var compactFeedbackKind: RecordingKind?
@@ -304,18 +305,26 @@ final class EdgeCommandPanelController: NSObject {
         panel.isMovableByWindowBackground = false
         panel.acceptsMouseMovedEvents = true
 
-        let hostingView = EdgeCommandHostingView(rootView: EdgeCommandPanelView(
+        let tabView = EdgeCommandTabView(
+            model: model!,
+            onExpand: { [weak self] in self?.showExpanded() },
+            onDrag: { [weak self] in self?.dragPanel() },
+            onDragEnd: { [weak self] in self?.finishDraggingPanel() }
+        )
+        let expandedView = EdgeCommandExpandedView(
             model: model!,
             onAction: { [weak self] action in self?.perform(action) },
-            onExpand: { [weak self] in self?.showExpanded() },
             onCollapse: { [weak self] in self?.showCollapsed() },
             onDrag: { [weak self] in self?.dragPanel() },
             onDragEnd: { [weak self] in self?.finishDraggingPanel() }
-        ))
-        hostingView.sizingOptions = []
-        hostingView.autoresizingMask = [.width, .height]
-        hostingView.onHoverChange = { [weak self] hovering in self?.setHovering(hovering) }
-        panel.contentView = hostingView
+        )
+        let contentView = EdgeCommandPanelContentView(
+            tabView: tabView,
+            expandedView: expandedView,
+            onHoverChange: { [weak self] hovering in self?.setHovering(hovering) }
+        )
+        panelContentView = contentView
+        panel.contentView = contentView
         return panel
     }
 
@@ -328,6 +337,7 @@ final class EdgeCommandPanelController: NSObject {
         dock = resolvedDock
         model?.dockEdge = resolvedDock.edge
         model?.isExpanded = expanded
+        panelContentView?.setExpanded(expanded)
 
         let frame = EdgeCommandPanelPlacement.frame(in: visibleFrame, dock: resolvedDock, expanded: expanded)
         if panel.isVisible {
@@ -351,9 +361,46 @@ private final class EdgeCommandPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-private final class EdgeCommandHostingView<Content: View>: NSHostingView<Content> {
-    var onHoverChange: ((Bool) -> Void)?
+private final class EdgeCommandPanelContentView: NSView {
+    private let tabHostingView: NSHostingView<EdgeCommandTabView>
+    private let expandedHostingView: NSHostingView<EdgeCommandExpandedView>
+    private let onHoverChange: (Bool) -> Void
     private var hoverTrackingArea: NSTrackingArea?
+
+    init(
+        tabView: EdgeCommandTabView,
+        expandedView: EdgeCommandExpandedView,
+        onHoverChange: @escaping (Bool) -> Void
+    ) {
+        tabHostingView = NSHostingView(rootView: tabView)
+        expandedHostingView = NSHostingView(rootView: expandedView)
+        self.onHoverChange = onHoverChange
+        super.init(frame: .zero)
+
+        tabHostingView.sizingOptions = []
+        expandedHostingView.sizingOptions = []
+        for hostingView: NSView in [tabHostingView, expandedHostingView] {
+            hostingView.autoresizingMask = [.width, .height]
+            addSubview(hostingView)
+        }
+        setExpanded(false)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        tabHostingView.frame = bounds
+        expandedHostingView.frame = bounds
+    }
+
+    func setExpanded(_ expanded: Bool) {
+        tabHostingView.isHidden = expanded
+        expandedHostingView.isHidden = !expanded
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -371,79 +418,23 @@ private final class EdgeCommandHostingView<Content: View>: NSHostingView<Content
 
     override func mouseEntered(with event: NSEvent) {
         super.mouseEntered(with: event)
-        onHoverChange?(true)
+        onHoverChange(true)
     }
 
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
-        onHoverChange?(false)
-    }
-}
-
-private struct EdgeCommandPanelView: View {
-    let model: EdgeCommandPanelModel
-    let onAction: (EdgeCommandAction) -> Void
-    let onExpand: () -> Void
-    let onCollapse: () -> Void
-    let onDrag: () -> Void
-    let onDragEnd: () -> Void
-
-    var body: some View {
-        @Bindable var model = model
-        ZStack(alignment: alignment(for: model.dockEdge)) {
-            EdgeCommandExpandedView(
-                model: model,
-                onAction: onAction,
-                onCollapse: onCollapse,
-                onDrag: onDrag,
-                onDragEnd: onDragEnd
-            )
-            .opacity(model.isExpanded ? 1 : 0)
-            .scaleEffect(model.isExpanded ? 1 : 0.985, anchor: anchor(for: model.dockEdge))
-            .allowsHitTesting(model.isExpanded)
-            .accessibilityHidden(!model.isExpanded)
-
-            EdgeCommandTabView(
-                edge: model.dockEdge,
-                onExpand: onExpand,
-                onDrag: onDrag,
-                onDragEnd: onDragEnd
-            )
-            .opacity(model.isExpanded ? 0 : 1)
-            .allowsHitTesting(!model.isExpanded)
-            .accessibilityHidden(model.isExpanded)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment(for: model.dockEdge))
-        .clipped()
-        .animation(.easeOut(duration: 0.18), value: model.isExpanded)
-    }
-
-    private func alignment(for edge: EdgeCommandPanelDockEdge) -> Alignment {
-        switch edge {
-        case .left: .leading
-        case .right: .trailing
-        case .top: .top
-        case .bottom: .bottom
-        }
-    }
-
-    private func anchor(for edge: EdgeCommandPanelDockEdge) -> UnitPoint {
-        switch edge {
-        case .left: .leading
-        case .right: .trailing
-        case .top: .top
-        case .bottom: .bottom
-        }
+        onHoverChange(false)
     }
 }
 
 private struct EdgeCommandTabView: View {
-    let edge: EdgeCommandPanelDockEdge
+    let model: EdgeCommandPanelModel
     let onExpand: () -> Void
     let onDrag: () -> Void
     let onDragEnd: () -> Void
 
     var body: some View {
+        let edge = model.dockEdge
         Button(action: onExpand) {
             ZStack {
                 tabShape
@@ -469,7 +460,7 @@ private struct EdgeCommandTabView: View {
     }
 
     private var tabShape: UnevenRoundedRectangle {
-        switch edge {
+        switch model.dockEdge {
         case .left:
             UnevenRoundedRectangle(
                 topLeadingRadius: 0,
