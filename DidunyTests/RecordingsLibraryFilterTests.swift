@@ -70,6 +70,13 @@ final class RecordingsLibraryFilterTests: XCTestCase {
         XCTAssertNil(direct.backDestination)
     }
 
+    func test_batchComposerIsAnInspectorDestination() {
+        let selection = RecordingsInspectorSelection.batchComposer
+
+        XCTAssertNil(selection.parentBatchID)
+        XCTAssertNil(selection.backDestination)
+    }
+
     private func makeRecording(remoteSource: RemoteMediaSourceMetadata?) -> Recording {
         Recording(
             id: UUID(),

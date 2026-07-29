@@ -474,9 +474,9 @@ struct TranscriptionBatchInspectorView: View {
     }
 }
 
-struct NewTranscriptionBatchSheet: View {
-    @Environment(\.dismiss) private var dismiss
+struct NewTranscriptionBatchPanel: View {
     let recordings: [Recording]
+    let onClose: () -> Void
     @State private var name = ""
     @State private var description = ""
     @State private var files: [URL] = []
@@ -493,7 +493,15 @@ struct NewTranscriptionBatchSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("New Transcription Batch").font(.title2.bold())
+            HStack {
+                Text("New Transcription Batch").font(.title2.bold())
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close batch composer")
+            }
             TextField("Batch name (optional)", text: $name)
             TextField("Description (optional)", text: $description, axis: .vertical)
                 .lineLimit(2 ... 4)
@@ -592,15 +600,14 @@ struct NewTranscriptionBatchSheet: View {
 
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button("Cancel", action: onClose)
                 Button("Create and Transcribe") { createBatch() }
                     .buttonStyle(.borderedProminent)
                     .disabled(!canCreate)
             }
         }
-        .padding(24)
-        .frame(width: 560)
-        .frame(minHeight: 460)
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var urlLines: [String] {
@@ -646,7 +653,7 @@ struct NewTranscriptionBatchSheet: View {
             if !files.isEmpty || !remoteSources.isEmpty {
                 BatchTranscriptionWindowController.shared.showWindow()
             }
-            dismiss()
+            onClose()
         } catch {
             validationError = error.localizedDescription
         }

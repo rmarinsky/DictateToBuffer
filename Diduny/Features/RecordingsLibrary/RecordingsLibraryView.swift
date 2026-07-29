@@ -3,6 +3,7 @@ import SwiftUI
 enum RecordingsInspectorSelection: Equatable {
     case recording(UUID, parentBatchID: UUID?)
     case batch(UUID)
+    case batchComposer
 
     var parentBatchID: UUID? {
         guard case let .recording(_, parentBatchID) = self else { return nil }
@@ -22,7 +23,6 @@ struct RecordingsLibraryView: View {
     @State private var searchText = ""
     @State private var filter: RecordingTypeFilter = .all
     @State private var inspectorSelection: RecordingsInspectorSelection?
-    @State private var showBatchComposer = false
     @State private var showDeleteConfirmation = false
     @State private var showBulkDeleteConfirmation = false
     @State private var recordingToDelete: Recording? = nil
@@ -137,11 +137,7 @@ struct RecordingsLibraryView: View {
             set: { if !$0 { inspectorSelection = nil } }
         )) {
             inspectorContent
-                .inspectorColumnWidth(min: 380, ideal: 430, max: 500)
                 .frame(minHeight: 500)
-        }
-        .sheet(isPresented: $showBatchComposer) {
-            NewTranscriptionBatchSheet(recordings: storage.recordings)
         }
         .onAppear {
             batchLoadErrorMessage = batchStorage.loadErrorMessage
@@ -237,7 +233,7 @@ struct RecordingsLibraryView: View {
                 .font(.title2.bold())
             Spacer()
             Button {
-                showBatchComposer = true
+                inspectorSelection = .batchComposer
             } label: {
                 Label(MainWindowController.batchComposerActionTitle, systemImage: "square.stack.3d.up")
             }
@@ -295,7 +291,7 @@ struct RecordingsLibraryView: View {
         let controller = MainWindowController.shared
         guard controller.requestedBatchComposer else { return }
         controller.requestedBatchComposer = false
-        showBatchComposer = true
+        inspectorSelection = .batchComposer
     }
 
     // MARK: - Filter Chips
@@ -442,6 +438,7 @@ struct RecordingsLibraryView: View {
                     },
                     onClose: { inspectorSelection = nil }
                 )
+                .inspectorColumnWidth(min: 380, ideal: 430, max: 500)
             }
         case let .batch(id):
             if let batch = batchStorage.batches.first(where: { $0.id == id }) {
@@ -452,7 +449,14 @@ struct RecordingsLibraryView: View {
                     },
                     onClose: { inspectorSelection = nil }
                 )
+                .inspectorColumnWidth(min: 380, ideal: 430, max: 500)
             }
+        case .batchComposer:
+            NewTranscriptionBatchPanel(
+                recordings: storage.recordings,
+                onClose: { inspectorSelection = nil }
+            )
+            .inspectorColumnWidth(min: 430, ideal: 480, max: 560)
         case nil:
             EmptyView()
         }
