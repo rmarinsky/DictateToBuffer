@@ -193,7 +193,7 @@ final class YouTubeRemoteMediaSourceTests: XCTestCase {
         XCTAssertEqual(WebVTTTranscriptParser.parse(vtt), "Привіт\nсвіте")
     }
 
-    func test_chromeProfileDiscovery_returnsOnlyExistingProfileDirectories() throws {
+    func test_chromiumSessionDiscovery_keepsSelectedBrowserAndExistingProfiles() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("DidunyChromeProfiles-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -214,10 +214,12 @@ final class YouTubeRemoteMediaSourceTests: XCTestCase {
         """
         try Data(localState.utf8).write(to: root.appendingPathComponent("Local State"))
 
-        let profiles = ChromeProfileStore.discover(in: root)
+        let sessions = BrowserSessionStore.discoverChromium(browser: .edge, in: root)
 
-        XCTAssertEqual(profiles.map(\.id), ["Default", "Profile 2"])
-        XCTAssertEqual(profiles.map(\.name), ["Roman", "Work"])
+        XCTAssertEqual(sessions.map(\.browser), [.edge, .edge])
+        XCTAssertEqual(sessions.map(\.profileID), ["Default", "Profile 2"])
+        XCTAssertEqual(sessions.map(\.profileName), ["Roman", "Work"])
+        XCTAssertEqual(sessions.map(\.cookieArgument), ["edge:Default", "edge:Profile 2"])
     }
 
     func test_runtimeArguments_useSelectedBrowserSessionBundledDenoAndExactAudioFormat() throws {

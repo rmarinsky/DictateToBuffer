@@ -506,13 +506,16 @@ struct BrowserSession: Codable, Equatable, Hashable, Identifiable {
 
 typealias ChromeProfile = BrowserSession
 
-enum ChromeProfileStore {
+enum BrowserSessionStore {
     static var defaultUserDataDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Google/Chrome", isDirectory: true)
     }
 
-    static func discover(in userDataDirectory: URL = defaultUserDataDirectory) -> [ChromeProfile] {
+    static func discoverChromium(
+        browser: BrowserKind,
+        in userDataDirectory: URL
+    ) -> [BrowserSession] {
         let stateURL = userDataDirectory.appendingPathComponent("Local State")
         guard let data = try? Data(contentsOf: stateURL),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -526,13 +529,25 @@ enum ChromeProfileStore {
             guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory),
                   isDirectory.boolValue
             else { return nil }
-            return ChromeProfile(id: id, name: metadata["name"] as? String ?? id)
+            return BrowserSession(
+                browser: browser,
+                profileID: id,
+                profileName: metadata["name"] as? String ?? id
+            )
         }
         .sorted { left, right in
             if left.id == "Default" { return true }
             if right.id == "Default" { return false }
             return left.id.localizedStandardCompare(right.id) == .orderedAscending
         }
+    }
+}
+
+enum ChromeProfileStore {
+    static func discover(
+        in userDataDirectory: URL = BrowserSessionStore.defaultUserDataDirectory
+    ) -> [ChromeProfile] {
+        BrowserSessionStore.discoverChromium(browser: .chrome, in: userDataDirectory)
     }
 }
 
