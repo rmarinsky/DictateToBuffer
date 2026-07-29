@@ -1096,6 +1096,35 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertTrue(batchStore.didClose)
     }
 
+    func test_resumePersistedBatchRetriesOnlySelectedItem() async throws {
+        var first = BatchTranscriptionItem(sourceURL: URL(fileURLWithPath: "/tmp/first.m4a"))
+        first.status = .failed
+        var second = BatchTranscriptionItem(sourceURL: URL(fileURLWithPath: "/tmp/second.m4a"))
+        second.status = .failed
+        let batch = TranscriptionBatch(
+            name: "Retry one",
+            isProcessingClosed: true,
+            workItems: [first, second]
+        )
+        let transcriber = BatchTestTranscriber(waitsForRelease: true)
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: transcriber,
+            recordingStore: BatchTestRecordingStore(),
+            batchPersistence: BatchTestPersistence(),
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+
+        service.resume(batch: batch, retrying: [first.id])
+        try await waitUntil { transcriber.transcribedFileNames == ["first.m4a"] }
+
+        XCTAssertEqual(service.activeBatchID, batch.id)
+        XCTAssertEqual(service.items.map(\.status), [.uploading, .failed])
+        transcriber.releaseAll()
+        try await waitUntil { !service.isProcessing }
+    }
+
     func test_resumeDoesNotReplaceAnotherBlockedPersistentBatch() {
         let persistence = BatchTestPersistence()
         let service = FileTranscriptionBatchService(

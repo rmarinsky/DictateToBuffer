@@ -249,7 +249,11 @@ struct TranscriptionBatchInspectorView: View {
                             }
 
                             ForEach(progressItems) { item in
-                                BatchTranscriptionRow(item: item, service: batchService)
+                                BatchTranscriptionRow(
+                                    item: item,
+                                    service: batchService,
+                                    onRetry: retry
+                                )
                                     .background(
                                         Color(.quaternaryLabelColor).opacity(0.08),
                                         in: RoundedRectangle(cornerRadius: 8)
@@ -540,6 +544,14 @@ struct TranscriptionBatchInspectorView: View {
     private func addFiles() {
         guard let files = ImportedMediaPicker.selectFiles(), !files.isEmpty else { return }
         append(urls: files, remoteSources: [], existingRecordingIDs: [])
+    }
+
+    private func retry(_ itemID: UUID) {
+        if batchService.activeBatchID == currentBatch.id {
+            batchService.retry(ids: [itemID])
+        } else {
+            batchService.resume(batch: currentBatch, retrying: [itemID])
+        }
     }
 
     private func addYouTubeURLs() {

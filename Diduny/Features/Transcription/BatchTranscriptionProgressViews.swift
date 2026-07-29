@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 struct BatchTranscriptionRow: View {
     let item: BatchTranscriptionItem
     let service: FileTranscriptionBatchService
+    let onRetry: (UUID) -> Void
     @State private var isShowingTranscript = false
     @State private var isShowingCaptions = false
 
@@ -86,7 +87,7 @@ struct BatchTranscriptionRow: View {
         switch item.status {
         case .failed, .cancelled, .partialResult:
             Button("Retry") {
-                service.retry(ids: [item.id])
+                onRetry(item.id)
             }
             .controlSize(.small)
         case .completed, .duplicate:

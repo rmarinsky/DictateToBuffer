@@ -556,9 +556,16 @@ final class FileTranscriptionBatchService {
     }
 
     func resume(batch: TranscriptionBatch) {
+        resume(batch: batch, retrying: Set(batch.retryableWorkItems.map(\.id)))
+    }
+
+    func resume(batch: TranscriptionBatch, retrying itemIDs: Set<UUID>) {
         guard canResume(batch: batch), let persistedItems = batch.workItems else {
             return
         }
+        let retryableIDs = Set(batch.retryableWorkItems.map(\.id))
+        let selectedIDs = itemIDs.intersection(retryableIDs)
+        guard !selectedIDs.isEmpty else { return }
         do {
             try batchPersistence?.reopenBatch(batch.id)
         } catch {
@@ -574,7 +581,7 @@ final class FileTranscriptionBatchService {
             }
             return item
         }
-        retry(ids: Set(items.filter { $0.status != .completed && $0.status != .duplicate }.map(\.id)))
+        retry(ids: selectedIDs)
     }
 
     func canResume(batch: TranscriptionBatch) -> Bool {
