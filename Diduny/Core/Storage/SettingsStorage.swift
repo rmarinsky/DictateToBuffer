@@ -137,6 +137,7 @@ final class SettingsStorage {
         case proxyBaseURL
         case remoteConfigURL
         case userDeclinedScreenRecording
+        case selectedBrowserSessionID
         case selectedChromeProfileID
         case remoteMediaRightsAcknowledged
     }
@@ -251,6 +252,17 @@ final class SettingsStorage {
                 defaults.set(newValue, forKey: Key.selectedChromeProfileID.rawValue)
             } else {
                 defaults.removeObject(forKey: Key.selectedChromeProfileID.rawValue)
+            }
+        }
+    }
+
+    var selectedBrowserSessionID: String? {
+        get { defaults.string(forKey: Key.selectedBrowserSessionID.rawValue) }
+        set {
+            if let newValue {
+                defaults.set(newValue, forKey: Key.selectedBrowserSessionID.rawValue)
+            } else {
+                defaults.removeObject(forKey: Key.selectedBrowserSessionID.rawValue)
             }
         }
     }

@@ -28,25 +28,35 @@ final class BatchTranscriptionWindowController {
         presentYouTubeURLImporter()
     }
 
-    func openYouTubeInSelectedChrome() {
-        guard let profileID = SettingsStorage.shared.selectedChromeProfileID else { return }
-        openYouTubeInChrome(profileID: profileID)
+    func openYouTubeInSelectedBrowser() {
+        let sessions = BrowserSessionStore.discover()
+        guard let session = BrowserSessionStore.selected(
+            from: sessions,
+            selectionID: SettingsStorage.shared.selectedBrowserSessionID,
+            legacyChromeProfileID: SettingsStorage.shared.selectedChromeProfileID
+        ) else { return }
+        openYouTube(in: session)
     }
 
-    func openYouTubeInChrome(profileID: String) {
-        guard let chromeURL = NSWorkspace.shared.urlForApplication(
-            withBundleIdentifier: "com.google.Chrome"
+    func openYouTube(in session: BrowserSession) {
+        guard let browserURL = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: session.browser.bundleIdentifier
         ),
             let youtubeURL = URL(string: "https://www.youtube.com/")
         else { return }
 
         let configuration = NSWorkspace.OpenConfiguration()
-        configuration.arguments = [
-            "--profile-directory=\(profileID)",
-            youtubeURL.absoluteString
-        ]
+        switch session.browser {
+        case .brave, .chrome, .edge:
+            configuration.arguments = session.profileID.map { ["--profile-directory=\($0)"] } ?? []
+        case .firefox, .zen:
+            configuration.arguments = session.profileID.map { ["-profile", $0] } ?? []
+        case .safari:
+            configuration.arguments = []
+        }
+        configuration.arguments.append(youtubeURL.absoluteString)
         NSWorkspace.shared.openApplication(
-            at: chromeURL,
+            at: browserURL,
             configuration: configuration
         )
     }
@@ -107,8 +117,8 @@ final class BatchTranscriptionWindowController {
 
         let importView = YouTubeURLImportView(
             onCancel: { [weak self] in self?.dismissYouTubeURLImporter() },
-            onSubmit: { [weak self] sources, profileID in
-                SettingsStorage.shared.selectedChromeProfileID = profileID
+            onSubmit: { [weak self] sources, sessionID in
+                SettingsStorage.shared.selectedBrowserSessionID = sessionID
                 SettingsStorage.shared.remoteMediaRightsAcknowledged = true
                 let service = FileTranscriptionBatchService.shared
                 service.add(remoteSources: sources)
@@ -249,22 +259,22 @@ private struct BatchTranscriptionView: View {
                         .font(.system(size: 12))
                     Spacer()
                     if service.isAuthorizationPaused {
-                        Menu("Chrome Profile") {
-                            ForEach(ChromeProfileStore.discover()) { profile in
+                        Menu("Browser Session") {
+                            ForEach(BrowserSessionStore.discover(), id: \.selectionID) { session in
                                 Button {
-                                    SettingsStorage.shared.selectedChromeProfileID = profile.id
+                                    SettingsStorage.shared.selectedBrowserSessionID = session.selectionID
                                 } label: {
-                                    if SettingsStorage.shared.selectedChromeProfileID == profile.id {
-                                        Label(profile.name, systemImage: "checkmark")
+                                    if SettingsStorage.shared.selectedBrowserSessionID == session.selectionID {
+                                        Label(session.displayName, systemImage: "checkmark")
                                     } else {
-                                        Text(profile.name)
+                                        Text(session.displayName)
                                     }
                                 }
                             }
                         }
                         .controlSize(.small)
                         Button("Open YouTube") {
-                            BatchTranscriptionWindowController.shared.openYouTubeInSelectedChrome()
+                            BatchTranscriptionWindowController.shared.openYouTubeInSelectedBrowser()
                         }
                         .controlSize(.small)
                     }
@@ -374,9 +384,9 @@ private struct YouTubeURLImportView: View {
     let onCancel: () -> Void
     let onSubmit: ([YouTubeRemoteMediaSource], String) -> Void
 
-    private let profiles: [ChromeProfile]
+    private let sessions: [BrowserSession]
     @State private var rawURLs = ""
-    @State private var selectedProfileID: String
+    @State private var selectedSessionID: String
     @State private var rightsAcknowledged: Bool
     @State private var validationMessage: String?
 
@@ -386,13 +396,14 @@ private struct YouTubeURLImportView: View {
     ) {
         self.onCancel = onCancel
         self.onSubmit = onSubmit
-        let profiles = ChromeProfileStore.discover()
-        self.profiles = profiles
-        let storedProfile = SettingsStorage.shared.selectedChromeProfileID
-        _selectedProfileID = State(
-            initialValue: profiles.contains(where: { $0.id == storedProfile })
-                ? storedProfile ?? ""
-                : profiles.first?.id ?? ""
+        let sessions = BrowserSessionStore.discover()
+        self.sessions = sessions
+        _selectedSessionID = State(
+            initialValue: BrowserSessionStore.selected(
+                from: sessions,
+                selectionID: SettingsStorage.shared.selectedBrowserSessionID,
+                legacyChromeProfileID: SettingsStorage.shared.selectedChromeProfileID
+            )?.selectionID ?? ""
         )
         _rightsAcknowledged = State(
             initialValue: SettingsStorage.shared.remoteMediaRightsAcknowledged
@@ -421,15 +432,15 @@ private struct YouTubeURLImportView: View {
                 .frame(minHeight: 150)
 
             VStack(alignment: .leading, spacing: 8) {
-                Picker("Chrome profile", selection: $selectedProfileID) {
-                    ForEach(profiles) { profile in
-                        Text(profile.name).tag(profile.id)
+                Picker("Browser session", selection: $selectedSessionID) {
+                    ForEach(sessions, id: \.selectionID) { session in
+                        Text(session.displayName).tag(session.selectionID)
                     }
                 }
-                .disabled(profiles.isEmpty)
+                .disabled(sessions.isEmpty)
 
                 Label(
-                    "Chrome keeps your YouTube session. Diduny remembers only the selected profile and never stores Google credentials.",
+                    "Your browser keeps the YouTube session. Diduny remembers only this selection and never stores Google credentials.",
                     systemImage: "hand.raised"
                 )
                 .font(.system(size: 11))
@@ -437,13 +448,14 @@ private struct YouTubeURLImportView: View {
             }
 
             Button {
-                BatchTranscriptionWindowController.shared.openYouTubeInChrome(
-                    profileID: selectedProfileID
-                )
+                guard let session = sessions.first(where: { $0.selectionID == selectedSessionID }) else {
+                    return
+                }
+                BatchTranscriptionWindowController.shared.openYouTube(in: session)
             } label: {
-                Label("Open YouTube in Selected Profile", systemImage: "safari")
+                Label("Open YouTube in Selected Browser", systemImage: "safari")
             }
-            .disabled(selectedProfileID.isEmpty)
+            .disabled(selectedSessionID.isEmpty)
 
             if !SettingsStorage.shared.remoteMediaRightsAcknowledged {
                 Toggle(
@@ -453,8 +465,8 @@ private struct YouTubeURLImportView: View {
                 .toggleStyle(.checkbox)
             }
 
-            if profiles.isEmpty {
-                Text("No Google Chrome profiles were found. Open Chrome once, then try again.")
+            if sessions.isEmpty {
+                Text("No supported browser sessions were found. Open a browser once, then try again.")
                     .font(.system(size: 11))
                     .foregroundStyle(.orange)
             } else if let validationMessage {
@@ -472,7 +484,7 @@ private struct YouTubeURLImportView: View {
                     .keyboardShortcut(.defaultAction)
                     .disabled(
                         rawURLs.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            || selectedProfileID.isEmpty
+                            || selectedSessionID.isEmpty
                             || !rightsAcknowledged
                     )
             }
@@ -489,7 +501,7 @@ private struct YouTubeURLImportView: View {
                 return
             }
             validationMessage = nil
-            onSubmit(sources, selectedProfileID)
+            onSubmit(sources, selectedSessionID)
         } catch {
             validationMessage = error.localizedDescription
         }

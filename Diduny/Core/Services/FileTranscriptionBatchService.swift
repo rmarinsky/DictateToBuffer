@@ -302,8 +302,11 @@ final class FileTranscriptionBatchService {
         recordingStore: LiveFileTranscriptionBatchRecordingStore(),
         remoteExtractor: BundledRemoteMediaExtractor(),
         chromeProfile: {
-            guard let id = SettingsStorage.shared.selectedChromeProfileID else { return nil }
-            return ChromeProfileStore.discover().first(where: { $0.id == id })
+            BrowserSessionStore.selected(
+                from: BrowserSessionStore.discover(),
+                selectionID: SettingsStorage.shared.selectedBrowserSessionID,
+                legacyChromeProfileID: SettingsStorage.shared.selectedChromeProfileID
+            )
         },
         remoteMediaAuthorized: {
             SettingsStorage.shared.remoteMediaRightsAcknowledged

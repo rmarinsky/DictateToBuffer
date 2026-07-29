@@ -983,7 +983,7 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
                    let publicArguments = Self.removingBrowserSession(from: arguments)
                 {
                     Log.app.warning(
-                        "Selected Chrome profile cookies are unavailable; retrying public YouTube access"
+                        "Selected browser session cookies are unavailable; retrying public YouTube access"
                     )
                     return try await run(
                         executableURL: executableURL,

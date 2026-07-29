@@ -9,8 +9,7 @@ struct TranscriptionBatchInspectorView: View {
     let batch: TranscriptionBatch
     let onOpenRecording: (UUID) -> Void
     let onClose: () -> Void
-    private let chromeProfiles: [ChromeProfile]
-    private let showsYouTubeAuthorizationControls: Bool
+    private let browserSessions: [BrowserSession]
 
     @State private var batches = TranscriptionBatchStorage.shared
     @State private var recordings = RecordingsLibraryStorage.shared
@@ -22,7 +21,7 @@ struct TranscriptionBatchInspectorView: View {
     @State private var sourceEditor: BatchSourceEditor?
     @State private var youtubeURLText = ""
     @State private var selectedRecordingIDs = Set<UUID>()
-    @State private var selectedChromeProfileID: String
+    @State private var selectedBrowserSessionID: String
     @State private var rightsAcknowledged: Bool
     @FocusState private var isYouTubeURLInputFocused: Bool
 
@@ -34,19 +33,17 @@ struct TranscriptionBatchInspectorView: View {
         self.batch = batch
         self.onOpenRecording = onOpenRecording
         self.onClose = onClose
-        let profiles = ChromeProfileStore.discover()
+        let sessions = BrowserSessionStore.discover()
         let settings = SettingsStorage.shared
-        let storedProfileID = settings.selectedChromeProfileID
-        self.chromeProfiles = profiles
-        self.showsYouTubeAuthorizationControls = !settings.remoteMediaRightsAcknowledged
-            || !profiles.contains(where: { $0.id == storedProfileID })
+        let selectedSession = BrowserSessionStore.selected(
+            from: sessions,
+            selectionID: settings.selectedBrowserSessionID,
+            legacyChromeProfileID: settings.selectedChromeProfileID
+        )
+        self.browserSessions = sessions
         _name = State(initialValue: batch.name)
         _description = State(initialValue: batch.description)
-        _selectedChromeProfileID = State(
-            initialValue: profiles.contains(where: { $0.id == storedProfileID })
-                ? storedProfileID ?? ""
-                : profiles.first?.id ?? ""
-        )
+        _selectedBrowserSessionID = State(initialValue: selectedSession?.selectionID ?? "")
         _rightsAcknowledged = State(initialValue: settings.remoteMediaRightsAcknowledged)
     }
 
@@ -84,7 +81,7 @@ struct TranscriptionBatchInspectorView: View {
 
     private var canAuthorizeYouTube: Bool {
         rightsAcknowledged
-            && chromeProfiles.contains(where: { $0.id == selectedChromeProfileID })
+            && browserSessions.contains(where: { $0.selectionID == selectedBrowserSessionID })
     }
 
     private var availableRecordings: [Recording] {
@@ -307,6 +304,18 @@ struct TranscriptionBatchInspectorView: View {
                 Text("Paste one video URL per line. Duplicates are ignored.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if browserSessions.isEmpty {
+                    Text("No supported browser sessions were found. Open a browser once, then try again.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else {
+                    Picker("Browser session", selection: $selectedBrowserSessionID) {
+                        ForEach(browserSessions, id: \.selectionID) { session in
+                            Text(session.displayName).tag(session.selectionID)
+                        }
+                    }
+                    .controlSize(.small)
+                }
                 TextEditor(text: $youtubeURLText)
                     .font(.body.monospaced())
                     .focused($isYouTubeURLInputFocused)
@@ -318,27 +327,13 @@ struct TranscriptionBatchInspectorView: View {
                         RoundedRectangle(cornerRadius: 6)
                             .strokeBorder(Color(.separatorColor), lineWidth: 0.5)
                     }
-                if showsYouTubeAuthorizationControls {
-                    if chromeProfiles.isEmpty {
-                        Text("No Google Chrome profiles were found. Open Chrome once, then try again.")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    } else {
-                        Picker("Chrome profile", selection: $selectedChromeProfileID) {
-                            ForEach(chromeProfiles) { profile in
-                                Text(profile.name).tag(profile.id)
-                            }
-                        }
-                        .controlSize(.small)
-                    }
-                    if !SettingsStorage.shared.remoteMediaRightsAcknowledged {
-                        Toggle(
-                            "I own this content or have permission to transcribe it.",
-                            isOn: $rightsAcknowledged
-                        )
-                        .toggleStyle(.checkbox)
-                        .font(.caption)
-                    }
+                if !SettingsStorage.shared.remoteMediaRightsAcknowledged {
+                    Toggle(
+                        "I own this content or have permission to transcribe it.",
+                        isOn: $rightsAcknowledged
+                    )
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
                 }
                 HStack(spacing: 10) {
                     Text("\(youtubeURLValidation.sources.count) valid")
@@ -427,7 +422,7 @@ struct TranscriptionBatchInspectorView: View {
     private func addYouTubeURLs() {
         let validation = youtubeURLValidation
         guard !validation.sources.isEmpty, canAuthorizeYouTube else { return }
-        SettingsStorage.shared.selectedChromeProfileID = selectedChromeProfileID
+        SettingsStorage.shared.selectedBrowserSessionID = selectedBrowserSessionID
         SettingsStorage.shared.remoteMediaRightsAcknowledged = true
         guard append(urls: [], remoteSources: validation.sources, existingRecordingIDs: []) else {
             return
@@ -477,6 +472,7 @@ struct TranscriptionBatchInspectorView: View {
 struct NewTranscriptionBatchPanel: View {
     let recordings: [Recording]
     let onClose: () -> Void
+    private let browserSessions: [BrowserSession]
     @State private var name = ""
     @State private var description = ""
     @State private var files: [URL] = []
@@ -484,11 +480,35 @@ struct NewTranscriptionBatchPanel: View {
     @State private var selectedRecordingIDs = Set<UUID>()
     @State private var validationError: String?
     @State private var showRecordingPicker = false
+    @State private var selectedBrowserSessionID: String
+    @State private var rightsAcknowledged: Bool
     @FocusState private var isYouTubeURLInputFocused: Bool
 
+    init(recordings: [Recording], onClose: @escaping () -> Void) {
+        self.recordings = recordings
+        self.onClose = onClose
+        let sessions = BrowserSessionStore.discover()
+        let settings = SettingsStorage.shared
+        self.browserSessions = sessions
+        _selectedBrowserSessionID = State(
+            initialValue: BrowserSessionStore.selected(
+                from: sessions,
+                selectionID: settings.selectedBrowserSessionID,
+                legacyChromeProfileID: settings.selectedChromeProfileID
+            )?.selectionID ?? ""
+        )
+        _rightsAcknowledged = State(initialValue: settings.remoteMediaRightsAcknowledged)
+    }
+
     private var canCreate: Bool {
-        !files.isEmpty || !urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !selectedRecordingIDs.isEmpty
+        let hasYouTubeURLs = !urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasSources = !files.isEmpty || hasYouTubeURLs || !selectedRecordingIDs.isEmpty
+        return hasSources && (!hasYouTubeURLs || canAuthorizeYouTube)
+    }
+
+    private var canAuthorizeYouTube: Bool {
+        rightsAcknowledged
+            && browserSessions.contains(where: { $0.selectionID == selectedBrowserSessionID })
     }
 
     var body: some View {
@@ -518,6 +538,36 @@ struct NewTranscriptionBatchPanel: View {
                 }
             }
             .controlSize(.small)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("BROWSER SESSION")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if browserSessions.isEmpty {
+                    Text("No supported browser sessions were found. Open a browser once, then try again.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else {
+                    Picker("Browser session", selection: $selectedBrowserSessionID) {
+                        ForEach(browserSessions, id: \.selectionID) { session in
+                            Text(session.displayName).tag(session.selectionID)
+                        }
+                    }
+                    .labelsHidden()
+                    .accessibilityLabel("Browser session for YouTube")
+                }
+                Text("Diduny uses this browser's YouTube session and does not store your credentials.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if !SettingsStorage.shared.remoteMediaRightsAcknowledged {
+                    Toggle(
+                        "I own this content or have permission to transcribe it.",
+                        isOn: $rightsAcknowledged
+                    )
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+                }
+            }
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("YOUTUBE URLS")
@@ -635,6 +685,10 @@ struct NewTranscriptionBatchPanel: View {
     private func createBatch() {
         do {
             let remoteSources = try YouTubeRemoteMediaSource.normalizeBatch(urlText)
+            if !remoteSources.isEmpty {
+                SettingsStorage.shared.selectedBrowserSessionID = selectedBrowserSessionID
+                SettingsStorage.shared.remoteMediaRightsAcknowledged = true
+            }
             let batchService = FileTranscriptionBatchService.shared
             let accepted = batchService.beginBatch(
                 urls: files,
