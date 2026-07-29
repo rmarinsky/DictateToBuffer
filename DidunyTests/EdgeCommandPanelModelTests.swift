@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 @testable import Diduny
 
@@ -27,5 +28,25 @@ struct EdgeCommandPanelModelTests {
 
         #expect(model.pairs == [polish])
         #expect(model.selectedPair == polish)
+    }
+
+    @Test("A dragged panel collapses to its dropped location")
+    func pinnedPanelKeepsItsHandleAtTheDroppedLocation() {
+        let visibleFrame = NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let droppedOrigin = NSPoint(x: 400, y: 250)
+
+        let collapsed = EdgeCommandPanelPlacement.frame(
+            in: visibleFrame,
+            pinnedOrigin: droppedOrigin,
+            expanded: false
+        )
+        let expanded = EdgeCommandPanelPlacement.frame(
+            in: visibleFrame,
+            pinnedOrigin: droppedOrigin,
+            expanded: true
+        )
+
+        #expect(collapsed == NSRect(x: 400, y: 250, width: 14, height: 314))
+        #expect(expanded == NSRect(x: 400, y: 250, width: 304, height: 314))
     }
 }
