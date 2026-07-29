@@ -252,6 +252,43 @@ final class YouTubeRemoteMediaSourceTests: XCTestCase {
         )
     }
 
+    func test_browserSessionDiscovery_listsProfilesForInstalledBrowsers() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DidunyBrowserSessions-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        for (path, profileName) in [
+            ("Google/Chrome", "Roman"),
+            ("Microsoft Edge", "Work"),
+        ] {
+            let directory = root.appendingPathComponent(path)
+            try FileManager.default.createDirectory(
+                at: directory.appendingPathComponent("Default"),
+                withIntermediateDirectories: true
+            )
+            let localState = """
+            {"profile":{"info_cache":{"Default":{"name":"\(profileName)"}}}}
+            """
+            try Data(localState.utf8).write(to: directory.appendingPathComponent("Local State"))
+        }
+        let zen = root.appendingPathComponent("zen")
+        try FileManager.default.createDirectory(
+            at: zen.appendingPathComponent("Profiles/current"),
+            withIntermediateDirectories: true
+        )
+        try Data("[Profile0]\nName=Default\nIsRelative=1\nPath=Profiles/current".utf8)
+            .write(to: zen.appendingPathComponent("profiles.ini"))
+
+        let sessions = BrowserSessionStore.discover(
+            installedBrowsers: [.chrome, .edge, .safari, .zen],
+            applicationSupportDirectory: root
+        )
+
+        XCTAssertEqual(
+            sessions.map(\.displayName),
+            ["Google Chrome — Roman", "Microsoft Edge — Work", "Safari", "Zen — Default"]
+        )
+    }
+
     func test_runtimeArguments_useSelectedBrowserSessionBundledDenoAndExactAudioFormat() throws {
         let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
         let session = BrowserSession(browser: .edge, profileID: "Profile 2", profileName: "Work")

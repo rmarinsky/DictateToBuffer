@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import OSLog
 
@@ -454,7 +455,7 @@ enum WebVTTTranscriptParser {
     }
 }
 
-enum BrowserKind: String, Codable, CaseIterable {
+enum BrowserKind: String, Codable, CaseIterable, Hashable {
     case brave
     case chrome
     case edge
@@ -475,6 +476,28 @@ enum BrowserKind: String, Codable, CaseIterable {
 
     var cookieSource: String {
         self == .zen ? BrowserKind.firefox.rawValue : rawValue
+    }
+
+    var bundleIdentifier: String {
+        switch self {
+        case .brave: "com.brave.Browser"
+        case .chrome: "com.google.Chrome"
+        case .edge: "com.microsoft.edgemac"
+        case .firefox: "org.mozilla.firefox"
+        case .safari: "com.apple.Safari"
+        case .zen: "app.zen-browser.zen"
+        }
+    }
+
+    var applicationSupportPath: String? {
+        switch self {
+        case .brave: "BraveSoftware/Brave-Browser"
+        case .chrome: "Google/Chrome"
+        case .edge: "Microsoft Edge"
+        case .firefox: "Firefox"
+        case .safari: nil
+        case .zen: "zen"
+        }
     }
 }
 
@@ -581,6 +604,47 @@ enum BrowserSessionStore {
                 profileID: profileURL.path,
                 profileName: values["Name"] ?? profileURL.lastPathComponent
             )
+        }
+    }
+
+    @MainActor
+    static func discover() -> [BrowserSession] {
+        let installed = Set(BrowserKind.allCases.filter {
+            NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleIdentifier) != nil
+        })
+        let applicationSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support", isDirectory: true)
+        return discover(
+            installedBrowsers: installed,
+            applicationSupportDirectory: applicationSupport
+        )
+    }
+
+    static func discover(
+        installedBrowsers: Set<BrowserKind>,
+        applicationSupportDirectory: URL
+    ) -> [BrowserSession] {
+        BrowserKind.allCases.flatMap { browser -> [BrowserSession] in
+            guard installedBrowsers.contains(browser) else { return [] }
+            guard let path = browser.applicationSupportPath else {
+                return [BrowserSession(browser: browser)]
+            }
+            let directory = applicationSupportDirectory.appendingPathComponent(path, isDirectory: true)
+            switch browser {
+            case .firefox, .zen:
+                let sessions = discoverFirefox(browser: browser, in: directory)
+                return sessions.isEmpty && browser == .firefox
+                    ? [BrowserSession(browser: browser)]
+                    : sessions
+            case .safari:
+                return [BrowserSession(browser: browser)]
+            default:
+                let sessions = discoverChromium(browser: browser, in: directory)
+                return sessions.isEmpty ? [BrowserSession(browser: browser)] : sessions
+            }
         }
     }
 }
