@@ -327,9 +327,7 @@ final class EdgeCommandPanelController: NSObject {
         let resolvedDock = dock ?? EdgeCommandPanelDock(edge: .right, offset: visibleFrame.midY)
         dock = resolvedDock
         model?.dockEdge = resolvedDock.edge
-        withAnimation(.easeOut(duration: 0.18)) {
-            model?.isExpanded = expanded
-        }
+        model?.isExpanded = expanded
 
         let frame = EdgeCommandPanelPlacement.frame(in: visibleFrame, dock: resolvedDock, expanded: expanded)
         if panel.isVisible {
@@ -393,27 +391,31 @@ private struct EdgeCommandPanelView: View {
     var body: some View {
         @Bindable var model = model
         ZStack(alignment: alignment(for: model.dockEdge)) {
-            if model.isExpanded {
-                EdgeCommandExpandedView(
-                    model: model,
-                    onAction: onAction,
-                    onCollapse: onCollapse,
-                    onDrag: onDrag,
-                    onDragEnd: onDragEnd
-                )
-                .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: anchor(for: model.dockEdge))))
-            } else {
-                EdgeCommandTabView(
-                    edge: model.dockEdge,
-                    onExpand: onExpand,
-                    onDrag: onDrag,
-                    onDragEnd: onDragEnd
-                )
-                    .transition(.opacity)
-            }
+            EdgeCommandExpandedView(
+                model: model,
+                onAction: onAction,
+                onCollapse: onCollapse,
+                onDrag: onDrag,
+                onDragEnd: onDragEnd
+            )
+            .opacity(model.isExpanded ? 1 : 0)
+            .scaleEffect(model.isExpanded ? 1 : 0.985, anchor: anchor(for: model.dockEdge))
+            .allowsHitTesting(model.isExpanded)
+            .accessibilityHidden(!model.isExpanded)
+
+            EdgeCommandTabView(
+                edge: model.dockEdge,
+                onExpand: onExpand,
+                onDrag: onDrag,
+                onDragEnd: onDragEnd
+            )
+            .opacity(model.isExpanded ? 0 : 1)
+            .allowsHitTesting(!model.isExpanded)
+            .accessibilityHidden(model.isExpanded)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment(for: model.dockEdge))
         .clipped()
+        .animation(.easeOut(duration: 0.18), value: model.isExpanded)
     }
 
     private func alignment(for edge: EdgeCommandPanelDockEdge) -> Alignment {
