@@ -482,7 +482,6 @@ struct NewTranscriptionBatchPanel: View {
     @State private var showRecordingPicker = false
     @State private var selectedBrowserSessionID: String
     @State private var rightsAcknowledged: Bool
-    @FocusState private var isYouTubeURLInputFocused: Bool
 
     init(recordings: [Recording], onClose: @escaping () -> Void) {
         self.recordings = recordings
@@ -572,7 +571,6 @@ struct NewTranscriptionBatchPanel: View {
                     .foregroundStyle(.secondary)
                 TextEditor(text: $urlText)
                     .font(.body.monospaced())
-                    .focused($isYouTubeURLInputFocused)
                     .accessibilityLabel("YouTube URLs")
                     .frame(height: 64)
                     .padding(6)
