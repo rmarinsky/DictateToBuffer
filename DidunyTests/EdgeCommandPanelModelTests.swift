@@ -113,6 +113,11 @@ struct EdgeCommandPanelModelTests {
         #expect(EdgeCommandPanelPlacement.expandedCornerRadius == 15)
     }
 
+    @Test("Live controls have a comfortable click target")
+    func liveControlsHaveComfortableClickTarget() {
+        #expect(EdgeCommandPanelPlacement.liveControlHitTargetHeight >= 34)
+    }
+
     @Test("Meeting feedback grows beyond the compact dictation panel")
     func meetingFeedbackUsesLargerScrollableFrame() {
         let visibleFrame = NSRect(x: 0, y: 0, width: 1440, height: 900)

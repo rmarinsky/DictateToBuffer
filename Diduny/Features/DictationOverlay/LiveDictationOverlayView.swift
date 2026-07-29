@@ -134,7 +134,8 @@ struct LiveDictationOverlayView: View {
             Button(action: onCopy) {
                 Label(store.copiedAt == nil ? "Copy" : "Copied", systemImage: store.copiedAt == nil ? "doc.on.doc" : "checkmark")
                     .font(.system(size: 10.5, weight: .semibold))
-                    .frame(maxWidth: .infinity, minHeight: 30)
+                    .frame(maxWidth: .infinity, minHeight: EdgeCommandPanelPlacement.liveControlHitTargetHeight)
+                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .buttonStyle(.plain)
             .foregroundStyle(store.hasText ? Color.primary : Color.secondary.opacity(0.55))
@@ -145,7 +146,8 @@ struct LiveDictationOverlayView: View {
             Button(action: store.phase == .pasted ? onDismiss : onStop) {
                 Label(store.phase == .pasted ? "Close" : "Stop", systemImage: store.phase == .pasted ? "xmark" : "stop.fill")
                     .font(.system(size: 10.5, weight: .semibold))
-                    .frame(maxWidth: .infinity, minHeight: 30)
+                    .frame(maxWidth: .infinity, minHeight: EdgeCommandPanelPlacement.liveControlHitTargetHeight)
+                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .buttonStyle(.plain)
             .foregroundStyle(store.phase == .pasted || store.canStop ? Color.white : Color.secondary.opacity(0.55))
