@@ -175,6 +175,153 @@ struct TranscriptCleanupServiceTests {
         #expect(result.outputText(preferSpeakerDiarization: true) == "[00:00] Speaker 1: Hello Roman.")
     }
 
+    @Test("Soniox token fragments preserve provider spacing in timed phrases")
+    func sonioxTokenFragmentsPreserveProviderSpacing() throws {
+        let json = """
+        {
+          "text": "Всіх вітаю.",
+          "tokens": [
+            { "text": "В", "start_ms": 0, "end_ms": 100 },
+            { "text": "сі", "start_ms": 100, "end_ms": 200 },
+            { "text": "х ", "start_ms": 200, "end_ms": 300 },
+            { "text": "ві", "start_ms": 300, "end_ms": 400 },
+            { "text": "таю", "start_ms": 400, "end_ms": 500 },
+            { "text": ".", "start_ms": 500, "end_ms": 600 }
+          ]
+        }
+        """
+
+        let result = try JSONDecoder().decode(JobTranscriptionResult.self, from: Data(json.utf8))
+
+        #expect(result.generatedTranscript(preferSpeakerDiarization: false).segments == [
+            TimedTranscriptSegment(startMilliseconds: 0, endMilliseconds: 600, text: "Всіх вітаю.")
+        ])
+    }
+
+    @Test("Job result preserves phrase timestamps without changing plain text")
+    func jobResultPreservesPhraseTimestamps() throws {
+        let json = """
+        {
+          "text": "First thought. Second thought!",
+          "words": [
+            { "word": "First", "start": 1.2, "end": 1.5 },
+            { "word": "thought", "start": 1.5, "end": 1.9 },
+            { "word": ".", "start": 1.9, "end": 2.0 },
+            { "word": "Second", "start": 3.4, "end": 3.8 },
+            { "word": "thought", "start": 3.8, "end": 4.2 },
+            { "word": "!", "start": 4.2, "end": 4.3 }
+          ]
+        }
+        """
+
+        let result = try JSONDecoder().decode(JobTranscriptionResult.self, from: Data(json.utf8))
+        let transcript = result.generatedTranscript(preferSpeakerDiarization: false)
+
+        #expect(transcript.text == "First thought. Second thought!")
+        #expect(transcript.segments == [
+            TimedTranscriptSegment(startMilliseconds: 1200, endMilliseconds: 2000, text: "First thought."),
+            TimedTranscriptSegment(startMilliseconds: 3400, endMilliseconds: 4300, text: "Second thought!")
+        ])
+    }
+
+    @Test("Provider segments keep their exact boundaries")
+    func providerSegmentsKeepExactBoundaries() throws {
+        let json = """
+        {
+          "text": "Two sentences. One provider segment.",
+          "segments": [
+            {
+              "text": "Two sentences. One provider segment.",
+              "start_ms": 1200,
+              "end_ms": 4300
+            }
+          ]
+        }
+        """
+
+        let result = try JSONDecoder().decode(JobTranscriptionResult.self, from: Data(json.utf8))
+
+        #expect(result.generatedTranscript(preferSpeakerDiarization: false).segments == [
+            TimedTranscriptSegment(
+                startMilliseconds: 1200,
+                endMilliseconds: 4300,
+                text: "Two sentences. One provider segment."
+            )
+        ])
+    }
+
+    @Test("Provider segments never invent missing timestamps")
+    func providerSegmentsNeverInventMissingTimestamps() throws {
+        let json = """
+        {
+          "text": "Known start. Unknown time.",
+          "segments": [
+            { "text": "Known start.", "start_ms": 1200 },
+            { "text": "Unknown time." }
+          ]
+        }
+        """
+
+        let result = try JSONDecoder().decode(JobTranscriptionResult.self, from: Data(json.utf8))
+
+        #expect(result.generatedTranscript(preferSpeakerDiarization: false).segments == [
+            TimedTranscriptSegment(startMilliseconds: 1200, endMilliseconds: nil, text: "Known start.")
+        ])
+    }
+
+    @Test("Provider segments take precedence over word tokens for persistence")
+    func providerSegmentsTakePrecedenceForPersistence() throws {
+        let json = """
+        {
+          "text": "First thought. Second thought.",
+          "tokens": [
+            { "text": "First ", "start_ms": 1000, "end_ms": 1500 },
+            { "text": "thought.", "start_ms": 1500, "end_ms": 2000 }
+          ],
+          "segments": [
+            {
+              "text": "First thought. Second thought.",
+              "start_ms": 1000,
+              "end_ms": 5000
+            }
+          ]
+        }
+        """
+
+        let result = try JSONDecoder().decode(JobTranscriptionResult.self, from: Data(json.utf8))
+
+        #expect(result.generatedTranscript(preferSpeakerDiarization: false).segments == [
+            TimedTranscriptSegment(
+                startMilliseconds: 1000,
+                endMilliseconds: 5000,
+                text: "First thought. Second thought."
+            )
+        ])
+    }
+
+    @Test("Untimed provider segments fall back to timed word phrases")
+    func untimedProviderSegmentsFallBackToTimedWordPhrases() throws {
+        let json = """
+        {
+          "text": "Timed words.",
+          "words": [
+            { "word": "Timed", "start": 1.2, "end": 1.6 },
+            { "word": "words", "start": 1.6, "end": 2.0 },
+            { "word": ".", "start": 2.0, "end": 2.1 }
+          ],
+          "segments": [
+            { "text": "Untimed provider output." }
+          ]
+        }
+        """
+
+        let result = try JSONDecoder().decode(JobTranscriptionResult.self, from: Data(json.utf8))
+
+        #expect(result.generatedTranscript(preferSpeakerDiarization: false).segments == [
+            TimedTranscriptSegment(startMilliseconds: 1200, endMilliseconds: 2100, text: "Timed words.")
+        ])
+    }
+
     @Test("Batch upload diagnostics include source duration and prepared payload")
     func batchUploadDiagnosticsIncludeUploadShape() {
         let diagnostics = BatchUploadDiagnostics(

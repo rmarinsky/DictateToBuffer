@@ -48,7 +48,7 @@ final class AudioRecorderService: ObservableObject, AudioRecorderProtocol {
     // MARK: - Public Methods
 
     func startRecording(device: AudioDevice?) async throws {
-        let recordingInProgress = self.isRecording
+        let recordingInProgress = isRecording
         Log.audio.info("startRecording: BEGIN, isRecording=\(recordingInProgress)")
         currentRecordingDeviceInfo = nil
         guard !recordingInProgress else {
@@ -84,7 +84,7 @@ final class AudioRecorderService: ObservableObject, AudioRecorderProtocol {
         let hardwareInputFormat: AVAudioFormat
         let tapFormat: AVAudioFormat
         let inputNode: AVAudioInputNode
-        let audioOperationTimeout = self.audioOperationTimeout
+        let audioOperationTimeout = audioOperationTimeout
 
         do {
             Log.audio.info("startRecording: Initializing audio engine with \(audioOperationTimeout)s timeout")
@@ -153,10 +153,9 @@ final class AudioRecorderService: ObservableObject, AudioRecorderProtocol {
                 .recordingFailed("Invalid audio format. Please try selecting a different microphone in Settings.")
         }
 
-        // Create temporary file URL
-        let tempDir = FileManager.default.temporaryDirectory
-        let fileName = "diduny_\(UUID().uuidString).wav"
-        recordingURL = tempDir.appendingPathComponent(fileName)
+        // Keep in-flight audio under Application Support so crash recovery does not
+        // depend on the lifecycle of the system temporary directory.
+        recordingURL = RecoveryStateManager.shared.makeRecordingURL()
         let recordingPath = recordingURL?.path ?? "nil"
         Log.audio.info("startRecording: Recording URL = \(recordingPath)")
 
@@ -255,12 +254,12 @@ final class AudioRecorderService: ObservableObject, AudioRecorderProtocol {
 
         isRecording = true
         startAudioLevelPolling()
-        let updatedRecordingState = self.isRecording
+        let updatedRecordingState = isRecording
         Log.audio.info("startRecording: END, isRecording=\(updatedRecordingState)")
     }
 
     func stopRecording() async throws -> Data {
-        let recordingInProgress = self.isRecording
+        let recordingInProgress = isRecording
         Log.audio.info("stopRecording: BEGIN, isRecording=\(recordingInProgress)")
         guard isRecording, let engine = audioEngine, let url = recordingURL else {
             let logMsg = "stopRecording: No active recording! isRecording=\(recordingInProgress), " +
@@ -440,9 +439,9 @@ final class AudioRecorderService: ObservableObject, AudioRecorderProtocol {
         timer.schedule(deadline: .now(), repeating: 1.0 / 25.0)
         timer.setEventHandler { [weak self] in
             guard let self else { return }
-            let latest = self._audioLevelBox.withLock { $0 }
-            if abs(latest - self.audioLevel) > 0.01 {
-                self.audioLevel = latest
+            let latest = _audioLevelBox.withLock { $0 }
+            if abs(latest - audioLevel) > 0.01 {
+                audioLevel = latest
             }
         }
         timer.resume()

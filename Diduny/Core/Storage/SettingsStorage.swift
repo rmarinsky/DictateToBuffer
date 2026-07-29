@@ -10,7 +10,9 @@ enum HistoryRetentionPolicy: String, CaseIterable, Identifiable {
     case year1
     case forever
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var displayName: String {
         switch self {
@@ -135,6 +137,8 @@ final class SettingsStorage {
         case proxyBaseURL
         case remoteConfigURL
         case userDeclinedScreenRecording
+        case selectedChromeProfileID
+        case remoteMediaRightsAcknowledged
     }
 
     private init() {
@@ -238,6 +242,22 @@ final class SettingsStorage {
     var playSoundOnCompletion: Bool {
         get { defaults.object(forKey: Key.playSoundOnCompletion.rawValue) as? Bool ?? true }
         set { defaults.set(newValue, forKey: Key.playSoundOnCompletion.rawValue) }
+    }
+
+    var selectedChromeProfileID: String? {
+        get { defaults.string(forKey: Key.selectedChromeProfileID.rawValue) }
+        set {
+            if let newValue {
+                defaults.set(newValue, forKey: Key.selectedChromeProfileID.rawValue)
+            } else {
+                defaults.removeObject(forKey: Key.selectedChromeProfileID.rawValue)
+            }
+        }
+    }
+
+    var remoteMediaRightsAcknowledged: Bool {
+        get { defaults.bool(forKey: Key.remoteMediaRightsAcknowledged.rawValue) }
+        set { defaults.set(newValue, forKey: Key.remoteMediaRightsAcknowledged.rawValue) }
     }
 
     var launchAtLogin: Bool {
@@ -527,7 +547,8 @@ final class SettingsStorage {
     /// Hold duration required before translation starts from a modifier key.
     var translationPushToTalkHoldStartDelaySeconds: TimeInterval {
         get {
-            let stored = defaults.object(forKey: Key.translationPushToTalkHoldStartDelaySeconds.rawValue) as? TimeInterval
+            let stored = defaults
+                .object(forKey: Key.translationPushToTalkHoldStartDelaySeconds.rawValue) as? TimeInterval
                 ?? Self.defaultHoldStartDelaySeconds
             return Self.sanitizedHoldStartDelaySeconds(stored)
         }
@@ -892,7 +913,8 @@ final class SettingsStorage {
     var translationLanguagePairs: [TranslationLanguagePair] {
         get {
             if let data = defaults.data(forKey: Key.translationLanguagePairs.rawValue),
-               let decoded = try? JSONDecoder().decode([TranslationLanguagePair].self, from: data) {
+               let decoded = try? JSONDecoder().decode([TranslationLanguagePair].self, from: data)
+            {
                 let sanitized = Self.sanitizedTranslationPairs(decoded)
                 if !sanitized.isEmpty {
                     return sanitized
@@ -912,7 +934,8 @@ final class SettingsStorage {
                 defaultTranslationLanguagePairID = pairsToStore[0].id
             }
             if let lastID = lastUsedTranslationLanguagePairID,
-               !pairsToStore.contains(where: { $0.id == lastID }) {
+               !pairsToStore.contains(where: { $0.id == lastID })
+            {
                 lastUsedTranslationLanguagePairID = nil
             }
         }
@@ -936,14 +959,16 @@ final class SettingsStorage {
     var lastUsedTranslationLanguagePairID: String? {
         get {
             guard let stored = defaults.string(forKey: Key.lastUsedTranslationLanguagePairID.rawValue),
-                  translationLanguagePairs.contains(where: { $0.id == stored }) else {
+                  translationLanguagePairs.contains(where: { $0.id == stored })
+            else {
                 return nil
             }
             return stored
         }
         set {
             if let newValue,
-               translationLanguagePairs.contains(where: { $0.id == newValue }) {
+               translationLanguagePairs.contains(where: { $0.id == newValue })
+            {
                 defaults.set(newValue, forKey: Key.lastUsedTranslationLanguagePairID.rawValue)
             } else {
                 defaults.removeObject(forKey: Key.lastUsedTranslationLanguagePairID.rawValue)
@@ -957,8 +982,10 @@ final class SettingsStorage {
             ?? Self.defaultTranslationPair
     }
 
-    func resolveTranslationLanguagePair(currentKeyboardLanguage: String? = KeyboardLanguageDetector.currentLanguageCode())
-        -> TranslationLanguagePair {
+    func resolveTranslationLanguagePair(currentKeyboardLanguage: String? = KeyboardLanguageDetector
+        .currentLanguageCode())
+        -> TranslationLanguagePair
+    {
         let pairs = translationLanguagePairs
         guard !pairs.isEmpty else { return Self.defaultTranslationPair }
 
@@ -972,7 +999,8 @@ final class SettingsStorage {
                     return defaultPair
                 }
                 if let lastID = lastUsedTranslationLanguagePairID,
-                   let lastPair = matching.first(where: { $0.id == lastID }) {
+                   let lastPair = matching.first(where: { $0.id == lastID })
+                {
                     return lastPair
                 }
                 return matching[0]

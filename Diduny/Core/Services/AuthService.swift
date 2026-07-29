@@ -1,6 +1,6 @@
 import Foundation
-import Supabase
 import os
+import Supabase
 
 /// Diduny auth façade backed by the Supabase Auth SDK.
 ///
@@ -43,24 +43,26 @@ final class AuthService {
         _cachedEmail
     }
 
-    // Cached from the session so callers that need a sync answer get one.
+    /// Cached from the session so callers that need a sync answer get one.
     private var _cachedEmail: String?
 
-    // Retained for the lifetime of AuthService.
+    /// Retained for the lifetime of AuthService.
     private var authStateObserverTask: Task<Void, Never>?
 
-    private var supabase: SupabaseService { SupabaseService.shared }
+    private var supabase: SupabaseService {
+        SupabaseService.shared
+    }
 
     private init() {
         // Eagerly restore session state from SDK cache.
         Task { @MainActor [weak self] in
             guard let self else { return }
             if let session = await supabase.currentSession {
-                self._cachedEmail = session.user.email
-                self.authState = .loggedIn
+                _cachedEmail = session.user.email
+                authState = .loggedIn
                 Self.setSessionPresent(true)
             }
-            self.startAuthStateObserver()
+            startAuthStateObserver()
         }
     }
 
@@ -73,13 +75,13 @@ final class AuthService {
                 guard let self else { return }
                 switch event {
                 case .signedIn, .tokenRefreshed, .userUpdated:
-                    self._cachedEmail = session?.user.email
-                    self.authState = .loggedIn
+                    _cachedEmail = session?.user.email
+                    authState = .loggedIn
                     Self.setSessionPresent(true)
                     Log.app.info("[Auth] State → loggedIn (event: \(String(describing: event)))")
                 case .signedOut, .userDeleted:
-                    self._cachedEmail = nil
-                    self.authState = .loggedOut
+                    _cachedEmail = nil
+                    authState = .loggedOut
                     Self.setSessionPresent(false)
                     Log.app.info("[Auth] State → loggedOut (event: \(String(describing: event)))")
                 default:
@@ -191,6 +193,49 @@ final class AuthService {
         }
         HTTPLogger.logResponse(data: retryData, response: retryHTTP, requestId: retryId, startTime: retryStart)
         return (retryData, retryHTTP)
+    }
+
+    /// Performs a file-backed upload with the same one-time 401 refresh policy.
+    /// The body remains on disk for both attempts, avoiding a full in-memory copy.
+    nonisolated func performUploadWithAuth(
+        _ request: URLRequest,
+        bodyFileURL: URL,
+        session: URLSession
+    ) async throws -> (Data, HTTPURLResponse) {
+        func upload(_ sourceRequest: URLRequest) async throws -> (Data, HTTPURLResponse) {
+            var authedRequest = sourceRequest
+            await authenticatedRequest(&authedRequest)
+            let requestId = HTTPLogger.attachRequestId(&authedRequest)
+            HTTPLogger.logRequest(authedRequest, requestId: requestId)
+
+            let startTime = ContinuousClock.now
+            let (data, response) = try await session.upload(for: authedRequest, fromFile: bodyFileURL)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw AuthError.invalidResponse
+            }
+            HTTPLogger.logResponse(
+                data: data,
+                response: httpResponse,
+                requestId: requestId,
+                startTime: startTime
+            )
+            return (data, httpResponse)
+        }
+
+        let firstResult = try await upload(request)
+        guard firstResult.1.statusCode == 401 else {
+            return firstResult
+        }
+
+        Log.app.info("[Auth] Upload received 401 — refreshing Supabase session")
+        do {
+            try await SupabaseService.shared.refreshSession()
+        } catch {
+            Log.app.error("[Auth] Session refresh failed: \(error.localizedDescription)")
+            throw AuthError.notAuthenticated
+        }
+
+        return try await upload(request)
     }
 
     // MARK: - Refresh (kept for CloudRealtimeService ADR-0004 reconnect path)

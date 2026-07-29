@@ -1,0 +1,3 @@
+# Reuse remote sources by provider identity or title and duration
+
+Diduny will persist a remote source's provider and canonical media identifier, using that identity rather than raw URL text to detect repeated YouTube videos. To match recordings created before remote identity existed, an exact normalized video-title match plus a tightly matching duration is also treated as a duplicate and automatically reused. This may very rarely conflate different videos with the same title and duration, but it recovers historical transcripts that cannot otherwise be linked. Diduny reuses each available artifact, retrieves only missing artifacts, and requires an explicit `Transcribe Again` action to bypass reuse.

@@ -100,6 +100,7 @@ iOSInjectionProject/
 *.m4a
 *.mp3
 !Diduny/Resources/*.wav
+!DidunyTests/Fixtures/*.m4a
 
 # Certificates and keys (NEVER commit these)
 *.p12

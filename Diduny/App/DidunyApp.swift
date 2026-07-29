@@ -12,7 +12,7 @@ struct DidunyApp: App {
                 onToggleTranslationRecording: { appDelegate.toggleTranslationRecording() },
                 onToggleMeetingRecording: { appDelegate.toggleMeetingRecording() },
                 onToggleMeetingTranslationRecording: { appDelegate.toggleMeetingTranslationRecording() },
-                onTranscribeFile: { appDelegate.transcribeFile() },
+                onBatchFilesAndURLs: { appDelegate.batchFilesAndURLs() },
                 onOpenMainWindow: { section in appDelegate.openMainWindow(section: section) },
                 onCheckForUpdates: { appDelegate.updaterManager.checkForUpdates() }
             )
@@ -22,5 +22,13 @@ struct DidunyApp: App {
                 .environment(appDelegate.appState)
         }
         .menuBarExtraStyle(.menu)
+        .commands {
+            CommandGroup(after: .newItem) {
+                Button(MainWindowController.batchComposerActionTitle) {
+                    appDelegate.batchFilesAndURLs()
+                }
+                .keyboardShortcut("b", modifiers: [.command, .shift])
+            }
+        }
     }
 }
