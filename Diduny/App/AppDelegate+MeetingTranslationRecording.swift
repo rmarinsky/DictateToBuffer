@@ -277,12 +277,14 @@ extension AppDelegate {
             guard !translatedTokens.isEmpty else { return }
             Task { @MainActor in
                 store?.processTokens(translatedTokens)
+                self.updateRecordingFeedbackTokens(translatedTokens, mode: .meetingTranslation)
             }
         }
 
-        rtService.onConnectionStatusChanged = { [weak store] status in
+        rtService.onConnectionStatusChanged = { [weak self, weak store] status in
             Task { @MainActor in
                 store?.connectionStatus = status
+                self?.updateRecordingFeedbackConnectionStatus(status, mode: .meetingTranslation)
             }
         }
 
