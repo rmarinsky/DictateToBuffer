@@ -40,7 +40,6 @@ final class AsyncTranscriptionJobService {
     private let maxAudioBytesForSpeechPrecheck = 25 * 1024 * 1024
     private let longRunningSessionBodyThresholdBytes = 10 * 1024 * 1024
     private let statusPollRetryCount = 3
-    private let strictSpeechPrecheck = false
 
     private lazy var longRunningSession: URLSession = {
         let config = URLSessionConfiguration.default
@@ -551,13 +550,8 @@ final class AsyncTranscriptionJobService {
 
         let hasSpeech = await AudioSpeechDetector.hasSpeech(in: audioData)
         guard hasSpeech else {
-            if strictSpeechPrecheck {
-                Log.transcription.info("\(context): no speech detected, skipping jobs request")
-                throw TranscriptionError.emptyTranscription
-            }
-
-            Log.transcription.info("\(context): no speech confidently detected, continuing with jobs")
-            return
+            Log.transcription.info("\(context): no speech detected, skipping jobs request")
+            throw TranscriptionError.emptyTranscription
         }
     }
 

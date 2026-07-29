@@ -66,7 +66,7 @@ extension AppDelegate {
         }
     }
 
-    func cancelRecording(cancelTask: Bool = true) async {
+    func cancelRecording(cancelTask: Bool = true, forceDiscardAudio: Bool = false) async {
         Log.app.info("cancelRecording: BEGIN")
 
         // Cancel any in-flight pipeline task (skip when called from within the task itself)
@@ -88,7 +88,7 @@ extension AppDelegate {
         // Deactivate escape cancel handler
         EscapeCancelService.shared.deactivate()
 
-        if SettingsStorage.shared.escapeCancelSaveAudio, audioRecorder.isRecording {
+        if !forceDiscardAudio, SettingsStorage.shared.escapeCancelSaveAudio, audioRecorder.isRecording {
             do {
                 let sourceDevice = audioRecorder.currentRecordingDeviceInfo
                 let audioData = try await audioRecorder.stopRecording()
@@ -562,6 +562,25 @@ extension AppDelegate {
                 return true
             }()
 
+            if isEmptyTranscription {
+                RecoveryStateManager.shared.clearState()
+                await MainActor.run {
+                    appState.errorMessage = nil
+                    appState.isEmptyTranscription = true
+                    appState.deviceFallbackWarning = nil
+                    appState.recordingState = .idle
+                    appState.recordingStartTime = nil
+                    handleRecordingStateChange(.idle)
+                }
+                showRecordingFeedbackInfo(
+                    message: "No speech detected. Recording cancelled.",
+                    mode: .voice,
+                    duration: 2.5
+                )
+                Log.app.info("stopRecording: Empty recording cancelled without saving")
+                return
+            }
+
             if let audioData = capturedAudioData {
                 let duration = recordingStartTime.map { stopTime.timeIntervalSince($0) } ?? 0
                 RecordingsLibraryStorage.shared.saveRecording(
@@ -598,9 +617,24 @@ extension AppDelegate {
     // MARK: - Realtime Transcription (WebSocket)
 
     private func setupVoiceRealtimeTranscriptionIfNeeded() {
+        let onNoSpeech: () -> Void = { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.appState.recordingState == .recording else { return }
+                await self.cancelRecording(forceDiscardAudio: true)
+                self.showRecordingFeedbackInfo(
+                    message: "No speech detected. Recording cancelled.",
+                    mode: .voice,
+                    duration: 2.5
+                )
+            }
+        }
+
         if SettingsStorage.shared.effectiveTranscriptionProvider == .local {
             guard SettingsStorage.shared.recordingFeedbackSurface == .compactPanel else {
-                audioRecorder.onRealtimeAudioData = nil
+                audioRecorder.onRealtimeAudioData = speechGatedAudioDelivery(
+                    deliver: { _ in },
+                    onNoSpeech: onNoSpeech
+                )
                 localVoiceStreamingService = nil
                 voiceRealtimeSessionEnabled = false
                 voiceRealtimeAccumulator = nil
@@ -628,9 +662,12 @@ extension AppDelegate {
             )
 
             localVoiceStreamingService = stream
-            audioRecorder.onRealtimeAudioData = { [weak stream] pcmData in
-                Task { await stream?.appendPCM16(pcmData) }
-            }
+            audioRecorder.onRealtimeAudioData = speechGatedAudioDelivery(
+                deliver: { [weak stream] pcmData in
+                    Task { await stream?.appendPCM16(pcmData) }
+                },
+                onNoSpeech: onNoSpeech
+            )
             voiceRealtimeSessionEnabled = false
             voiceRealtimeAccumulator = nil
             updateRecordingFeedbackConnectionStatus(.connected, mode: .voice)
@@ -642,9 +679,12 @@ extension AppDelegate {
         voiceRealtimeAccumulator = accumulator
 
         let rtService = realtimeTranscriptionService
-        audioRecorder.onRealtimeAudioData = { [weak rtService] pcmData in
-            rtService?.sendAudioData(pcmData)
-        }
+        audioRecorder.onRealtimeAudioData = speechGatedAudioDelivery(
+            deliver: { [weak rtService] pcmData in
+                rtService?.sendAudioData(pcmData)
+            },
+            onNoSpeech: onNoSpeech
+        )
 
         // The accumulator (correctness path) processes every batch off-main;
         // only the overlay UI update is coalesced to ≤10Hz.
@@ -716,6 +756,18 @@ extension AppDelegate {
                     "Dictation RT connection failed: \(error.localizedDescription)"
                 )
             }
+        }
+    }
+
+    func speechGatedAudioDelivery(
+        deliver: @escaping (Data) -> Void,
+        onNoSpeech: @escaping () -> Void
+    ) -> (Data) -> Void {
+        let gate = RealtimeSpeechGate()
+        return { pcmData in
+            gate.append(pcmData).forEach(deliver)
+            guard gate.consumeNoSpeechTimeout() else { return }
+            onNoSpeech()
         }
     }
 

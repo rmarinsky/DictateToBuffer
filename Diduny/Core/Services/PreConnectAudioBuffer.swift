@@ -22,6 +22,10 @@ struct PreConnectAudioBuffer {
     var isEmpty: Bool { chunks.isEmpty }
     var count: Int { chunks.count }
 
+    var data: Data {
+        chunks.reduce(into: Data()) { $0.append($1) }
+    }
+
     mutating func append(_ data: Data) {
         chunks.append(data)
         totalBytes += data.count
@@ -42,5 +46,51 @@ struct PreConnectAudioBuffer {
         chunks.removeAll()
         totalBytes = 0
         didOverflow = false
+    }
+}
+
+/// Keeps realtime PCM local until speech is present. The buffer cap doubles as
+/// the no-speech timeout: 480 KB is 15 seconds of 16 kHz mono s16le audio.
+final class RealtimeSpeechGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pendingAudio: PreConnectAudioBuffer
+    private var isOpen = false
+    private var noSpeechTimeoutPending = false
+    private var didReportNoSpeechTimeout = false
+
+    init(maxBytes: Int = PreConnectAudioBuffer.defaultMaxBytes) {
+        pendingAudio = PreConnectAudioBuffer(maxBytes: maxBytes)
+    }
+
+    func append(_ data: Data) -> [Data] {
+        guard !data.isEmpty else { return [] }
+
+        return lock.withLock {
+            if isOpen { return [data] }
+
+            pendingAudio.append(data)
+            if AudioSpeechDetector.hasSpeech(inPCM16: pendingAudio.data) {
+                isOpen = true
+                var released: [Data] = []
+                while let chunk = pendingAudio.removeFirst() {
+                    released.append(chunk)
+                }
+                return released
+            }
+
+            if pendingAudio.didOverflow, !didReportNoSpeechTimeout {
+                noSpeechTimeoutPending = true
+                didReportNoSpeechTimeout = true
+            }
+            return []
+        }
+    }
+
+    func consumeNoSpeechTimeout() -> Bool {
+        lock.withLock {
+            let value = noSpeechTimeoutPending
+            noSpeechTimeoutPending = false
+            return value
+        }
     }
 }

@@ -1,3 +1,4 @@
+import AVFoundation
 @testable import Diduny
 import XCTest
 
@@ -73,5 +74,68 @@ final class PreConnectAudioBufferTests: XCTestCase {
         }
         XCTAssertFalse(buffer.didOverflow)
         XCTAssertEqual(buffer.totalBytes, 480_000)
+    }
+
+    func testRealtimeSpeechGateKeepsSilenceLocalAndTimesOut() {
+        let gate = RealtimeSpeechGate(maxBytes: 640)
+        let silence = pcmData(Array(repeating: 0, count: 320))
+
+        XCTAssertTrue(gate.append(silence).isEmpty)
+        XCTAssertFalse(gate.consumeNoSpeechTimeout())
+        XCTAssertTrue(gate.append(silence).isEmpty)
+        XCTAssertTrue(gate.append(silence).isEmpty)
+        XCTAssertTrue(gate.consumeNoSpeechTimeout())
+        XCTAssertTrue(gate.append(silence).isEmpty)
+        XCTAssertFalse(gate.consumeNoSpeechTimeout())
+    }
+
+    func testRealtimeSpeechGateReleasesBufferedAudioAfterSpeech() {
+        let gate = RealtimeSpeechGate(maxBytes: 20_000)
+        let silence = pcmData(Array(repeating: 0, count: 960))
+        let speech = pcmData(Array(repeating: 1_000, count: 3_200))
+
+        XCTAssertTrue(gate.append(silence).isEmpty)
+        XCTAssertEqual(gate.append(speech), [silence, speech])
+
+        let laterSpeech = pcmData(Array(repeating: 2_000, count: 320))
+        XCTAssertEqual(gate.append(laterSpeech), [laterSpeech])
+        XCTAssertFalse(gate.consumeNoSpeechTimeout())
+    }
+
+    func testRealtimeSpeechGateOpensWhenSpeechStartsImmediately() {
+        let gate = RealtimeSpeechGate(maxBytes: 20_000)
+        let speech = pcmData(Array(repeating: 1_000, count: 3_200))
+
+        XCTAssertEqual(gate.append(speech), [speech])
+    }
+
+    func testSpeechPrecheckFailsClosedWhenAudioCannotBeDecoded() async {
+        let hasSpeech = await AudioSpeechDetector.hasSpeech(in: Data())
+
+        XCTAssertFalse(hasSpeech)
+    }
+
+    func testSpeechPrecheckAcceptsAudioThatStartsWithSpeech() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AudioSpeechDetectorTests-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        do {
+            let format = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1)!
+            let file = try AVAudioFile(forWriting: url, settings: format.settings)
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_000)!
+            buffer.frameLength = 16_000
+            for index in 0 ..< 16_000 {
+                buffer.floatChannelData![0][index] = 0.05 * sin(Float(index) * 2 * .pi * 220 / 16_000)
+            }
+            try file.write(from: buffer)
+        }
+
+        let hasSpeech = await AudioSpeechDetector.hasSpeech(in: try Data(contentsOf: url))
+        XCTAssertTrue(hasSpeech)
+    }
+
+    private func pcmData(_ samples: [Int16]) -> Data {
+        samples.withUnsafeBytes { Data($0) }
     }
 }
