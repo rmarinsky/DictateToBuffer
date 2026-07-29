@@ -16,4 +16,16 @@ struct EdgeCommandPanelModelTests {
         #expect(EdgeCommandAction.translateMeeting.usesLanguagePair)
         #expect(!EdgeCommandAction.transcribe.usesLanguagePair)
     }
+
+    @Test("Refreshing configured pairs keeps a valid selected target")
+    func refreshReplacesPairsWithoutLeavingAStaleSelection() {
+        let english = TranslationLanguagePair(languageA: "uk", languageB: "en")
+        let polish = TranslationLanguagePair(languageA: "uk", languageB: "pl")
+        let model = EdgeCommandPanelModel(pairs: [english], selectedPair: english)
+
+        model.refresh(pairs: [polish], selectedPair: polish)
+
+        #expect(model.pairs == [polish])
+        #expect(model.selectedPair == polish)
+    }
 }

@@ -39,12 +39,13 @@ enum EdgeCommandAction: CaseIterable, Identifiable {
 @Observable
 @MainActor
 final class EdgeCommandPanelModel {
-    let pairs: [TranslationLanguagePair]
+    var pairs: [TranslationLanguagePair]
     var selectedPairID: String
 
     init(pairs: [TranslationLanguagePair], selectedPair: TranslationLanguagePair) {
-        self.pairs = pairs.isEmpty ? [.defaultPair] : pairs
-        selectedPairID = self.pairs.contains(selectedPair) ? selectedPair.id : self.pairs[0].id
+        let normalizedPairs = pairs.isEmpty ? [.defaultPair] : pairs
+        self.pairs = normalizedPairs
+        selectedPairID = normalizedPairs.contains(selectedPair) ? selectedPair.id : normalizedPairs[0].id
     }
 
     var selectedPair: TranslationLanguagePair? {
@@ -54,6 +55,11 @@ final class EdgeCommandPanelModel {
     func select(_ pair: TranslationLanguagePair) {
         guard pairs.contains(pair) else { return }
         selectedPairID = pair.id
+    }
+
+    func refresh(pairs: [TranslationLanguagePair], selectedPair: TranslationLanguagePair) {
+        self.pairs = pairs.isEmpty ? [.defaultPair] : pairs
+        selectedPairID = self.pairs.contains(selectedPair) ? selectedPair.id : self.pairs[0].id
     }
 }
 
@@ -92,7 +98,11 @@ final class EdgeCommandPanelController {
     private func refreshModel() {
         let pairs = SettingsStorage.shared.translationLanguagePairs
         let selected = SettingsStorage.shared.resolveTranslationLanguagePair()
-        model = EdgeCommandPanelModel(pairs: pairs, selectedPair: selected)
+        if let model {
+            model.refresh(pairs: pairs, selectedPair: selected)
+        } else {
+            model = EdgeCommandPanelModel(pairs: pairs, selectedPair: selected)
+        }
     }
 
     private func showCollapsed() {
@@ -107,11 +117,6 @@ final class EdgeCommandPanelController {
         refreshModel()
         let panel = panel ?? makePanel()
         self.panel = panel
-        panel.contentView = NSHostingView(rootView: EdgeCommandPanelView(
-            model: model!,
-            onAction: { [weak self] action in self?.perform(action) },
-            onHoverChange: { [weak self] hovering in self?.setHovering(hovering) }
-        ))
         position(panel, expanded: true)
         panel.orderFrontRegardless()
     }
