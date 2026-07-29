@@ -96,3 +96,62 @@ final class RecordingsLibraryFilterTests: XCTestCase {
         )
     }
 }
+
+final class RecordingStatisticsTests: XCTestCase {
+    func test_usageDurationsPartitionEveryRecordingExactlyOnce() {
+        let recordings = [
+            makeRecording(type: .voice, duration: 10),
+            makeRecording(type: .translation, duration: 20),
+            makeRecording(type: .meeting, duration: 30),
+            makeRecording(type: .meetingTranslation, duration: 40),
+            makeRecording(type: .fileTranscription, duration: 50),
+            makeRecording(type: .fileTranscription, duration: 60, remoteSource: makeYouTubeSource())
+        ]
+
+        let statistics = RecordingStatistics(recordings: recordings)
+
+        XCTAssertEqual(statistics.voiceDurationSeconds, 10)
+        XCTAssertEqual(statistics.translationDurationSeconds, 20)
+        XCTAssertEqual(statistics.meetingDurationSeconds, 70)
+        XCTAssertEqual(statistics.importedFileDurationSeconds, 50)
+        XCTAssertEqual(statistics.youtubeDurationSeconds, 60)
+        XCTAssertEqual(statistics.totalDurationSeconds, 210)
+        XCTAssertEqual(
+            statistics.voiceDurationSeconds
+                + statistics.translationDurationSeconds
+                + statistics.meetingDurationSeconds
+                + statistics.importedFileDurationSeconds
+                + statistics.youtubeDurationSeconds,
+            statistics.totalDurationSeconds
+        )
+    }
+
+    private func makeRecording(
+        type: Recording.RecordingType,
+        duration: TimeInterval,
+        remoteSource: RemoteMediaSourceMetadata? = nil
+    ) -> Recording {
+        Recording(
+            id: UUID(),
+            createdAt: Date(),
+            type: type,
+            audioFileName: "recording.m4a",
+            durationSeconds: duration,
+            fileSizeBytes: 42,
+            status: .transcribed,
+            transcriptionText: "Transcript",
+            sourceDevice: nil,
+            remoteSource: remoteSource
+        )
+    }
+
+    private func makeYouTubeSource() -> RemoteMediaSourceMetadata {
+        RemoteMediaSourceMetadata(
+            provider: YouTubeRemoteMediaSource.provider,
+            mediaID: "video-id",
+            canonicalURL: URL(string: "https://www.youtube.com/watch?v=video-id")!,
+            title: "Video",
+            channelName: "Channel"
+        )
+    }
+}

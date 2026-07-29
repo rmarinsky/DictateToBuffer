@@ -286,3 +286,25 @@ struct Recording: Identifiable, Codable, Equatable {
         }
     }
 }
+
+struct RecordingStatistics {
+    let recordingCount: Int
+    let totalDurationSeconds: TimeInterval
+    let voiceDurationSeconds: TimeInterval
+    let translationDurationSeconds: TimeInterval
+    let meetingDurationSeconds: TimeInterval
+    let importedFileDurationSeconds: TimeInterval
+    let youtubeDurationSeconds: TimeInterval
+
+    init(recordings: [Recording]) {
+        recordingCount = recordings.count
+        totalDurationSeconds = recordings.reduce(0) { $0 + $1.durationSeconds }
+        voiceDurationSeconds = recordings.filter { $0.type == .voice }.reduce(0) { $0 + $1.durationSeconds }
+        translationDurationSeconds = recordings.filter { $0.type == .translation }.reduce(0) { $0 + $1.durationSeconds }
+        meetingDurationSeconds = recordings.filter(\.type.isMeetingLike).reduce(0) { $0 + $1.durationSeconds }
+        importedFileDurationSeconds = recordings
+            .filter { $0.type == .fileTranscription && !$0.isYouTubeVideo }
+            .reduce(0) { $0 + $1.durationSeconds }
+        youtubeDurationSeconds = recordings.filter(\.isYouTubeVideo).reduce(0) { $0 + $1.durationSeconds }
+    }
+}
