@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import QuartzCore
 import SwiftUI
 
 enum EdgeCommandAction: CaseIterable, Identifiable {
@@ -36,22 +37,79 @@ enum EdgeCommandAction: CaseIterable, Identifiable {
     }
 }
 
+enum EdgeCommandPanelDockEdge: Equatable {
+    case left
+    case right
+    case top
+    case bottom
+}
+
+struct EdgeCommandPanelDock: Equatable {
+    let edge: EdgeCommandPanelDockEdge
+    let offset: CGFloat
+}
+
 enum EdgeCommandPanelPlacement {
-    static func frame(in visibleFrame: NSRect, pinnedOrigin: NSPoint?, expanded: Bool) -> NSRect {
-        let width = expanded ? expandedSize.width : handleWidth
-        let preferredOrigin = pinnedOrigin ?? NSPoint(
-            x: visibleFrame.maxX - width,
-            y: visibleFrame.midY - expandedSize.height / 2
-        )
-        let origin = NSPoint(
-            x: min(max(preferredOrigin.x, visibleFrame.minX), visibleFrame.maxX - width),
-            y: min(max(preferredOrigin.y, visibleFrame.minY), visibleFrame.maxY - expandedSize.height)
-        )
-        return NSRect(origin: origin, size: NSSize(width: width, height: expandedSize.height))
+    static func nearestDock(to proposedFrame: NSRect, in visibleFrame: NSRect) -> EdgeCommandPanelDock {
+        let distances: [(EdgeCommandPanelDockEdge, CGFloat)] = [
+            (.left, abs(proposedFrame.minX - visibleFrame.minX)),
+            (.right, abs(visibleFrame.maxX - proposedFrame.maxX)),
+            (.bottom, abs(proposedFrame.minY - visibleFrame.minY)),
+            (.top, abs(visibleFrame.maxY - proposedFrame.maxY))
+        ]
+        let edge = distances.min(by: { $0.1 < $1.1 })?.0 ?? .right
+        let offset = edge == .left || edge == .right ? proposedFrame.midY : proposedFrame.midX
+        return EdgeCommandPanelDock(edge: edge, offset: offset)
     }
 
-    static let expandedSize = NSSize(width: 304, height: 314)
-    static let handleWidth: CGFloat = 14
+    static func frame(in visibleFrame: NSRect, dock: EdgeCommandPanelDock, expanded: Bool) -> NSRect {
+        let size = expanded ? expandedSize : collapsedSize(for: dock.edge)
+        let origin: NSPoint
+
+        switch dock.edge {
+        case .left:
+            origin = NSPoint(
+                x: visibleFrame.minX,
+                y: clampedOrigin(dock.offset, length: size.height, minimum: visibleFrame.minY, maximum: visibleFrame.maxY)
+            )
+        case .right:
+            origin = NSPoint(
+                x: visibleFrame.maxX - size.width,
+                y: clampedOrigin(dock.offset, length: size.height, minimum: visibleFrame.minY, maximum: visibleFrame.maxY)
+            )
+        case .top:
+            origin = NSPoint(
+                x: clampedOrigin(dock.offset, length: size.width, minimum: visibleFrame.minX, maximum: visibleFrame.maxX),
+                y: visibleFrame.maxY - size.height
+            )
+        case .bottom:
+            origin = NSPoint(
+                x: clampedOrigin(dock.offset, length: size.width, minimum: visibleFrame.minX, maximum: visibleFrame.maxX),
+                y: visibleFrame.minY
+            )
+        }
+
+        return NSRect(origin: origin, size: size)
+    }
+
+    static let expandedSize = NSSize(width: 286, height: 326)
+
+    private static func collapsedSize(for edge: EdgeCommandPanelDockEdge) -> NSSize {
+        switch edge {
+        case .left, .right: NSSize(width: 14, height: 64)
+        case .top, .bottom: NSSize(width: 64, height: 14)
+        }
+    }
+
+    private static func clampedOrigin(_ offset: CGFloat, length: CGFloat, minimum: CGFloat, maximum: CGFloat) -> CGFloat {
+        min(max(offset - length / 2, minimum), maximum - length)
+    }
+}
+
+enum EdgeCommandPanelHoverPolicy {
+    static func shouldCollapse(pointer: NSPoint, panelFrame: NSRect, isDragging: Bool) -> Bool {
+        !isDragging && !panelFrame.contains(pointer)
+    }
 }
 
 @Observable
@@ -59,6 +117,8 @@ enum EdgeCommandPanelPlacement {
 final class EdgeCommandPanelModel {
     var pairs: [TranslationLanguagePair]
     var selectedPairID: String
+    var isExpanded = false
+    var dockEdge: EdgeCommandPanelDockEdge = .right
 
     init(pairs: [TranslationLanguagePair], selectedPair: TranslationLanguagePair) {
         let normalizedPairs = pairs.isEmpty ? [.defaultPair] : pairs
@@ -82,7 +142,7 @@ final class EdgeCommandPanelModel {
 }
 
 @MainActor
-final class EdgeCommandPanelController: NSObject, NSWindowDelegate {
+final class EdgeCommandPanelController: NSObject {
     static let shared = EdgeCommandPanelController()
 
     private weak var appDelegate: AppDelegate?
@@ -90,8 +150,8 @@ final class EdgeCommandPanelController: NSObject, NSWindowDelegate {
     private var model: EdgeCommandPanelModel?
     private var collapseTask: Task<Void, Never>?
     private var compactFeedbackKind: RecordingKind?
-    private var pinnedOrigin: NSPoint?
-    private var isUserDragging = false
+    private var dock: EdgeCommandPanelDock?
+    private var dragCursorOffset: NSPoint?
 
     private override init() {
         super.init()
@@ -128,6 +188,7 @@ final class EdgeCommandPanelController: NSObject, NSWindowDelegate {
     }
 
     private func showCollapsed() {
+        collapseTask?.cancel()
         let panel = panel ?? makePanel()
         self.panel = panel
         position(panel, expanded: false)
@@ -145,15 +206,44 @@ final class EdgeCommandPanelController: NSObject, NSWindowDelegate {
 
     private func setHovering(_ hovering: Bool) {
         if hovering {
+            collapseTask?.cancel()
+            guard model?.isExpanded != true else { return }
             showExpanded()
         } else {
+            guard model?.isExpanded == true else { return }
             collapseTask?.cancel()
             collapseTask = Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(450))
-                guard !Task.isCancelled else { return }
-                self?.showCollapsed()
+                guard !Task.isCancelled, let self, let panel = self.panel else { return }
+                guard EdgeCommandPanelHoverPolicy.shouldCollapse(
+                    pointer: NSEvent.mouseLocation,
+                    panelFrame: panel.frame,
+                    isDragging: self.dragCursorOffset != nil
+                ) else { return }
+                self.showCollapsed()
             }
         }
+    }
+
+    private func dragPanel() {
+        guard let panel else { return }
+        collapseTask?.cancel()
+        let cursor = NSEvent.mouseLocation
+        if dragCursorOffset == nil {
+            dragCursorOffset = NSPoint(x: cursor.x - panel.frame.minX, y: cursor.y - panel.frame.minY)
+        }
+        guard let dragCursorOffset else { return }
+        panel.setFrameOrigin(NSPoint(x: cursor.x - dragCursorOffset.x, y: cursor.y - dragCursorOffset.y))
+    }
+
+    private func finishDraggingPanel() {
+        guard let panel, dragCursorOffset != nil else { return }
+        dragCursorOffset = nil
+        let screen = activeScreen() ?? panel.screen ?? NSScreen.main
+        let visibleFrame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        dock = EdgeCommandPanelPlacement.nearestDock(to: panel.frame, in: visibleFrame)
+        model?.dockEdge = dock?.edge ?? .right
+        position(panel, expanded: true, on: visibleFrame)
     }
 
     private func perform(_ action: EdgeCommandAction) {
@@ -208,36 +298,52 @@ final class EdgeCommandPanelController: NSObject, NSWindowDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = false
+        panel.hasShadow = true
         panel.hidesOnDeactivate = false
-        panel.isMovableByWindowBackground = true
-        panel.delegate = self
-        panel.contentView = NSHostingView(rootView: EdgeCommandPanelView(
+        panel.isMovable = false
+        panel.isMovableByWindowBackground = false
+        panel.acceptsMouseMovedEvents = true
+
+        let hostingView = EdgeCommandHostingView(rootView: EdgeCommandPanelView(
             model: model!,
             onAction: { [weak self] action in self?.perform(action) },
-            onHoverChange: { [weak self] hovering in self?.setHovering(hovering) }
+            onCollapse: { [weak self] in self?.showCollapsed() },
+            onDrag: { [weak self] in self?.dragPanel() },
+            onDragEnd: { [weak self] in self?.finishDraggingPanel() }
         ))
+        hostingView.sizingOptions = []
+        hostingView.autoresizingMask = [.width, .height]
+        hostingView.onHoverChange = { [weak self] hovering in self?.setHovering(hovering) }
+        panel.contentView = hostingView
         return panel
     }
 
-    private func position(_ panel: NSPanel, expanded: Bool) {
-        let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
-        let frame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        panel.setFrame(
-            EdgeCommandPanelPlacement.frame(in: frame, pinnedOrigin: pinnedOrigin, expanded: expanded),
-            display: true,
-            animate: true
-        )
+    private func position(_ panel: NSPanel, expanded: Bool, on explicitVisibleFrame: NSRect? = nil) {
+        let screen = dock == nil ? activeScreen() : panel.screen ?? activeScreen()
+        let visibleFrame = explicitVisibleFrame
+            ?? screen?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let resolvedDock = dock ?? EdgeCommandPanelDock(edge: .right, offset: visibleFrame.midY)
+        dock = resolvedDock
+        model?.dockEdge = resolvedDock.edge
+        withAnimation(.easeOut(duration: 0.18)) {
+            model?.isExpanded = expanded
+        }
+
+        let frame = EdgeCommandPanelPlacement.frame(in: visibleFrame, dock: resolvedDock, expanded: expanded)
+        if panel.isVisible {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.24
+                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.46, 0.45, 0.94)
+                panel.animator().setFrame(frame, display: true)
+            }
+        } else {
+            panel.setFrame(frame, display: true)
+        }
     }
 
-    func windowWillMove(_: Notification) {
-        isUserDragging = true
-    }
-
-    func windowDidMove(_: Notification) {
-        guard isUserDragging, let panel else { return }
-        pinnedOrigin = panel.frame.origin
-        isUserDragging = false
+    private func activeScreen() -> NSScreen? {
+        NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
     }
 }
 
@@ -246,87 +352,354 @@ private final class EdgeCommandPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+private final class EdgeCommandHostingView<Content: View>: NSHostingView<Content> {
+    var onHoverChange: ((Bool) -> Void)?
+    private var hoverTrackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea {
+            removeTrackingArea(hoverTrackingArea)
+        }
+        let trackingArea = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(trackingArea)
+        hoverTrackingArea = trackingArea
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        onHoverChange?(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        onHoverChange?(false)
+    }
+}
+
 private struct EdgeCommandPanelView: View {
     let model: EdgeCommandPanelModel
     let onAction: (EdgeCommandAction) -> Void
-    let onHoverChange: (Bool) -> Void
+    let onCollapse: () -> Void
+    let onDrag: () -> Void
+    let onDragEnd: () -> Void
 
     var body: some View {
         @Bindable var model = model
-        HStack(spacing: 0) {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color("BrandAccentDeep"))
-                .frame(width: 8, height: 56)
-                .frame(width: 14, height: 314)
-                .accessibilityLabel("Open Diduny quick actions")
-
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Image(systemName: "line.3.horizontal")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .help("Drag to reposition")
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Diduny")
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
-                        Text("Quick actions")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Image(systemName: "sparkles")
-                        .foregroundStyle(Color("BrandAccentDeep"))
-                }
-
-                if model.pairs.count > 1 {
-                    Picker("Translate to", selection: $model.selectedPairID) {
-                        ForEach(model.pairs) { pair in
-                            Text(pair.displayLabel).tag(pair.id)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                } else if let pair = model.selectedPair {
-                    Label(pair.displayLabel, systemImage: "globe")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color("BrandAccentDeep"))
-                }
-
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                    ForEach(EdgeCommandAction.allCases) { action in
-                        Button { onAction(action) } label: {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Image(systemName: action.icon)
-                                    .font(.system(size: 15, weight: .semibold))
-                                Text(action.title)
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .lineLimit(1)
-                            }
-                            .frame(maxWidth: .infinity, minHeight: 47, alignment: .leading)
-                            .padding(9)
-                            .foregroundStyle(Color.primary)
-                            .background(Color("BrandTintSoft"), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                        .help(actionHelp(action))
-                    }
-                }
-            }
-            .padding(14)
-            .frame(width: 290, height: 314)
-            .background(.regularMaterial, in: UnevenRoundedRectangle(bottomTrailingRadius: 14, topTrailingRadius: 14))
-            .overlay(alignment: .trailing) {
-                Rectangle().fill(Color("BrandTintBorder").opacity(0.8)).frame(width: 1)
+        ZStack(alignment: alignment(for: model.dockEdge)) {
+            if model.isExpanded {
+                EdgeCommandExpandedView(
+                    model: model,
+                    onAction: onAction,
+                    onCollapse: onCollapse,
+                    onDrag: onDrag,
+                    onDragEnd: onDragEnd
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: anchor(for: model.dockEdge))))
+            } else {
+                EdgeCommandTabView(edge: model.dockEdge, onDrag: onDrag, onDragEnd: onDragEnd)
+                    .transition(.opacity)
             }
         }
-        .frame(width: 304, height: 314)
-        .contentShape(Rectangle())
-        .onHover(perform: onHoverChange)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment(for: model.dockEdge))
+        .clipped()
     }
 
-    private func actionHelp(_ action: EdgeCommandAction) -> String {
-        guard action.usesLanguagePair else { return action.title }
-        return "Uses \(model.selectedPair?.displayLabel ?? "the selected language pair")"
+    private func alignment(for edge: EdgeCommandPanelDockEdge) -> Alignment {
+        switch edge {
+        case .left: .leading
+        case .right: .trailing
+        case .top: .top
+        case .bottom: .bottom
+        }
+    }
+
+    private func anchor(for edge: EdgeCommandPanelDockEdge) -> UnitPoint {
+        switch edge {
+        case .left: .leading
+        case .right: .trailing
+        case .top: .top
+        case .bottom: .bottom
+        }
+    }
+}
+
+private struct EdgeCommandTabView: View {
+    let edge: EdgeCommandPanelDockEdge
+    let onDrag: () -> Void
+    let onDragEnd: () -> Void
+
+    var body: some View {
+        ZStack {
+            tabShape
+                .fill(.regularMaterial)
+            Capsule()
+                .fill(LinearGradient(
+                    colors: [Color("BrandAccentDeep"), Color.pink],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ))
+                .frame(
+                    width: edge == .left || edge == .right ? 3 : 24,
+                    height: edge == .left || edge == .right ? 24 : 3
+                )
+                .shadow(color: Color("BrandAccentDeep").opacity(0.45), radius: 5)
+        }
+        .overlay(tabShape.stroke(Color("BrandTintBorder"), lineWidth: 0.5))
+        .contentShape(Rectangle())
+        .gesture(dragGesture)
+        .accessibilityLabel("Open Diduny quick actions")
+    }
+
+    private var tabShape: UnevenRoundedRectangle {
+        switch edge {
+        case .left:
+            UnevenRoundedRectangle(
+                topLeadingRadius: 0,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 10,
+                topTrailingRadius: 10
+            )
+        case .right:
+            UnevenRoundedRectangle(
+                topLeadingRadius: 10,
+                bottomLeadingRadius: 10,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 0
+            )
+        case .top:
+            UnevenRoundedRectangle(
+                topLeadingRadius: 0,
+                bottomLeadingRadius: 10,
+                bottomTrailingRadius: 10,
+                topTrailingRadius: 0
+            )
+        case .bottom:
+            UnevenRoundedRectangle(
+                topLeadingRadius: 10,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 10
+            )
+        }
+    }
+
+    private var dragGesture: some Gesture {
+        DragGesture(minimumDistance: 2)
+            .onChanged { _ in onDrag() }
+            .onEnded { _ in onDragEnd() }
+    }
+}
+
+private struct EdgeCommandExpandedView: View {
+    let model: EdgeCommandPanelModel
+    let onAction: (EdgeCommandAction) -> Void
+    let onCollapse: () -> Void
+    let onDrag: () -> Void
+    let onDragEnd: () -> Void
+
+    var body: some View {
+        @Bindable var model = model
+        VStack(alignment: .leading, spacing: 10) {
+            header
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 7) {
+                ForEach(EdgeCommandAction.allCases.filter { $0 != .batch }) { action in
+                    EdgeCommandActionButton(
+                        action: action,
+                        meta: actionMeta(action),
+                        onAction: { onAction(action) }
+                    )
+                }
+            }
+
+            HStack(spacing: 8) {
+                Text("Translate to")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                Picker("Translate to", selection: $model.selectedPairID) {
+                    ForEach(model.pairs) { pair in
+                        Text(languageName(pair.languageB)).tag(pair.id)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+            }
+
+            Button { onAction(.batch) } label: {
+                Label("Batch files & URLs", systemImage: EdgeCommandAction.batch.icon)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 26)
+            }
+            .buttonStyle(.plain)
+            .help("Process multiple files and URLs")
+        }
+        .padding(14)
+        .background(.regularMaterial, in: panelShape)
+        .overlay(panelShape.stroke(Color.primary.opacity(0.10), lineWidth: 0.5))
+    }
+
+    private var header: some View {
+        HStack(spacing: 9) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(LinearGradient(
+                    colors: [Color.pink, Color("BrandAccentDeep")],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ))
+                .frame(width: 28, height: 28)
+                .overlay {
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+                .shadow(color: Color("BrandAccentDeep").opacity(0.28), radius: 6, y: 3)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Diduny")
+                    .font(.system(size: 13, weight: .bold))
+                Text("What do you want to capture?")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            Button(action: onCollapse) {
+                Image(systemName: collapseSymbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 26, height: 26)
+                    .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .help("Hide quick actions")
+        }
+        .contentShape(Rectangle())
+        .gesture(dragGesture)
+        .help("Drag to attach to another screen edge")
+    }
+
+    private var panelShape: UnevenRoundedRectangle {
+        switch model.dockEdge {
+        case .left:
+            UnevenRoundedRectangle(
+                topLeadingRadius: 0,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 15,
+                topTrailingRadius: 15
+            )
+        case .right:
+            UnevenRoundedRectangle(
+                topLeadingRadius: 15,
+                bottomLeadingRadius: 15,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 0
+            )
+        case .top:
+            UnevenRoundedRectangle(
+                topLeadingRadius: 0,
+                bottomLeadingRadius: 15,
+                bottomTrailingRadius: 15,
+                topTrailingRadius: 0
+            )
+        case .bottom:
+            UnevenRoundedRectangle(
+                topLeadingRadius: 15,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 15
+            )
+        }
+    }
+
+    private var collapseSymbol: String {
+        switch model.dockEdge {
+        case .left: "chevron.left"
+        case .right: "chevron.right"
+        case .top: "chevron.up"
+        case .bottom: "chevron.down"
+        }
+    }
+
+    private var dragGesture: some Gesture {
+        DragGesture(minimumDistance: 2)
+            .onChanged { _ in onDrag() }
+            .onEnded { _ in onDragEnd() }
+    }
+
+    private func actionMeta(_ action: EdgeCommandAction) -> String {
+        switch action {
+        case .transcribe: "Voice → text"
+        case .translate: "Voice → \(targetCode)"
+        case .meeting: "System + mic"
+        case .translateMeeting: "Live → \(targetCode)"
+        case .batch: ""
+        }
+    }
+
+    private var targetCode: String {
+        model.selectedPair?.languageB.uppercased() ?? "EN"
+    }
+
+    private func languageName(_ code: String) -> String {
+        SupportedLanguage.language(for: code)?.name ?? code.uppercased()
+    }
+}
+
+private struct EdgeCommandActionButton: View {
+    let action: EdgeCommandAction
+    let meta: String
+    let onAction: () -> Void
+
+    @State private var isHovered = false
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        let highlighted = isHovered || isFocused
+        Button(action: onAction) {
+            VStack(alignment: .leading, spacing: 7) {
+                Image(systemName: action.icon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color("BrandAccentDeep"))
+                    .frame(width: 28, height: 28)
+                    .background(Color("BrandTintSoft"), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                Text(action.title)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .lineLimit(1)
+                Text(meta)
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(9)
+            .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+            .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .focused($isFocused)
+        .background(
+            highlighted ? Color("BrandAccentDeep").opacity(0.11) : Color.primary.opacity(0.045),
+            in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(highlighted ? Color("BrandTintBorder") : Color.primary.opacity(0.08), lineWidth: 0.5)
+        }
+        .offset(y: highlighted ? -1 : 0)
+        .shadow(color: highlighted ? Color("BrandAccentDeep").opacity(0.14) : .clear, radius: 8, y: 4)
+        .animation(.easeOut(duration: 0.15), value: highlighted)
+        .onHover { isHovered = $0 }
+        .help(action.usesLanguagePair ? "Uses the selected translation language" : action.title)
     }
 }
