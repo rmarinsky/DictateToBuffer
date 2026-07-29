@@ -222,6 +222,36 @@ final class YouTubeRemoteMediaSourceTests: XCTestCase {
         XCTAssertEqual(sessions.map(\.cookieArgument), ["edge:Default", "edge:Profile 2"])
     }
 
+    func test_firefoxSessionDiscovery_supportsZenProfilePaths() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DidunyZenProfiles-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("Profiles/current"),
+            withIntermediateDirectories: true
+        )
+        let profilesINI = """
+        [Profile0]
+        Name=Roman
+        IsRelative=1
+        Path=Profiles/current
+
+        [Profile1]
+        Name=Deleted
+        IsRelative=1
+        Path=Profiles/deleted
+        """
+        try Data(profilesINI.utf8).write(to: root.appendingPathComponent("profiles.ini"))
+
+        let sessions = BrowserSessionStore.discoverFirefox(browser: .zen, in: root)
+
+        XCTAssertEqual(sessions.map(\.displayName), ["Zen — Roman"])
+        XCTAssertEqual(
+            sessions.map(\.cookieArgument),
+            ["firefox:\(root.appendingPathComponent("Profiles/current").path)"]
+        )
+    }
+
     func test_runtimeArguments_useSelectedBrowserSessionBundledDenoAndExactAudioFormat() throws {
         let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
         let session = BrowserSession(browser: .edge, profileID: "Profile 2", profileName: "Work")

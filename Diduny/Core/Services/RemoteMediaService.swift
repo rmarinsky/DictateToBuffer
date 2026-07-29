@@ -541,6 +541,48 @@ enum BrowserSessionStore {
             return left.id.localizedStandardCompare(right.id) == .orderedAscending
         }
     }
+
+    static func discoverFirefox(
+        browser: BrowserKind,
+        in userDataDirectory: URL
+    ) -> [BrowserSession] {
+        guard let value = try? String(
+            contentsOf: userDataDirectory.appendingPathComponent("profiles.ini"),
+            encoding: .utf8
+        ) else { return [] }
+
+        var sections: [String: [String: String]] = [:]
+        var currentSection: String?
+        for rawLine in value.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.hasPrefix("["), line.hasSuffix("]") {
+                let section = String(line.dropFirst().dropLast())
+                currentSection = section.hasPrefix("Profile") ? section : nil
+            } else if let currentSection, let separator = line.firstIndex(of: "=") {
+                sections[currentSection, default: [:]][String(line[..<separator])] =
+                    String(line[line.index(after: separator)...])
+            }
+        }
+
+        return sections.keys.sorted().compactMap { section in
+            guard let values = sections[section],
+                  let path = values["Path"]
+            else { return nil }
+            let profileURL = values["IsRelative"] == "1"
+                ? userDataDirectory.appendingPathComponent(path, isDirectory: true)
+                : URL(fileURLWithPath: path, isDirectory: true)
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(
+                atPath: profileURL.path,
+                isDirectory: &isDirectory
+            ), isDirectory.boolValue else { return nil }
+            return BrowserSession(
+                browser: browser,
+                profileID: profileURL.path,
+                profileName: values["Name"] ?? profileURL.lastPathComponent
+            )
+        }
+    }
 }
 
 enum ChromeProfileStore {
