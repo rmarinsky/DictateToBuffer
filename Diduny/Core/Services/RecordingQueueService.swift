@@ -160,7 +160,7 @@ final class RecordingQueueService {
                     )
                 } else {
                     let audioData = try await loadAudioData(from: audioURL)
-                    transcript = try await GeneratedTranscript(text: service.transcribe(audioData: audioData))
+                    transcript = try await service.transcribeDetailed(audioData: audioData)
                 }
                 status = .transcribed
                 translationTargetLanguageCode = nil
@@ -176,7 +176,7 @@ final class RecordingQueueService {
                     )
                 } else {
                     let audioData = try await loadAudioData(from: audioURL)
-                    transcript = try await GeneratedTranscript(text: service.transcribe(audioData: audioData))
+                    transcript = try await service.transcribeDetailed(audioData: audioData)
                 }
                 status = .transcribed
                 translationTargetLanguageCode = nil

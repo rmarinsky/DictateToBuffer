@@ -160,6 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var translationPushToTalkService = PushToTalkService()
     lazy var meetingRecorderService = MeetingRecorderService()
     lazy var realtimeTranscriptionService = CloudRealtimeService()
+    var localVoiceStreamingService: LocalWhisperStreamingService?
     var voiceRealtimeAccumulator: RealtimeVoiceAccumulator?
     var voiceRealtimeSessionEnabled: Bool = false
     var voiceRealtimeConnectionError: String?

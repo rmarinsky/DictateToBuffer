@@ -1538,7 +1538,7 @@ private final class LiveFileTranscriptionBatchTranscriber: FileTranscriptionBatc
             }.value
             let service = WhisperTranscriptionService()
             service.modelNameOverride = settings.localModelName
-            return try await GeneratedTranscript(text: service.transcribe(audioData: audioData))
+            return try await service.transcribeDetailed(audioData: audioData)
         }
     }
 }

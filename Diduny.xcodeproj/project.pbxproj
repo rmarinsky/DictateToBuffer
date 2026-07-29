@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C20000000000000000000001 /* LocalWhisperStreamingServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000002 /* LocalWhisperStreamingServiceTests.swift */; };
 		007C689901A82C26D1AFD661 /* NotchManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12B40184B3E0CE6E0736EE82 /* NotchManagerTests.swift */; };
 		03386BD1EB00ACDF8DD60759 /* EscapeCancelServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C46453045F6E830B4B5B48D4 /* EscapeCancelServiceTests.swift */; };
 		03BA270D9BB719167A7AA9B3 /* RealtimeTokenCoalescer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1297828B8BD8BEDBAFD9F235 /* RealtimeTokenCoalescer.swift */; };
@@ -164,6 +165,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		C20000000000000000000002 /* LocalWhisperStreamingServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalWhisperStreamingServiceTests.swift; sourceTree = "<group>"; };
 		001D5E66F362C783C621055C /* CloudRealtimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudRealtimeService.swift; sourceTree = "<group>"; };
 		01E272A8E12D4EEF5D724E91 /* AppDelegate+TranslationRecording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppDelegate+TranslationRecording.swift"; sourceTree = "<group>"; };
 		0491E26240E167BDB5DCACEE /* HotkeyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyService.swift; sourceTree = "<group>"; };
@@ -655,6 +657,7 @@
 		D2B2605F1A03065F4BA5333C /* DidunyTests */ = {
 			isa = PBXGroup;
 			children = (
+				C20000000000000000000002 /* LocalWhisperStreamingServiceTests.swift */,
 				CB03AFCF7D534F613B88F580 /* AsyncTranscriptionJobFileUploadTests.swift */,
 				A90DC34399C728FB2BD9C292 /* AuthServiceTests.swift */,
 				FB2D4C4C36B3BB89D1A2E8BD /* CloudTranscriptionServiceE2ETests.swift */,
@@ -973,6 +976,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C20000000000000000000001 /* LocalWhisperStreamingServiceTests.swift in Sources */,
 				40F99144735911B3C0DF19AC /* AsyncTranscriptionJobFileUploadTests.swift in Sources */,
 				BF50A7600E9D175A63D987E7 /* AuthServiceTests.swift in Sources */,
 				154F9E85CEDA37FE7E88EE36 /* CloudTranscriptionServiceE2ETests.swift in Sources */,
