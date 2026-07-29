@@ -159,6 +159,13 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         XCTAssertEqual(batch.inspectableWorkItems, [completed])
     }
 
+    func test_inspectorStatusIsHiddenAfterSuccessfulProcessing() {
+        XCTAssertTrue(BatchTranscriptionItem.Status.processing.showsInBatchInspector)
+        XCTAssertTrue(BatchTranscriptionItem.Status.failed.showsInBatchInspector)
+        XCTAssertFalse(BatchTranscriptionItem.Status.completed.showsInBatchInspector)
+        XCTAssertFalse(BatchTranscriptionItem.Status.duplicate.showsInBatchInspector)
+    }
+
     func test_markdownKeepsFailedAndCompletedWorkItemOrder() throws {
         let completed = makeRecording(title: "Second", transcript: "Done")
         var failedItem = BatchTranscriptionItem(sourceURL: URL(fileURLWithPath: "/tmp/first.m4a"))

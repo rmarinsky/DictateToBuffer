@@ -87,8 +87,19 @@ struct TranscriptionBatchInspectorView: View {
         return currentBatch.recordingIDs.compactMap { byID[$0] }
     }
 
+    private var inspectorStatusItems: [BatchTranscriptionItem] {
+        let items = batchService.activeBatchID == currentBatch.id
+            ? batchService.items
+            : currentBatch.inspectableWorkItems
+        return items.filter(\.status.showsInBatchInspector)
+    }
+
     private var unattachedWorkItems: [BatchTranscriptionItem] {
-        (currentBatch.workItems ?? []).filter { $0.recordingID == nil }
+        inspectorStatusItems.filter { $0.recordingID == nil }
+    }
+
+    private func inspectorStatusItem(for recordingID: UUID) -> BatchTranscriptionItem? {
+        inspectorStatusItems.first { $0.recordingID == recordingID }
     }
 
     private var youtubeURLValidation: YouTubeRemoteMediaSource.BatchValidation {
@@ -118,24 +129,6 @@ struct TranscriptionBatchInspectorView: View {
     private var availableRecordings: [Recording] {
         let attachedIDs = Set(currentBatch.recordingIDs)
         return recordings.recordings.filter { !attachedIDs.contains($0.id) }
-    }
-
-    private var progressItems: [BatchTranscriptionItem] {
-        if batchService.activeBatchID == currentBatch.id {
-            return batchService.items
-        }
-        return currentBatch.inspectableWorkItems
-    }
-
-    private var finishedProgressCount: Int {
-        progressItems.filter(\.status.isTerminal).count
-    }
-
-    private var progressSummary: String {
-        if batchService.activeBatchID == currentBatch.id, batchService.isProcessing {
-            return "\(batchService.finishedCount) of \(batchService.items.count) finished · \(batchService.activeCount) processing"
-        }
-        return "\(finishedProgressCount) of \(progressItems.count) finished"
     }
 
     var body: some View {
@@ -185,97 +178,33 @@ struct TranscriptionBatchInspectorView: View {
 
                     Divider()
 
-                    if !progressItems.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack {
-                                Text("PROGRESS")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                if batchService.activeBatchID == currentBatch.id,
-                                   batchService.isProcessing
-                                {
-                                    Button("Stop Batch", role: .destructive) {
-                                        batchService.cancelAll()
-                                    }
-                                    .controlSize(.small)
-                                }
-                            }
-                            Text(progressSummary)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            ProgressView(
-                                value: progressItems.isEmpty
-                                    ? 0
-                                    : Double(finishedProgressCount) / Double(progressItems.count)
-                            )
-
-                            if batchService.activeBatchID == currentBatch.id,
-                               let error = batchService.batchError
-                            {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                                        .foregroundStyle(.orange)
-                                    HStack {
-                                        if batchService.isAuthorizationPaused {
-                                            Menu("Browser Session") {
-                                                ForEach(browserSessions, id: \.selectionID) { session in
-                                                    Button(session.displayName) {
-                                                        selectedBrowserSessionID = session.selectionID
-                                                        SettingsStorage.shared.selectedBrowserSessionID = session.selectionID
-                                                    }
-                                                }
-                                            }
-                                            .controlSize(.small)
-                                            Button("Open YouTube") {
-                                                openYouTubeInSelectedBrowser()
-                                            }
-                                            .controlSize(.small)
-                                        }
-                                        Spacer()
-                                        Button("Try Again") {
-                                            if batchService.isAuthorizationPaused {
-                                                batchService.retryAuthorization()
-                                            } else {
-                                                batchService.startIfNeeded()
-                                            }
-                                        }
-                                        .controlSize(.small)
-                                    }
-                                }
-                                .font(.caption)
-                                .padding(10)
-                                .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-                            }
-
-                            ForEach(progressItems) { item in
-                                BatchTranscriptionRow(
-                                    item: item,
-                                    service: batchService,
-                                    onRetry: retry
-                                )
-                                    .background(
-                                        Color(.quaternaryLabelColor).opacity(0.08),
-                                        in: RoundedRectangle(cornerRadius: 8)
-                                    )
-                            }
-                        }
-
-                        Divider()
-                    }
-
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
                             Text("ATTACHED RECORDINGS")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
                             Spacer()
-                            if !currentBatch.retryableWorkItems.isEmpty {
-                                Button("Retry Failed (\(currentBatch.retryableWorkItems.count))") {
+                            if batchService.activeBatchID == currentBatch.id,
+                               batchService.isProcessing
+                            {
+                                Button(role: .destructive) {
+                                    batchService.cancelAll()
+                                } label: {
+                                    Image(systemName: "stop.fill")
+                                }
+                                .controlSize(.small)
+                                .help("Stop Batch")
+                                .accessibilityLabel("Stop Batch")
+                            } else if !currentBatch.retryableWorkItems.isEmpty {
+                                Button {
                                     batchService.resume(batch: currentBatch)
+                                } label: {
+                                    Image(systemName: "arrow.clockwise")
                                 }
                                 .controlSize(.small)
                                 .disabled(!batchService.canResume(batch: currentBatch))
+                                .help("Retry Failed Items")
+                                .accessibilityLabel("Retry Failed Items")
                             }
                             Button {
                                 ClipboardService.shared.copy(
@@ -309,62 +238,73 @@ struct TranscriptionBatchInspectorView: View {
 
                         sourceEditorContent
 
-                        if members.isEmpty {
-                            Text(unattachedWorkItems.isEmpty ? "No attached recordings" : "No completed recordings yet")
+                        if members.isEmpty, unattachedWorkItems.isEmpty {
+                            Text("No attached recordings")
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .center)
                                 .padding(.vertical, 24)
-                        } else {
-                            ForEach(members) { recording in
-                                HStack(spacing: 10) {
-                                    Image(systemName: recording.libraryIconName)
-                                        .foregroundStyle(recording.libraryBrandColor)
-                                        .frame(width: 24)
+                        }
+
+                        ForEach(members) { recording in
+                            HStack(spacing: 10) {
+                                Image(systemName: recording.libraryIconName)
+                                    .foregroundStyle(recording.libraryBrandColor)
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 4) {
                                     Button {
                                         onOpenRecording(recording.id)
                                     } label: {
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(recording.displayTitle).lineLimit(1)
-                                            Text("\(recording.libraryDisplayName) · \(recording.status.displayName)")
+                                            Text(recording.libraryDisplayName)
                                                 .font(.caption)
                                                 .foregroundStyle(.secondary)
                                         }
-                                        .frame(maxWidth: .infinity, alignment: .leading)
                                     }
                                     .buttonStyle(.plain)
-                                    if let latest = recording.resolvedTranscriptHistory.last {
-                                        Button("Copy") {
-                                            ClipboardService.shared.copy(text: latest.text, behavior: .raw)
-                                        }
-                                        .controlSize(.small)
+
+                                    if let item = inspectorStatusItem(for: recording.id) {
+                                        BatchTranscriptionStatusView(
+                                            item: item,
+                                            service: batchService,
+                                            onRetry: retry
+                                        )
                                     }
-                                    Button {
-                                        onOpenRecording(recording.id)
-                                    } label: {
-                                        Image(systemName: "chevron.right")
-                                    }
-                                    .buttonStyle(.plain)
-                                    .accessibilityLabel("Open \(recording.displayTitle)")
                                 }
-                                .padding(10)
-                                .background(
-                                    Color(.quaternaryLabelColor).opacity(0.08),
-                                    in: RoundedRectangle(cornerRadius: 8)
-                                )
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                if let latest = recording.resolvedTranscriptHistory.last {
+                                    Button("Copy") {
+                                        ClipboardService.shared.copy(text: latest.text, behavior: .raw)
+                                    }
+                                    .controlSize(.small)
+                                }
+                                Button {
+                                    onOpenRecording(recording.id)
+                                } label: {
+                                    Image(systemName: "chevron.right")
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Open \(recording.displayTitle)")
                             }
+                            .padding(10)
+                            .background(
+                                Color(.quaternaryLabelColor).opacity(0.08),
+                                in: RoundedRectangle(cornerRadius: 8)
+                            )
                         }
 
                         ForEach(unattachedWorkItems) { item in
                             HStack(spacing: 10) {
-                                Image(systemName: "exclamationmark.circle")
-                                    .foregroundStyle(.red)
+                                Image(systemName: item.remoteSource == nil ? "waveform" : "play.rectangle")
+                                    .foregroundStyle(.secondary)
                                     .frame(width: 24)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.displayName).lineLimit(1)
-                                    Text(item.errorMessage ?? "Ready to retry")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(2)
+                                    BatchTranscriptionStatusView(
+                                        item: item,
+                                        service: batchService,
+                                        onRetry: retry
+                                    )
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             }
@@ -600,28 +540,6 @@ struct TranscriptionBatchInspectorView: View {
         return true
     }
 
-    private func openYouTubeInSelectedBrowser() {
-        guard let session = browserSessions.first(where: {
-            $0.selectionID == selectedBrowserSessionID
-        }),
-            let browserURL = NSWorkspace.shared.urlForApplication(
-                withBundleIdentifier: session.browser.bundleIdentifier
-            ),
-            let youtubeURL = URL(string: "https://www.youtube.com/")
-        else { return }
-
-        let configuration = NSWorkspace.OpenConfiguration()
-        switch session.browser {
-        case .brave, .chrome, .edge:
-            configuration.arguments = session.profileID.map { ["--profile-directory=\($0)"] } ?? []
-        case .firefox, .zen:
-            configuration.arguments = session.profileID.map { ["-profile", $0] } ?? []
-        case .safari:
-            configuration.arguments = []
-        }
-        configuration.arguments.append(youtubeURL.absoluteString)
-        NSWorkspace.shared.openApplication(at: browserURL, configuration: configuration)
-    }
 }
 
 struct NewTranscriptionBatchPanel: View {

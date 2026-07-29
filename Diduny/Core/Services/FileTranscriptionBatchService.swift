@@ -116,6 +116,10 @@ struct BatchTranscriptionItem: Codable, Identifiable, Equatable {
                 false
             }
         }
+
+        var showsInBatchInspector: Bool {
+            self != .completed && self != .duplicate
+        }
     }
 
     let id: UUID
