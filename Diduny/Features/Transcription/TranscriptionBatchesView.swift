@@ -1,4 +1,35 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
+
+enum ImportedMediaPicker {
+    static let allowedContentTypes: [UTType] = [
+        .audio,
+        .mpeg4Audio,
+        .mp3,
+        .wav,
+        .aiff,
+        UTType("org.xiph.flac") ?? .audio,
+        UTType("public.ogg-audio") ?? .audio,
+        .mpeg4Movie,
+        .movie,
+        .video
+    ]
+
+    @MainActor
+    static func selectFiles() -> [URL]? {
+        let panel = NSOpenPanel()
+        panel.title = "Select Audio or Video Files to Transcribe"
+        panel.prompt = "Transcribe"
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = allowedContentTypes
+
+        NSApp.activate(ignoringOtherApps: true)
+        return panel.runModal() == .OK ? panel.urls : nil
+    }
+}
 
 private enum BatchSourceEditor {
     case youtube
@@ -89,6 +120,24 @@ struct TranscriptionBatchInspectorView: View {
         return recordings.recordings.filter { !attachedIDs.contains($0.id) }
     }
 
+    private var progressItems: [BatchTranscriptionItem] {
+        if batchService.activeBatchID == currentBatch.id {
+            return batchService.items
+        }
+        return currentBatch.isProcessingClosed ? [] : currentBatch.workItems ?? []
+    }
+
+    private var finishedProgressCount: Int {
+        progressItems.filter(\.status.isTerminal).count
+    }
+
+    private var progressSummary: String {
+        if batchService.activeBatchID == currentBatch.id, batchService.isProcessing {
+            return "\(batchService.finishedCount) of \(batchService.items.count) finished · \(batchService.activeCount) processing"
+        }
+        return "\(finishedProgressCount) of \(progressItems.count) finished"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -135,6 +184,81 @@ struct TranscriptionBatchInspectorView: View {
                     }
 
                     Divider()
+
+                    if !progressItems.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Text("PROGRESS")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                if batchService.activeBatchID == currentBatch.id,
+                                   batchService.isProcessing
+                                {
+                                    Button("Stop Batch", role: .destructive) {
+                                        batchService.cancelAll()
+                                    }
+                                    .controlSize(.small)
+                                }
+                            }
+                            Text(progressSummary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            ProgressView(
+                                value: progressItems.isEmpty
+                                    ? 0
+                                    : Double(finishedProgressCount) / Double(progressItems.count)
+                            )
+
+                            if batchService.activeBatchID == currentBatch.id,
+                               let error = batchService.batchError
+                            {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                                        .foregroundStyle(.orange)
+                                    HStack {
+                                        if batchService.isAuthorizationPaused {
+                                            Menu("Browser Session") {
+                                                ForEach(browserSessions, id: \.selectionID) { session in
+                                                    Button(session.displayName) {
+                                                        selectedBrowserSessionID = session.selectionID
+                                                        SettingsStorage.shared.selectedBrowserSessionID = session.selectionID
+                                                    }
+                                                }
+                                            }
+                                            .controlSize(.small)
+                                            Button("Open YouTube") {
+                                                openYouTubeInSelectedBrowser()
+                                            }
+                                            .controlSize(.small)
+                                        }
+                                        Spacer()
+                                        Button("Try Again") {
+                                            if batchService.isAuthorizationPaused {
+                                                batchService.retryAuthorization()
+                                            } else {
+                                                batchService.startIfNeeded()
+                                            }
+                                        }
+                                        .controlSize(.small)
+                                    }
+                                }
+                                .font(.caption)
+                                .padding(10)
+                                .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                            }
+
+                            ForEach(progressItems) { item in
+                                BatchTranscriptionRow(item: item, service: batchService)
+                                    .background(
+                                        Color(.quaternaryLabelColor).opacity(0.08),
+                                        in: RoundedRectangle(cornerRadius: 8)
+                                    )
+                            }
+                        }
+
+                        Divider()
+                    }
 
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
@@ -462,15 +586,36 @@ struct TranscriptionBatchInspectorView: View {
                 ?? "Another transcription batch is active. Finish it before updating this batch."
             return false
         }
-        if !urls.isEmpty || !remoteSources.isEmpty {
-            BatchTranscriptionWindowController.shared.showWindow()
-        }
         return true
+    }
+
+    private func openYouTubeInSelectedBrowser() {
+        guard let session = browserSessions.first(where: {
+            $0.selectionID == selectedBrowserSessionID
+        }),
+            let browserURL = NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: session.browser.bundleIdentifier
+            ),
+            let youtubeURL = URL(string: "https://www.youtube.com/")
+        else { return }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        switch session.browser {
+        case .brave, .chrome, .edge:
+            configuration.arguments = session.profileID.map { ["--profile-directory=\($0)"] } ?? []
+        case .firefox, .zen:
+            configuration.arguments = session.profileID.map { ["-profile", $0] } ?? []
+        case .safari:
+            configuration.arguments = []
+        }
+        configuration.arguments.append(youtubeURL.absoluteString)
+        NSWorkspace.shared.openApplication(at: browserURL, configuration: configuration)
     }
 }
 
 struct NewTranscriptionBatchPanel: View {
     let recordings: [Recording]
+    let onCreated: (UUID) -> Void
     let onClose: () -> Void
     private let browserSessions: [BrowserSession]
     @State private var name = ""
@@ -483,8 +628,13 @@ struct NewTranscriptionBatchPanel: View {
     @State private var selectedBrowserSessionID: String
     @State private var rightsAcknowledged: Bool
 
-    init(recordings: [Recording], onClose: @escaping () -> Void) {
+    init(
+        recordings: [Recording],
+        onCreated: @escaping (UUID) -> Void,
+        onClose: @escaping () -> Void
+    ) {
         self.recordings = recordings
+        self.onCreated = onCreated
         self.onClose = onClose
         let sessions = BrowserSessionStore.discover()
         let settings = SettingsStorage.shared
@@ -699,10 +849,11 @@ struct NewTranscriptionBatchPanel: View {
                     ?? "Another transcription batch is active. Finish or retry it before creating a new batch."
                 return
             }
-            if !files.isEmpty || !remoteSources.isEmpty {
-                BatchTranscriptionWindowController.shared.showWindow()
+            guard let batchID = batchService.lastCreatedBatchID else {
+                validationError = "The transcription batch was created but could not be opened."
+                return
             }
-            onClose()
+            onCreated(batchID)
         } catch {
             validationError = error.localizedDescription
         }

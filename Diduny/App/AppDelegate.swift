@@ -721,7 +721,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func refreshActivationPolicy() {
         let shouldShowInAppSwitcher = isStateInProgress(appState.meetingRecordingState)
             || MainWindowController.shared.isVisible
-            || BatchTranscriptionWindowController.shared.isVisible
             || isSettingsWindowVisible()
         NSApp.setActivationPolicy(shouldShowInAppSwitcher ? .regular : .accessory)
     }

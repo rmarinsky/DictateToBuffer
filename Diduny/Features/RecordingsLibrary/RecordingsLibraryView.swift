@@ -454,6 +454,9 @@ struct RecordingsLibraryView: View {
         case .batchComposer:
             NewTranscriptionBatchPanel(
                 recordings: storage.recordings,
+                onCreated: { batchID in
+                    inspectorSelection = .batch(batchID)
+                },
                 onClose: { inspectorSelection = nil }
             )
             .inspectorColumnWidth(min: 430, ideal: 480, max: 560)
