@@ -385,6 +385,7 @@ final class EdgeCommandPanelController: NSObject {
     }
 
     private func openAccount() {
+        showCollapsed()
         appDelegate?.openMainWindow(section: .account)
     }
 
