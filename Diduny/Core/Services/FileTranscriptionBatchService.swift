@@ -373,6 +373,7 @@ final class FileTranscriptionBatchService {
 
     private var processingTask: Task<Void, Never>?
     private var currentBatchID: UUID?
+    private(set) var lastCreatedBatchID: UUID?
     private var initialRecordingIDs: [UUID] = []
     private var activeSettingsSnapshot: FileTranscriptionSettingsSnapshot?
     private var hasPlayedCompletionSound = false
@@ -646,11 +647,13 @@ final class FileTranscriptionBatchService {
         initialRecordingIDs = existingRecordingIDs
         guard let batchPersistence else { return true }
         do {
-            currentBatchID = try batchPersistence.createBatch(
+            let batchID = try batchPersistence.createBatch(
                 name: name,
                 description: description,
                 recordingIDs: existingRecordingIDs
             )
+            currentBatchID = batchID
+            lastCreatedBatchID = batchID
             return true
         } catch {
             batchError = "Could not create the transcription batch."

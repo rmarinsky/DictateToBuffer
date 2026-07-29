@@ -803,6 +803,7 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertEqual(batchStore.createdDescription, "Reused source")
         XCTAssertEqual(batchStore.recordingIDs, [recordingID])
         XCTAssertTrue(batchStore.didClose)
+        XCTAssertEqual(service.lastCreatedBatchID, batchStore.batchID)
 
         service.add(urls: [URL(fileURLWithPath: "/tmp/late.m4a")])
         XCTAssertEqual(service.items.count, 1)
