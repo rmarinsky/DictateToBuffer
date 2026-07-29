@@ -198,7 +198,7 @@ final class EdgeCommandPanelController: NSObject, NSWindowDelegate {
 
     private func makePanel() -> EdgeCommandPanel {
         let panel = EdgeCommandPanel(
-            contentRect: NSRect(origin: .zero, size: Self.expandedSize),
+            contentRect: NSRect(origin: .zero, size: EdgeCommandPanelPlacement.expandedSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -315,7 +315,7 @@ private struct EdgeCommandPanelView: View {
             }
             .padding(14)
             .frame(width: 290, height: 314)
-            .background(.regularMaterial, in: UnevenRoundedRectangle(topTrailingRadius: 14, bottomTrailingRadius: 14))
+            .background(.regularMaterial, in: UnevenRoundedRectangle(bottomTrailingRadius: 14, topTrailingRadius: 14))
             .overlay(alignment: .trailing) {
                 Rectangle().fill(Color("BrandTintBorder").opacity(0.8)).frame(width: 1)
             }
