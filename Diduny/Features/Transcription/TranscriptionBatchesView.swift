@@ -124,7 +124,7 @@ struct TranscriptionBatchInspectorView: View {
         if batchService.activeBatchID == currentBatch.id {
             return batchService.items
         }
-        return currentBatch.isProcessingClosed ? [] : currentBatch.workItems ?? []
+        return currentBatch.inspectableWorkItems
     }
 
     private var finishedProgressCount: Int {
