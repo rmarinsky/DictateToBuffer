@@ -494,6 +494,26 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertEqual(service.items.first?.remoteSource?.mediaID, "dQw4w9WgXcQ")
     }
 
+    func test_beginRemoteBatchRequiresAuthorizedBrowserSessionBeforeAddingWork() throws {
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(),
+            recordingStore: BatchTestRecordingStore(),
+            remoteExtractor: BatchTestRemoteExtractor(),
+            chromeProfile: { nil },
+            remoteMediaAuthorized: { true },
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+
+        let accepted = service.beginBatch(remoteSources: [source])
+
+        XCTAssertFalse(accepted)
+        XCTAssertTrue(service.items.isEmpty)
+        XCTAssertEqual(service.batchError, "Select a browser session to transcribe YouTube URLs.")
+    }
+
     func test_remoteAuthorizationPausesWholeBatchAndExplicitRetryCompletes() async throws {
         let extractor = BatchTestRemoteExtractor(metadataAuthorizationFailureCount: 1)
         let service = FileTranscriptionBatchService(

@@ -261,9 +261,9 @@ enum RemoteMediaExtractorError: LocalizedError, Equatable {
         case .noAudioOnlyStream:
             "Unsupported — no audio-only stream available."
         case .authorizationRequired:
-            "Sign in to YouTube in the selected Chrome profile, then retry authorization."
+            "Sign in to YouTube in the selected browser session, then retry authorization."
         case .sourceUnavailable:
-            "This YouTube video is unavailable to the selected Chrome profile."
+            "This YouTube video is unavailable to the selected browser session."
         case .extractorOutdated:
             "YouTube compatibility requires a Diduny update."
         case .insufficientDiskSpace:

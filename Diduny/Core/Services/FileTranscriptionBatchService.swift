@@ -462,6 +462,16 @@ final class FileTranscriptionBatchService {
         guard !urls.isEmpty || !remoteSources.isEmpty || !existingRecordingIDs.isEmpty else {
             return false
         }
+        if !remoteSources.isEmpty {
+            guard remoteMediaAuthorized() else {
+                batchError = "Confirm that you own this content or have permission to transcribe it."
+                return false
+            }
+            guard chromeProfile() != nil else {
+                batchError = "Select a browser session to transcribe YouTube URLs."
+                return false
+            }
+        }
         resetFinishedBatchIfNeeded()
         guard currentBatchID == nil else { return false }
         guard createPersistentBatch(
@@ -493,7 +503,7 @@ final class FileTranscriptionBatchService {
                 return false
             }
             guard chromeProfile() != nil else {
-                batchError = "Select a Google Chrome profile to transcribe YouTube URLs."
+                batchError = "Select a browser session to transcribe YouTube URLs."
                 return false
             }
         }
@@ -687,7 +697,7 @@ final class FileTranscriptionBatchService {
                 return
             }
             guard chromeProfile() != nil else {
-                batchError = "Select a Google Chrome profile to transcribe YouTube URLs."
+                batchError = "Select a browser session to transcribe YouTube URLs."
                 return
             }
         }
