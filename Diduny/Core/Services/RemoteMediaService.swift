@@ -647,6 +647,26 @@ enum BrowserSessionStore {
             }
         }
     }
+
+    static func selected(
+        from sessions: [BrowserSession],
+        selectionID: String?,
+        legacyChromeProfileID: String?
+    ) -> BrowserSession? {
+        if let selectionID,
+           let selected = sessions.first(where: { $0.selectionID == selectionID })
+        {
+            return selected
+        }
+        if let legacyChromeProfileID,
+           let selected = sessions.first(where: {
+               $0.browser == .chrome && $0.profileID == legacyChromeProfileID
+           })
+        {
+            return selected
+        }
+        return sessions.first
+    }
 }
 
 enum ChromeProfileStore {

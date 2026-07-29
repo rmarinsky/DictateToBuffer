@@ -289,6 +289,29 @@ final class YouTubeRemoteMediaSourceTests: XCTestCase {
         )
     }
 
+    func test_browserSessionSelection_prefersSavedSessionAndFallsBackToLegacyChromeProfile() {
+        let chrome = BrowserSession(browser: .chrome, profileID: "Default", profileName: "Roman")
+        let edge = BrowserSession(browser: .edge, profileID: "Default", profileName: "Work")
+        let sessions = [chrome, edge]
+
+        XCTAssertEqual(
+            BrowserSessionStore.selected(
+                from: sessions,
+                selectionID: edge.selectionID,
+                legacyChromeProfileID: nil
+            ),
+            edge
+        )
+        XCTAssertEqual(
+            BrowserSessionStore.selected(
+                from: sessions,
+                selectionID: nil,
+                legacyChromeProfileID: "Default"
+            ),
+            chrome
+        )
+    }
+
     func test_runtimeArguments_useSelectedBrowserSessionBundledDenoAndExactAudioFormat() throws {
         let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
         let session = BrowserSession(browser: .edge, profileID: "Profile 2", profileName: "Work")
