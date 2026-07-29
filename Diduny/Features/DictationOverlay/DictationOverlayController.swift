@@ -61,7 +61,9 @@ final class DictationOverlayController {
         store.phase = .pasted
         store.audioLevel = 0
         showPanel()
-        scheduleAutoHide(delay: 2.0)
+        if SettingsStorage.shared.autoPaste {
+            scheduleAutoHide(delay: 0.8)
+        }
     }
 
     func showError(message: String) {
@@ -100,6 +102,11 @@ final class DictationOverlayController {
     }
 
     func hide() {
+        guard store.phase != .pasted || SettingsStorage.shared.autoPaste else { return }
+        dismiss()
+    }
+
+    func dismiss() {
         autoHideTask?.cancel()
         autoHideTask = nil
         store.audioLevel = 0
@@ -143,7 +150,7 @@ final class DictationOverlayController {
 
     private func makePanel() -> NSPanel {
         let panel = DictationOverlayPanel(
-            contentRect: NSRect(origin: .zero, size: NSSize(width: 560, height: 96)),
+            contentRect: NSRect(origin: .zero, size: NSSize(width: 560, height: 120)),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -160,16 +167,17 @@ final class DictationOverlayController {
         let view = LiveDictationOverlayView(
             store: store,
             onCopy: { [weak self] in self?.copyCurrentTranscript() },
-            onStop: { [weak self] in self?.requestStop() }
+            onStop: { [weak self] in self?.requestStop() },
+            onDismiss: { [weak self] in self?.dismiss() }
         )
         let hostingView = NSHostingView(rootView: view)
-        hostingView.frame = NSRect(origin: .zero, size: NSSize(width: 560, height: 96))
+        hostingView.frame = NSRect(origin: .zero, size: NSSize(width: 560, height: 120))
         panel.contentView = hostingView
         return panel
     }
 
     private func position(_ panel: NSPanel) {
-        let size = NSSize(width: 560, height: 96)
+        let size = NSSize(width: 560, height: 120)
         let screen = activeScreen() ?? NSScreen.main
         let frame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let origin = NSPoint(

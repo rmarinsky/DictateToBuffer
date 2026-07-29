@@ -183,6 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_: Notification) {
         MainWindowController.shared.configure(appDelegate: self)
+        EdgeCommandPanelController.shared.configure(appDelegate: self)
 
         // Start Sparkle updater (access lazy var to trigger init)
         _ = updaterManager
@@ -776,6 +777,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func shouldUseCompactOverlay(for mode: RecordingMode) -> Bool {
+        if EdgeCommandPanelController.shared.usesCompactFeedback(for: mode) {
+            return true
+        }
+
         guard SettingsStorage.shared.recordingFeedbackSurface == .compactPanel else {
             return false
         }
@@ -853,6 +858,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             NotchManager.shared.hide()
         }
+        EdgeCommandPanelController.shared.finishCompactFeedback(for: mode)
     }
 
     func updateRecordingFeedbackAudioLevel(_ level: Float, mode: RecordingMode) {

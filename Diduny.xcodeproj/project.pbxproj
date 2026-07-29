@@ -126,6 +126,8 @@
 		D6937717EE280CA3B8339D53 /* BatchTranscriptionProgressViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 808FCBFBB94E4D0B49112534 /* BatchTranscriptionProgressViews.swift */; };
 		D88F0858310A14339ADE4178 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E4ECCACC4D64216B39204947 /* Metal.framework */; };
 		D8A509F05B69FA514A0EDDE9 /* MultipartFormDataFileTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC7B8E01BE6E59078F7581EF /* MultipartFormDataFileTests.swift */; };
+		E8C000000000000000000001 /* EdgeCommandPanelModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8C000000000000000000002 /* EdgeCommandPanelModelTests.swift */; };
+		E8C000000000000000000003 /* EdgeCommandPanelController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8C000000000000000000004 /* EdgeCommandPanelController.swift */; };
 		D9A94E2B88149920B8BA2B9E /* TranscriptCleanupServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC34E52E29A97B99C122898 /* TranscriptCleanupServiceTests.swift */; };
 		DB3964EFB7C60E392C41A920 /* MenuBarIconView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B43D2844894F848F20BFDEB /* MenuBarIconView.swift */; };
 		DDA86150D6B671266D004BEE /* LiveTranscriptStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BED4AC73DF15E8FB1B784BE2 /* LiveTranscriptStore.swift */; };
@@ -299,6 +301,8 @@
 		DB47383A0059A74CA8DEA1AB /* MainWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowView.swift; sourceTree = "<group>"; };
 		DCC34E52E29A97B99C122898 /* TranscriptCleanupServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptCleanupServiceTests.swift; sourceTree = "<group>"; };
 		E06685A0367DD0430BCEE035 /* SettingsStorageProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStorageProviderTests.swift; sourceTree = "<group>"; };
+		E8C000000000000000000002 /* EdgeCommandPanelModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EdgeCommandPanelModelTests.swift; sourceTree = "<group>"; };
+		E8C000000000000000000004 /* EdgeCommandPanelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EdgeCommandPanelController.swift; sourceTree = "<group>"; };
 		E2133D27EF1A261954A78BEB /* RecoveryStateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryStateManager.swift; sourceTree = "<group>"; };
 		E4ECCACC4D64216B39204947 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
 		E5D043E23A4D9D4F86317120 /* BatchTranscriptionWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatchTranscriptionWindowController.swift; sourceTree = "<group>"; };
@@ -515,6 +519,7 @@
 			isa = PBXGroup;
 			children = (
 				A9E6657C1D25140B43823FDD /* DictationOverlay */,
+				E8C000000000000000000005 /* EdgeCommandPanel */,
 				CB6A45DDD91116CF743B7691 /* HistoryPalette */,
 				73AEE95C1B136F70300747A0 /* Main */,
 				8C591E450F5E000EC7D5E839 /* Meetings */,
@@ -610,6 +615,14 @@
 			path = DictationOverlay;
 			sourceTree = "<group>";
 		};
+		E8C000000000000000000005 /* EdgeCommandPanel */ = {
+			isa = PBXGroup;
+			children = (
+				E8C000000000000000000004 /* EdgeCommandPanelController.swift */,
+			);
+			path = EdgeCommandPanel;
+			sourceTree = "<group>";
+		};
 		ABC7199E67035E3C7302B5AC /* Core */ = {
 			isa = PBXGroup;
 			children = (
@@ -668,6 +681,7 @@
 				0E486E3E8E143E1BD8E64A03 /* BillingServiceTests.swift */,
 				FB2D4C4C36B3BB89D1A2E8BD /* CloudTranscriptionServiceE2ETests.swift */,
 				C46453045F6E830B4B5B48D4 /* EscapeCancelServiceTests.swift */,
+				E8C000000000000000000002 /* EdgeCommandPanelModelTests.swift */,
 				A93C5FD49F98345A448E9EA7 /* FileTranscriptionBatchServiceTests.swift */,
 				1023A30E21CD6C2DF35A832B /* ImportedMediaAudioPreparerTests.swift */,
 				22ECCCBC345EE579CFE2AD5F /* InProgressRecordingStoreTests.swift */,
@@ -884,6 +898,7 @@
 				948ADBEBD5ED5D02955F7E28 /* AudioRecorderService.swift in Sources */,
 				6947A364CF4E8E1A7AC3018C /* AuthService.swift in Sources */,
 				F7F5AA9312C984130F8EDF6B /* BillingService.swift in Sources */,
+				E8C000000000000000000003 /* EdgeCommandPanelController.swift in Sources */,
 				D6937717EE280CA3B8339D53 /* BatchTranscriptionProgressViews.swift in Sources */,
 				AA8E98CA4D816C3E3D1B17AA /* BatchTranscriptionWindowController.swift in Sources */,
 				C6297FB1BED3D932E43C6C7E /* ClipboardService.swift in Sources */,
@@ -989,6 +1004,7 @@
 				72CF87B2D5A8C2BA20F6ACC5 /* BillingServiceTests.swift in Sources */,
 				154F9E85CEDA37FE7E88EE36 /* CloudTranscriptionServiceE2ETests.swift in Sources */,
 				03386BD1EB00ACDF8DD60759 /* EscapeCancelServiceTests.swift in Sources */,
+				E8C000000000000000000001 /* EdgeCommandPanelModelTests.swift in Sources */,
 				076DA9ECAA569742F70794BF /* FileTranscriptionBatchServiceTests.swift in Sources */,
 				A7F5CADFF3FC11FCA4261373 /* ImportedMediaAudioPreparerTests.swift in Sources */,
 				45F7A5C71CE4990E10BCFCA0 /* InProgressRecordingStoreTests.swift in Sources */,
