@@ -36,6 +36,24 @@ enum EdgeCommandAction: CaseIterable, Identifiable {
     }
 }
 
+enum EdgeCommandPanelPlacement {
+    static func frame(in visibleFrame: NSRect, pinnedOrigin: NSPoint?, expanded: Bool) -> NSRect {
+        let width = expanded ? expandedSize.width : handleWidth
+        let preferredOrigin = pinnedOrigin ?? NSPoint(
+            x: visibleFrame.maxX - width,
+            y: visibleFrame.midY - expandedSize.height / 2
+        )
+        let origin = NSPoint(
+            x: min(max(preferredOrigin.x, visibleFrame.minX), visibleFrame.maxX - width),
+            y: min(max(preferredOrigin.y, visibleFrame.minY), visibleFrame.maxY - expandedSize.height)
+        )
+        return NSRect(origin: origin, size: NSSize(width: width, height: expandedSize.height))
+    }
+
+    static let expandedSize = NSSize(width: 304, height: 314)
+    static let handleWidth: CGFloat = 14
+}
+
 @Observable
 @MainActor
 final class EdgeCommandPanelModel {
@@ -64,7 +82,7 @@ final class EdgeCommandPanelModel {
 }
 
 @MainActor
-final class EdgeCommandPanelController {
+final class EdgeCommandPanelController: NSObject, NSWindowDelegate {
     static let shared = EdgeCommandPanelController()
 
     private weak var appDelegate: AppDelegate?
@@ -72,8 +90,12 @@ final class EdgeCommandPanelController {
     private var model: EdgeCommandPanelModel?
     private var collapseTask: Task<Void, Never>?
     private var compactFeedbackKind: RecordingKind?
+    private var pinnedOrigin: NSPoint?
+    private var isUserDragging = false
 
-    private init() {}
+    private override init() {
+        super.init()
+    }
 
     func configure(appDelegate: AppDelegate) {
         self.appDelegate = appDelegate
@@ -188,6 +210,8 @@ final class EdgeCommandPanelController {
         panel.isOpaque = false
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
+        panel.isMovableByWindowBackground = true
+        panel.delegate = self
         panel.contentView = NSHostingView(rootView: EdgeCommandPanelView(
             model: model!,
             onAction: { [weak self] action in self?.perform(action) },
@@ -199,21 +223,22 @@ final class EdgeCommandPanelController {
     private func position(_ panel: NSPanel, expanded: Bool) {
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
         let frame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let width = expanded ? Self.expandedSize.width : Self.handleWidth
         panel.setFrame(
-            NSRect(
-                x: frame.maxX - width,
-                y: frame.midY - Self.expandedSize.height / 2,
-                width: Self.expandedSize.width,
-                height: Self.expandedSize.height
-            ),
+            EdgeCommandPanelPlacement.frame(in: frame, pinnedOrigin: pinnedOrigin, expanded: expanded),
             display: true,
             animate: true
         )
     }
 
-    private static let expandedSize = NSSize(width: 304, height: 314)
-    private static let handleWidth: CGFloat = 14
+    func windowWillMove(_: Notification) {
+        isUserDragging = true
+    }
+
+    func windowDidMove(_: Notification) {
+        guard isUserDragging, let panel else { return }
+        pinnedOrigin = panel.frame.origin
+        isUserDragging = false
+    }
 }
 
 private final class EdgeCommandPanel: NSPanel {
@@ -229,8 +254,18 @@ private struct EdgeCommandPanelView: View {
     var body: some View {
         @Bindable var model = model
         HStack(spacing: 0) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color("BrandAccentDeep"))
+                .frame(width: 8, height: 56)
+                .frame(width: 14, height: 314)
+                .accessibilityLabel("Open Diduny quick actions")
+
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
+                    Image(systemName: "line.3.horizontal")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .help("Drag to reposition")
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Diduny")
                             .font(.system(size: 14, weight: .bold, design: .rounded))
@@ -280,16 +315,10 @@ private struct EdgeCommandPanelView: View {
             }
             .padding(14)
             .frame(width: 290, height: 314)
-            .background(.regularMaterial, in: UnevenRoundedRectangle(topLeadingRadius: 14, bottomLeadingRadius: 14))
-            .overlay(alignment: .leading) {
+            .background(.regularMaterial, in: UnevenRoundedRectangle(topTrailingRadius: 14, bottomTrailingRadius: 14))
+            .overlay(alignment: .trailing) {
                 Rectangle().fill(Color("BrandTintBorder").opacity(0.8)).frame(width: 1)
             }
-
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color("BrandAccentDeep"))
-                .frame(width: 8, height: 56)
-                .frame(width: 14, height: 314)
-                .accessibilityLabel("Open Diduny quick actions")
         }
         .frame(width: 304, height: 314)
         .contentShape(Rectangle())
