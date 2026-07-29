@@ -98,8 +98,12 @@ final class LiveDictationOverlayStore {
 
     func processTokens(_ tokens: [RealtimeToken]) {
         let isTranslationMode: Bool = {
-            if case .translation = mode { return true }
-            return false
+            switch mode {
+            case .translation, .meetingTranslation:
+                true
+            case .voice, .meeting, .fileTranscription:
+                false
+            }
         }()
 
         var provisionalPrimary = ""

@@ -49,6 +49,12 @@ struct EdgeCommandPanelDock: Equatable {
     let offset: CGFloat
 }
 
+enum EdgeCommandPanelPresentation: Equatable {
+    case collapsed
+    case commands(isCloud: Bool)
+    case live(RecordingMode)
+}
+
 enum EdgeCommandPanelPlacement {
     static func nearestDock(to proposedFrame: NSRect, in visibleFrame: NSRect) -> EdgeCommandPanelDock {
         let distances: [(EdgeCommandPanelDockEdge, CGFloat)] = [
@@ -62,8 +68,12 @@ enum EdgeCommandPanelPlacement {
         return EdgeCommandPanelDock(edge: edge, offset: offset)
     }
 
-    static func frame(in visibleFrame: NSRect, dock: EdgeCommandPanelDock, expanded: Bool) -> NSRect {
-        let size = expanded ? expandedSize : collapsedSize(for: dock.edge)
+    static func frame(
+        in visibleFrame: NSRect,
+        dock: EdgeCommandPanelDock,
+        presentation: EdgeCommandPanelPresentation
+    ) -> NSRect {
+        let size = size(for: presentation, edge: dock.edge)
         let origin: NSPoint
 
         switch dock.edge {
@@ -92,6 +102,28 @@ enum EdgeCommandPanelPlacement {
         return NSRect(origin: origin, size: size)
     }
 
+    static func frame(in visibleFrame: NSRect, dock: EdgeCommandPanelDock, expanded: Bool) -> NSRect {
+        frame(
+            in: visibleFrame,
+            dock: dock,
+            presentation: expanded ? .commands(isCloud: true) : .collapsed
+        )
+    }
+
+    static func size(
+        for presentation: EdgeCommandPanelPresentation,
+        edge: EdgeCommandPanelDockEdge
+    ) -> NSSize {
+        switch presentation {
+        case .collapsed:
+            collapsedSize(for: edge)
+        case let .commands(isCloud):
+            NSSize(width: 286, height: isCloud ? 326 : 250)
+        case let .live(mode):
+            mode.isMeeting ? NSSize(width: 360, height: 420) : NSSize(width: 310, height: 310)
+        }
+    }
+
     static let expandedSize = NSSize(width: 286, height: 326)
 
     private static func collapsedSize(for edge: EdgeCommandPanelDockEdge) -> NSSize {
@@ -117,13 +149,34 @@ enum EdgeCommandPanelHoverPolicy {
 final class EdgeCommandPanelModel {
     var pairs: [TranslationLanguagePair]
     var selectedPairID: String
+    var provider: TranscriptionProvider
+    var isSignedIn: Bool
     var isExpanded = false
+    var isShowingLiveFeedback = false
     var dockEdge: EdgeCommandPanelDockEdge = .right
 
-    init(pairs: [TranslationLanguagePair], selectedPair: TranslationLanguagePair) {
+    init(
+        pairs: [TranslationLanguagePair],
+        selectedPair: TranslationLanguagePair,
+        provider: TranscriptionProvider = .local,
+        isSignedIn: Bool = true
+    ) {
         let normalizedPairs = pairs.isEmpty ? [.defaultPair] : pairs
         self.pairs = normalizedPairs
+        self.provider = provider
+        self.isSignedIn = isSignedIn
         selectedPairID = normalizedPairs.contains(selectedPair) ? selectedPair.id : normalizedPairs[0].id
+    }
+
+    var availableActions: [EdgeCommandAction] {
+        if provider == .cloud {
+            return [.transcribe, .translate, .meeting, .translateMeeting]
+        }
+        return [.transcribe, .meeting]
+    }
+
+    var showsTranslationControls: Bool {
+        provider == .cloud
     }
 
     var selectedPair: TranslationLanguagePair? {
@@ -135,9 +188,27 @@ final class EdgeCommandPanelModel {
         selectedPairID = pair.id
     }
 
-    func refresh(pairs: [TranslationLanguagePair], selectedPair: TranslationLanguagePair) {
+    @discardableResult
+    func selectProvider(_ provider: TranscriptionProvider) -> Bool {
+        guard provider != .cloud || isSignedIn else { return false }
+        self.provider = provider
+        return true
+    }
+
+    func refresh(
+        pairs: [TranslationLanguagePair],
+        selectedPair: TranslationLanguagePair,
+        provider: TranscriptionProvider? = nil,
+        isSignedIn: Bool? = nil
+    ) {
         self.pairs = pairs.isEmpty ? [.defaultPair] : pairs
         selectedPairID = self.pairs.contains(selectedPair) ? selectedPair.id : self.pairs[0].id
+        if let provider {
+            self.provider = provider
+        }
+        if let isSignedIn {
+            self.isSignedIn = isSignedIn
+        }
     }
 }
 
