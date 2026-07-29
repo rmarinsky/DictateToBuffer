@@ -2,7 +2,6 @@ import SwiftUI
 
 struct LiveDictationOverlayView: View {
     let store: LiveDictationOverlayStore
-    let dockEdge: EdgeCommandPanelDockEdge
     let onCopy: () -> Void
     let onStop: () -> Void
     let onDismiss: () -> Void
@@ -196,17 +195,11 @@ struct LiveDictationOverlayView: View {
         }
     }
 
-    private var panelShape: UnevenRoundedRectangle {
-        switch dockEdge {
-        case .left:
-            UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 0, bottomTrailingRadius: 15, topTrailingRadius: 15)
-        case .right:
-            UnevenRoundedRectangle(topLeadingRadius: 15, bottomLeadingRadius: 15, bottomTrailingRadius: 0, topTrailingRadius: 0)
-        case .top:
-            UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 15, bottomTrailingRadius: 15, topTrailingRadius: 0)
-        case .bottom:
-            UnevenRoundedRectangle(topLeadingRadius: 15, bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: 15)
-        }
+    private var panelShape: RoundedRectangle {
+        RoundedRectangle(
+            cornerRadius: EdgeCommandPanelPlacement.expandedCornerRadius,
+            style: .continuous
+        )
     }
 
     private var dragGesture: some Gesture {

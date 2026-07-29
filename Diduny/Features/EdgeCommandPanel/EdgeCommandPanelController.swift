@@ -56,6 +56,8 @@ enum EdgeCommandPanelPresentation: Equatable {
 }
 
 enum EdgeCommandPanelPlacement {
+    static let expandedCornerRadius: CGFloat = 15
+
     static func nearestDock(to proposedFrame: NSRect, in visibleFrame: NSRect) -> EdgeCommandPanelDock {
         let distances: [(EdgeCommandPanelDockEdge, CGFloat)] = [
             (.left, abs(proposedFrame.minX - visibleFrame.minX)),
@@ -645,7 +647,6 @@ private struct EdgeCommandExpandedView: View {
             if model.isShowingLiveFeedback {
                 LiveDictationOverlayView(
                     store: liveStore,
-                    dockEdge: model.dockEdge,
                     onCopy: onCopy,
                     onStop: onStop,
                     onDismiss: onDismissLive,
@@ -809,37 +810,11 @@ private struct EdgeCommandExpandedView: View {
         .help("Drag to attach to another screen edge")
     }
 
-    private var panelShape: UnevenRoundedRectangle {
-        switch model.dockEdge {
-        case .left:
-            UnevenRoundedRectangle(
-                topLeadingRadius: 0,
-                bottomLeadingRadius: 0,
-                bottomTrailingRadius: 15,
-                topTrailingRadius: 15
-            )
-        case .right:
-            UnevenRoundedRectangle(
-                topLeadingRadius: 15,
-                bottomLeadingRadius: 15,
-                bottomTrailingRadius: 0,
-                topTrailingRadius: 0
-            )
-        case .top:
-            UnevenRoundedRectangle(
-                topLeadingRadius: 0,
-                bottomLeadingRadius: 15,
-                bottomTrailingRadius: 15,
-                topTrailingRadius: 0
-            )
-        case .bottom:
-            UnevenRoundedRectangle(
-                topLeadingRadius: 15,
-                bottomLeadingRadius: 0,
-                bottomTrailingRadius: 0,
-                topTrailingRadius: 15
-            )
-        }
+    private var panelShape: RoundedRectangle {
+        RoundedRectangle(
+            cornerRadius: EdgeCommandPanelPlacement.expandedCornerRadius,
+            style: .continuous
+        )
     }
 
     private var dragGesture: some Gesture {
