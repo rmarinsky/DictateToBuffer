@@ -305,11 +305,12 @@ extension AppDelegate {
         // Wire token callbacks. Batches are coalesced to ≤10Hz before touching
         // the @Observable store — per-message main-actor updates made SwiftUI
         // re-render for every WS message and lag grew with the meeting.
-        let coalescer = RealtimeTokenCoalescer { [weak store] events in
+        let coalescer = RealtimeTokenCoalescer { [weak self, weak store] events in
             for event in events {
                 switch event {
                 case let .tokens(tokens):
                     store?.processTokens(tokens)
+                    self?.updateRecordingFeedbackTokens(tokens, mode: .meeting)
                 case .segmentBoundary:
                     store?.markSegmentBoundary()
                 }
@@ -320,9 +321,10 @@ extension AppDelegate {
             coalescer?.add(tokens)
         }
 
-        rtService.onConnectionStatusChanged = { [weak store] status in
+        rtService.onConnectionStatusChanged = { [weak self, weak store] status in
             Task { @MainActor in
                 store?.connectionStatus = status
+                self?.updateRecordingFeedbackConnectionStatus(status, mode: .meeting)
             }
         }
 
@@ -380,7 +382,7 @@ extension AppDelegate {
         let chapterNumber = appState.meetingChapters.count + 1
         let chapter = MeetingChapter(timestampSeconds: elapsed, label: "Chapter \(chapterNumber)")
         appState.meetingChapters.append(chapter)
-        NotchManager.shared.showInfo(message: "Chapter \(chapterNumber) added", duration: 1.0)
+        DictationOverlayController.shared.showInfo(message: "Chapter \(chapterNumber) added", duration: 1.0)
         Log.app.info("Meeting chapter \(chapterNumber) added at \(elapsed)s")
     }
 
@@ -522,15 +524,15 @@ extension AppDelegate {
                     Task { @MainActor in
                         switch status {
                         case .queued:
-                            NotchManager.shared.showInfo(message: "Queued...", duration: 30)
+                            DictationOverlayController.shared.showInfo(message: "Queued...", duration: 30)
                         case .uploading:
-                            NotchManager.shared.showInfo(message: "Uploading...", duration: 30)
+                            DictationOverlayController.shared.showInfo(message: "Uploading...", duration: 30)
                         case .processing:
                             // Processing can take tens of minutes for large files —
                             // use persistent processing state instead of auto-dismissing info
-                            NotchManager.shared.startProcessing(mode: .meeting)
+                            DictationOverlayController.shared.startProcessing(mode: .meeting)
                         case .finalizing:
-                            NotchManager.shared.showInfo(message: "Finishing up...", duration: 30)
+                            DictationOverlayController.shared.showInfo(message: "Finishing up...", duration: 30)
                         default:
                             break
                         }
@@ -595,7 +597,7 @@ extension AppDelegate {
                 }
 
                 if !cloudModeEnabled {
-                    NotchManager.shared.showInfo(
+                    DictationOverlayController.shared.showInfo(
                         message: "Recording saved. Open Recordings and choose a local model to transcribe.",
                         duration: 3.0
                     )
@@ -705,7 +707,7 @@ extension AppDelegate {
         }
 
         escapeService.onProgressEscape = { pressCount, _ in
-            NotchManager.shared.showInfoDuringRecording(
+            DictationOverlayController.shared.showInfoDuringRecording(
                 message: SettingsStorage.shared.escapeCancelRepeatHint(afterPressCount: pressCount),
                 mode: .meeting,
                 duration: 1.5
@@ -718,7 +720,7 @@ extension AppDelegate {
                 let shouldSaveAudio = SettingsStorage.shared.escapeCancelSaveAudio
                 await self?.cancelMeetingRecording()
                 let message = shouldSaveAudio ? "Recording cancelled and saved" : "Recording cancelled"
-                NotchManager.shared.showInfo(message: message)
+                DictationOverlayController.shared.showInfo(message: message)
             }
         }
 

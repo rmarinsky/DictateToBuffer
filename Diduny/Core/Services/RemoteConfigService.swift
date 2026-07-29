@@ -49,6 +49,12 @@ final class RemoteConfigService: @unchecked Sendable {
         return cachedConfig?.messages?.updateAvailableMessage
     }
 
+    var billingEnabled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cachedConfig?.featureFlags?.billingEnabled ?? false
+    }
+
     func sttBaseURL(default fallback: String) -> String {
         lock.lock()
         defer { lock.unlock() }

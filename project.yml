@@ -9,9 +9,6 @@ packages:
   KeyboardShortcuts:
     url: https://github.com/sindresorhus/KeyboardShortcuts
     exactVersion: 2.4.0
-  DynamicNotchKit:
-    url: https://github.com/MrKai77/DynamicNotchKit
-    revision: cd0b3e52d537db115ad3a9d89601f20e0bee8d27
   LaunchAtLogin:
     url: https://github.com/sindresorhus/LaunchAtLogin-Modern
     exactVersion: 1.1.0
@@ -76,7 +73,6 @@ targets:
           - "**/.claude"
     dependencies:
       - package: KeyboardShortcuts
-      - package: DynamicNotchKit
       - package: LaunchAtLogin
       - package: Sparkle
       - package: Supabase
@@ -113,6 +109,18 @@ targets:
       properties:
         com.apple.security.device.audio-input: true
         com.apple.security.network.client: true
+    postBuildScripts:
+      - name: Bundle Remote Media Runtime
+        script: '"${SRCROOT}/scripts/prepare-remote-media-runtime.sh"'
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - "$(SRCROOT)/scripts/prepare-remote-media-runtime.sh"
+        outputFiles:
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/RemoteMediaRuntime/yt-dlp_macos"
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/RemoteMediaRuntime/deno"
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/RemoteMediaRuntime/yt-dlp-LICENSE.txt"
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/RemoteMediaRuntime/yt-dlp-THIRD-PARTY-LICENSES.txt"
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/RemoteMediaRuntime/deno-LICENSE.md"
 
 schemes:
   Diduny DEV:

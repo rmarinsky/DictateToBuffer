@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Diduny — floating live mode prototype</title>
+  <!-- Throwaway prototype. Run from the repository root:
+       python3 -m http.server 8766 --bind 127.0.0.1 -->
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      --accent: #ec4165;
+      --accent-strong: #ff5277;
+      --accent-soft: rgba(236, 65, 101, .14);
+      --panel: rgba(31, 31, 34, .92);
+      --surface: rgba(255, 255, 255, .055);
+      --line: rgba(255, 255, 255, .09);
+      --text: #fff7f8;
+      --muted: rgba(255, 247, 248, .55);
+      --shadow: 0 24px 70px rgba(0, 0, 0, .42), 0 1px 0 rgba(255, 255, 255, .08) inset;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      overflow: hidden;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 72% 42%, rgba(236, 65, 101, .1), transparent 27rem),
+        linear-gradient(135deg, #121316, #202125 70%, #17181b);
+    }
+
+    button, select, input { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, select:focus-visible, input:focus-visible + span {
+      outline: 2px solid var(--accent-strong);
+      outline-offset: 2px;
+    }
+
+    .desktop {
+      min-height: 100vh;
+      padding: 28px;
+      background-image:
+        linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+      background-size: 72px 72px;
+    }
+
+    .desktop-copy { max-width: 540px; color: rgba(255,255,255,.14); }
+    .desktop-copy h1 { margin: 7vh 0 16px; font-size: clamp(40px, 6vw, 76px); letter-spacing: -.055em; }
+    .desktop-copy p { max-width: 440px; font-size: 18px; line-height: 1.55; }
+
+    .dock {
+      position: fixed;
+      top: 50%;
+      right: 0;
+      transform: translateY(-50%);
+      display: flex;
+      align-items: center;
+      z-index: 4;
+    }
+
+    .edge-tab {
+      width: 14px;
+      height: 62px;
+      border: 0;
+      border-radius: 9px 0 0 9px;
+      background: linear-gradient(180deg, var(--accent-strong), #d92e55);
+      box-shadow: 0 8px 24px rgba(236, 65, 101, .35);
+      cursor: pointer;
+      transition: width .2s ease, filter .2s ease;
+    }
+    .edge-tab:hover { width: 18px; filter: brightness(1.08); }
+
+    .panel {
+      width: 310px;
+      min-height: 352px;
+      margin-right: 14px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: 18px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(28px) saturate(1.2);
+      -webkit-backdrop-filter: blur(28px) saturate(1.2);
+      transition: width .42s cubic-bezier(.2,.8,.2,1), min-height .42s cubic-bezier(.2,.8,.2,1), transform .3s ease, opacity .25s ease;
+    }
+    .dock.hidden .panel { transform: translateX(calc(100% + 14px)); opacity: 0; pointer-events: none; }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 58px;
+      padding: 14px 16px 10px;
+    }
+    .brand {
+      display: grid;
+      width: 30px;
+      height: 30px;
+      place-items: center;
+      border-radius: 10px;
+      color: #fff;
+      background: linear-gradient(145deg, var(--accent-strong), #c8234b);
+      box-shadow: 0 7px 18px rgba(236,65,101,.25);
+    }
+    .brand svg { width: 17px; }
+    .heading { min-width: 0; flex: 1; }
+    .heading strong, .heading span { display: block; }
+    .heading strong { font-size: 13px; letter-spacing: -.01em; }
+    .heading span { margin-top: 2px; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .timer { color: rgba(255,255,255,.72); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+    .view {
+      transition: opacity .2s ease, transform .36s cubic-bezier(.2,.8,.2,1);
+    }
+    .ready-view { padding: 0 14px 14px; }
+    .live-view { display: none; padding: 0 14px 14px; }
+    .panel[data-state="live"] .ready-view,
+    .panel[data-state="processing"] .ready-view,
+    .panel[data-state="complete"] .ready-view { display: none; }
+    .panel[data-state="live"] .live-view,
+    .panel[data-state="processing"] .live-view,
+    .panel[data-state="complete"] .live-view { display: block; animation: reveal .38s cubic-bezier(.2,.8,.2,1) both; }
+    @keyframes reveal { from { opacity: 0; transform: translateY(10px) scale(.985); } }
+
+    .field-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 8px 2px 6px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .045em;
+      text-transform: uppercase;
+    }
+    .field-label em { color: rgba(255,255,255,.34); font-style: normal; font-weight: 500; letter-spacing: 0; text-transform: none; }
+
+    .segmented {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 3px;
+      padding: 3px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(0,0,0,.17);
+    }
+    .segmented button {
+      min-height: 28px;
+      border: 0;
+      border-radius: 7px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 11px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .segmented button.active { color: #fff; background: var(--surface); box-shadow: 0 1px 0 rgba(255,255,255,.07) inset; }
+    .segmented button[data-provider="cloud"]::after { content: "  ☁"; font-size: 9px; }
+    body[data-auth="out"] .segmented button[data-provider="cloud"] { opacity: .48; }
+
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+    .action {
+      min-height: 68px;
+      padding: 11px;
+      border: 1px solid transparent;
+      border-radius: 13px;
+      text-align: left;
+      background: var(--surface);
+      cursor: pointer;
+      transition: transform .18s ease, border-color .18s ease, background .18s ease, box-shadow .18s ease;
+    }
+    .action:hover {
+      transform: translateY(-2px);
+      border-color: rgba(236,65,101,.34);
+      background: var(--accent-soft);
+      box-shadow: 0 9px 24px rgba(0,0,0,.14);
+    }
+    .action svg { width: 17px; height: 17px; color: #ffb5c5; }
+    .action span { display: block; margin-top: 7px; font-size: 11px; font-weight: 650; line-height: 1.2; }
+
+    .target-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 10px;
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(0,0,0,.12);
+    }
+    .target-row label { color: var(--muted); font-size: 10px; font-weight: 650; white-space: nowrap; text-transform: uppercase; letter-spacing: .04em; }
+    .target-row select {
+      min-width: 0;
+      flex: 1;
+      border: 0;
+      color: var(--text);
+      background: transparent;
+      font-size: 11px;
+      font-weight: 650;
+      outline: 0;
+      cursor: pointer;
+    }
+
+    .batch {
+      width: 100%;
+      margin-top: 8px;
+      padding: 8px 3px 1px;
+      border: 0;
+      color: var(--muted);
+      background: transparent;
+      text-align: left;
+      font-size: 10px;
+      cursor: pointer;
+    }
+    .batch:hover { color: var(--text); }
+
+    .live-status { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .listening {
+      position: relative;
+      display: flex;
+      width: 40px;
+      height: 40px;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: var(--accent-soft);
+      box-shadow: 0 0 0 1px rgba(236,65,101,.18) inset;
+    }
+    .listening i { width: 2px; border-radius: 3px; background: var(--accent-strong); animation: listen .75s ease-in-out infinite alternate; }
+    .listening i:nth-child(1) { height: 8px; animation-delay: -.1s; }
+    .listening i:nth-child(2) { height: 17px; animation-delay: -.35s; }
+    .listening i:nth-child(3) { height: 12px; animation-delay: -.55s; }
+    .listening i:nth-child(4) { height: 6px; animation-delay: -.2s; }
+    @keyframes listen { to { transform: scaleY(.35); opacity: .55; } }
+    .panel[data-state="processing"] .listening i { animation-duration: 1.1s; opacity: .55; }
+    .panel[data-state="complete"] .listening { background: rgba(84,201,128,.13); }
+    .panel[data-state="complete"] .listening i { display: none; }
+    .panel[data-state="complete"] .listening::after { content: "✓"; color: #67d795; font-size: 19px; font-weight: 700; }
+
+    .status-copy { min-width: 0; flex: 1; }
+    .status-copy strong { display: block; font-size: 12px; }
+    .status-copy span { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .live-badges { display: flex; gap: 5px; margin-left: auto; }
+    .badge { padding: 4px 6px; border-radius: 6px; color: rgba(255,255,255,.68); background: var(--surface); font-size: 9px; white-space: nowrap; }
+
+    .transcript {
+      min-height: 128px;
+      max-height: 190px;
+      overflow: auto;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(0,0,0,.15);
+      color: rgba(255,255,255,.87);
+      font-size: 12px;
+      line-height: 1.5;
+      scrollbar-width: thin;
+    }
+    .transcript:empty::before { content: "Listening…"; color: var(--muted); }
+    .caret { display: inline-block; width: 2px; height: 13px; margin-left: 3px; vertical-align: -2px; background: var(--accent); animation: blink .8s step-end infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+    .panel[data-state="processing"] .transcript { opacity: .68; }
+
+    .auto-copy { display: none; align-items: center; gap: 7px; margin: 9px 2px 0; color: var(--muted); font-size: 10px; }
+    .panel[data-state="complete"] .auto-copy { display: flex; }
+    .auto-copy input { accent-color: var(--accent); }
+
+    .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+    .control {
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+      font-size: 11px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .control:hover { background: rgba(255,255,255,.09); }
+    .control.stop { border-color: rgba(236,65,101,.22); background: var(--accent-soft); color: #ff9db2; }
+    .panel[data-state="processing"] .control { pointer-events: none; opacity: .45; }
+    .panel[data-state="complete"] .control.stop { color: var(--text); background: var(--surface); border-color: var(--line); }
+
+    body.variant-a .panel[data-state]:not([data-state="ready"]) { min-height: 310px; }
+
+    /* Variant B: transcript-first wide card. */
+    body.variant-b .panel[data-state]:not([data-state="ready"]) { width: 430px; min-height: 270px; }
+    body.variant-b .live-view { padding: 0 14px 14px; }
+    body.variant-b .live-layout { display: grid; grid-template-columns: 142px 1fr; grid-template-areas: "status transcript" "controls transcript" "auto transcript"; gap: 8px 10px; }
+    body.variant-b .live-status { grid-area: status; display: block; margin: 0; }
+    body.variant-b .listening { margin-bottom: 9px; }
+    body.variant-b .live-badges { margin: 8px 0 0; flex-wrap: wrap; }
+    body.variant-b .transcript { grid-area: transcript; height: 184px; max-height: 184px; }
+    body.variant-b .controls { grid-area: controls; grid-template-columns: 1fr; margin: 0; }
+    body.variant-b .auto-copy { grid-area: auto; margin: 2px; }
+
+    /* Variant C: the live state collapses into a low-profile strip. */
+    body.variant-c .panel[data-state]:not([data-state="ready"]) { width: 390px; min-height: 150px; }
+    body.variant-c .panel[data-state]:not([data-state="ready"]) .panel-header { min-height: 46px; padding: 9px 12px 6px; }
+    body.variant-c .panel[data-state]:not([data-state="ready"]) .brand { width: 26px; height: 26px; border-radius: 8px; }
+    body.variant-c .live-view { padding: 0 12px 11px; }
+    body.variant-c .live-layout { display: grid; grid-template-columns: 40px 1fr auto; grid-template-areas: "status transcript controls" "auto auto auto"; gap: 8px; align-items: center; }
+    body.variant-c .live-status { grid-area: status; margin: 0; }
+    body.variant-c .status-copy, body.variant-c .live-badges { display: none; }
+    body.variant-c .transcript { grid-area: transcript; min-height: 54px; height: 54px; max-height: 54px; padding: 9px 10px; font-size: 11px; line-height: 1.45; }
+    body.variant-c .controls { grid-area: controls; grid-template-columns: 62px; margin: 0; }
+    body.variant-c .control { min-height: 27px; }
+    body.variant-c .auto-copy { grid-area: auto; margin: 0 2px; }
+
+    .prototype-bar {
+      position: fixed;
+      left: 50%;
+      bottom: 18px;
+      z-index: 8;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(22,22,25,.92);
+      box-shadow: 0 12px 32px rgba(0,0,0,.35);
+      transform: translateX(-50%);
+      backdrop-filter: blur(20px);
+    }
+    .prototype-bar button {
+      min-height: 29px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 7px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 10px;
+      cursor: pointer;
+    }
+    .prototype-bar button:hover, .prototype-bar button.active { color: var(--text); background: var(--surface); }
+    .prototype-bar .auth { color: #ffc0ce; background: var(--accent-soft); }
+    .separator { width: 1px; height: 20px; background: var(--line); }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 72px;
+      z-index: 9;
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: rgba(25,25,28,.96);
+      box-shadow: 0 12px 32px rgba(0,0,0,.3);
+      color: rgba(255,255,255,.82);
+      font-size: 11px;
+      opacity: 0;
+      transform: translate(-50%, 8px);
+      pointer-events: none;
+      transition: opacity .2s ease, transform .2s ease;
+    }
+    .toast.visible { opacity: 1; transform: translate(-50%, 0); }
+
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition-duration: .01ms !important; } }
+  </style>
+</head>
+<body data-auth="in" class="variant-a">
+  <main class="desktop">
+    <section class="desktop-copy" aria-hidden="true">
+      <h1>Your screen stays yours.</h1>
+      <p>Diduny is waiting at the edge — close enough to start, quiet enough to stay out of the way.</p>
+    </section>
+  </main>
+
+  <div class="dock" id="dock">
+    <button class="edge-tab" id="edgeTab" aria-label="Show or hide Diduny"></button>
+    <section class="panel" id="panel" data-state="ready" aria-label="Diduny quick actions">
+      <header class="panel-header">
+        <div class="brand" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M9 5v14M15 7v10M5 9v6M19 10v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
+        <div class="heading"><strong id="panelTitle">Diduny</strong><span id="panelSubtitle">What do you want to capture?</span></div>
+        <span class="timer" id="timer" hidden>00:00</span>
+      </header>
+
+      <div class="ready-view view">
+        <div class="field-label"><span>Provider</span><em id="authHint">Signed in</em></div>
+        <div class="segmented" aria-label="Provider">
+          <button class="active" data-provider="local" aria-pressed="true">Local</button>
+          <button data-provider="cloud" aria-pressed="false">Cloud</button>
+        </div>
+
+        <div class="actions">
+          <button class="action" data-mode="voice">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Transcribe</span>
+          </button>
+          <button class="action" data-mode="translation">
+            <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="14" height="12" rx="3" stroke="currentColor" stroke-width="1.7"/><path d="M7 14l3-6 3 6M8 12h4M16 9h5v10a2 2 0 0 1-2 2h-8v-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Translate</span>
+          </button>
+          <button class="action" data-mode="meeting">
+            <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+            <span>Record meeting</span>
+          </button>
+          <button class="action" data-mode="meetingTranslation">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 5h16v11H9l-4 3v-3H4z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M8 9h8M8 12h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+            <span>Translate meeting</span>
+          </button>
+        </div>
+
+        <div class="target-row">
+          <label for="targetLanguage">Translate to</label>
+          <select id="targetLanguage">
+            <option>English</option><option>Ukrainian</option><option>Polish</option><option>German</option><option>Spanish</option>
+          </select>
+        </div>
+        <button class="batch">Batch files &amp; URLs →</button>
+      </div>
+
+      <div class="live-view view">
+        <div class="live-layout">
+          <div class="live-status">
+            <div class="listening" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <div class="status-copy"><strong id="statusTitle">Listening</strong><span id="statusMeta">Local · Microphone</span></div>
+            <div class="live-badges"><span class="badge" id="providerBadge">Local</span><span class="badge" id="targetBadge" hidden>→ English</span></div>
+          </div>
+
+          <div class="transcript" id="transcript" aria-live="polite"></div>
+
+          <label class="auto-copy"><input type="checkbox" id="autoCopy"> <span>Copy and close automatically</span></label>
+
+          <div class="controls">
+            <button class="control" id="copyButton">Copy</button>
+            <button class="control stop" id="stopButton">Stop</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <nav class="prototype-bar" aria-label="Prototype controls">
+    <button data-variant="A" class="active">A · Morph</button>
+    <button data-variant="B">B · Transcript</button>
+    <button data-variant="C">C · Strip</button>
+    <span class="separator"></span>
+    <button class="auth" id="authToggle">Signed in</button>
+    <button id="resetButton">Reset</button>
+  </nav>
+  <div class="toast" id="toast" role="status"></div>
+
+  <script>
+    const panel = document.querySelector('#panel');
+    const dock = document.querySelector('#dock');
+    const transcript = document.querySelector('#transcript');
+    const title = document.querySelector('#panelTitle');
+    const subtitle = document.querySelector('#panelSubtitle');
+    const statusTitle = document.querySelector('#statusTitle');
+    const statusMeta = document.querySelector('#statusMeta');
+    const providerBadge = document.querySelector('#providerBadge');
+    const targetBadge = document.querySelector('#targetBadge');
+    const timer = document.querySelector('#timer');
+    const stopButton = document.querySelector('#stopButton');
+    const copyButton = document.querySelector('#copyButton');
+    const targetLanguage = document.querySelector('#targetLanguage');
+    const toast = document.querySelector('#toast');
+    const authToggle = document.querySelector('#authToggle');
+    const authHint = document.querySelector('#authHint');
+
+    const modes = {
+      voice: { title: 'Transcribing', source: 'Microphone', text: 'This is the compact live transcript. The words appear here while you speak, so you can check the result without leaving your current app.' },
+      translation: { title: 'Translating', source: 'Microphone', text: 'The translated text appears here as you speak. You can stop at any time, copy the result, or let Diduny copy and close automatically.' },
+      meeting: { title: 'Recording meeting', source: 'System + microphone', text: 'We have agreed to keep the floating recorder compact. The transcript remains visible during the meeting, and the controls stay within one click.' },
+      meetingTranslation: { title: 'Translating meeting', source: 'System + microphone', text: 'The meeting translation appears here in real time. The selected language and processing provider remain visible while recording.' }
+    };
+
+    let provider = 'local';
+    let wordTimer = null;
+    let clockTimer = null;
+    let processingTimer = null;
+    let elapsed = 0;
+    let toastTimer = null;
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add('visible');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('visible'), 1800);
+    }
+
+    function setProvider(next) {
+      if (next === 'cloud' && document.body.dataset.auth === 'out') {
+        showToast('Sign in to use Cloud processing');
+        return;
+      }
+      provider = next;
+      document.querySelectorAll('[data-provider]').forEach(button => {
+        const selected = button.dataset.provider === provider;
+        button.classList.toggle('active', selected);
+        button.setAttribute('aria-pressed', selected);
+      });
+    }
+
+    function setState(state) {
+      panel.dataset.state = state;
+      timer.hidden = state === 'ready';
+    }
+
+    function streamText(text) {
+      const words = text.split(' ');
+      let index = 0;
+      transcript.innerHTML = '<span class="caret"></span>';
+      clearInterval(wordTimer);
+      wordTimer = setInterval(() => {
+        if (index >= words.length) return clearInterval(wordTimer);
+        const caret = transcript.querySelector('.caret');
+        caret.insertAdjacentText('beforebegin', `${index ? ' ' : ''}${words[index++]}`);
+        transcript.scrollTop = transcript.scrollHeight;
+      }, 155);
+    }
+
+    function start(modeName) {
+      const mode = modes[modeName];
+      const translates = modeName === 'translation' || modeName === 'meetingTranslation';
+      title.textContent = mode.title;
+      subtitle.textContent = 'Listening now';
+      statusTitle.textContent = mode.title;
+      statusMeta.textContent = `${provider === 'cloud' ? 'Cloud' : 'Local'} · ${mode.source}`;
+      providerBadge.textContent = provider === 'cloud' ? 'Cloud' : 'Local';
+      targetBadge.hidden = !translates;
+      targetBadge.textContent = `→ ${targetLanguage.value}`;
+      stopButton.textContent = 'Stop';
+      copyButton.textContent = 'Copy';
+      elapsed = 0;
+      timer.textContent = '00:00';
+      setState('live');
+      streamText(mode.text);
+      clearInterval(clockTimer);
+      clockTimer = setInterval(() => {
+        elapsed += 1;
+        timer.textContent = `${String(Math.floor(elapsed / 60)).padStart(2,'0')}:${String(elapsed % 60).padStart(2,'0')}`;
+      }, 1000);
+    }
+
+    function finish() {
+      if (panel.dataset.state === 'complete') return reset();
+      clearInterval(wordTimer);
+      clearInterval(clockTimer);
+      transcript.querySelector('.caret')?.remove();
+      setState('processing');
+      subtitle.textContent = 'Finishing transcript…';
+      statusTitle.textContent = 'Processing';
+      processingTimer = setTimeout(() => {
+        setState('complete');
+        title.textContent = 'Ready to use';
+        subtitle.textContent = 'Transcript completed';
+        statusTitle.textContent = 'Complete';
+        stopButton.textContent = 'New';
+        if (document.querySelector('#autoCopy').checked) {
+          copyTranscript();
+          setTimeout(reset, 750);
+        }
+      }, 850);
+    }
+
+    async function copyTranscript() {
+      const text = transcript.textContent.trim();
+      try { await navigator.clipboard.writeText(text); } catch (_) { /* local HTTP fallback: visual confirmation is enough */ }
+      copyButton.textContent = 'Copied';
+      showToast('Transcript copied');
+      setTimeout(() => copyButton.textContent = 'Copy', 1200);
+    }
+
+    function reset() {
+      clearInterval(wordTimer);
+      clearInterval(clockTimer);
+      clearTimeout(processingTimer);
+      transcript.textContent = '';
+      title.textContent = 'Diduny';
+      subtitle.textContent = 'What do you want to capture?';
+      stopButton.textContent = 'Stop';
+      timer.hidden = true;
+      setState('ready');
+    }
+
+    function setVariant(value) {
+      const variant = ['A','B','C'].includes(value) ? value : 'A';
+      document.body.classList.remove('variant-a','variant-b','variant-c');
+      document.body.classList.add(`variant-${variant.toLowerCase()}`);
+      document.querySelectorAll('[data-variant]').forEach(button => button.classList.toggle('active', button.dataset.variant === variant));
+      const url = new URL(location.href);
+      url.searchParams.set('variant', variant);
+      history.replaceState(null, '', url);
+    }
+
+    document.querySelectorAll('[data-provider]').forEach(button => button.addEventListener('click', () => setProvider(button.dataset.provider)));
+    document.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => start(button.dataset.mode)));
+    document.querySelectorAll('[data-variant]').forEach(button => button.addEventListener('click', () => setVariant(button.dataset.variant)));
+    document.querySelector('#edgeTab').addEventListener('click', () => dock.classList.toggle('hidden'));
+    document.querySelector('#resetButton').addEventListener('click', reset);
+    stopButton.addEventListener('click', finish);
+    copyButton.addEventListener('click', copyTranscript);
+    authToggle.addEventListener('click', () => {
+      const signedIn = document.body.dataset.auth === 'in';
+      document.body.dataset.auth = signedIn ? 'out' : 'in';
+      authToggle.textContent = signedIn ? 'Signed out' : 'Signed in';
+      authHint.textContent = signedIn ? 'Cloud locked' : 'Signed in';
+      if (signedIn && provider === 'cloud') setProvider('local');
+    });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') reset(); });
+
+    setVariant(new URLSearchParams(location.search).get('variant') || 'A');
+  </script>
+</body>
+</html>

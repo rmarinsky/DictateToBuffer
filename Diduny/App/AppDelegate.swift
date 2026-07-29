@@ -115,7 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let appState = AppState()
 
-    /// Audio level piping to notch
+    /// Audio level piping to the recording feedback panel
     var audioLevelCancellable: AnyCancellable?
 
     // App Nap prevention tokens
@@ -183,6 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_: Notification) {
         MainWindowController.shared.configure(appDelegate: self)
+        EdgeCommandPanelController.shared.configure(appDelegate: self)
 
         // Start Sparkle updater (access lazy var to trigger init)
         _ = updaterManager
@@ -194,7 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Permission gate uses AuthService.hasStoredSession (cheap UserDefaults
         // flag) which does not trigger the keychain read.
 
-        setupNotchStopHandler()
+        setupRecordingFeedbackStopHandler()
 
         // Meeting starts fetch SCShareableContent (0.5-2s from the window
         // server); warm the cache now so the first start hits it. No-op until
@@ -312,7 +313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task {
             await RemoteConfigService.shared.fetchIfNeeded()
             if let msg = RemoteConfigService.shared.maintenanceMessage {
-                NotchManager.shared.showInfo(message: msg, duration: 5.0)
+                DictationOverlayController.shared.showInfo(message: msg, duration: 5.0)
             }
         }
 
@@ -387,9 +388,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showWakeAfterRecordingInterrupt() {
-        Log.recording.info("[Sleep] wake after recording interrupt — surfacing notch message")
+        Log.recording.info("[Sleep] wake after recording interrupt — surfacing feedback message")
 
-        NotchManager.shared.showInfo(
+        DictationOverlayController.shared.showInfo(
             message: "Recording stopped. Open Recordings to recover audio.",
             duration: 5.0
         )
@@ -504,12 +505,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Log.app.error("Recovery transcription failed: \(error.localizedDescription)")
                 if let recoveredRecordingID {
                     MainWindowController.shared.showRecording(id: recoveredRecordingID)
-                    NotchManager.shared.showInfo(
+                    DictationOverlayController.shared.showInfo(
                         message: "Recording recovered. Transcription can be retried from Recordings.",
                         duration: 5
                     )
                 } else {
-                    NotchManager.shared.showInfo(
+                    DictationOverlayController.shared.showInfo(
                         message: "Recovery failed. The original audio was kept for another attempt.",
                         duration: 5
                     )
@@ -574,7 +575,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         duration: 2.0
                     )
                 } else {
-                    NotchManager.shared.showInfo(message: "Microphone disconnected", duration: 2.0)
+                    DictationOverlayController.shared.showInfo(message: "Microphone disconnected", duration: 2.0)
                 }
             }
         }
@@ -582,16 +583,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Cross-Mode Recording Guard
 
-    private func setupNotchStopHandler() {
-        NotchManager.shared.setStopHandler { [weak self] in
-            await self?.stopActiveRecordingFromNotch()
-        }
+    private func setupRecordingFeedbackStopHandler() {
         DictationOverlayController.shared.setStopHandler { [weak self] in
-            await self?.stopActiveRecordingFromNotch()
+            await self?.stopActiveRecordingFromFeedback()
         }
     }
 
-    func stopActiveRecordingFromNotch() async {
+    func stopActiveRecordingFromFeedback() async {
         if appState.meetingTranslationRecordingState == .recording {
             await stopMeetingTranslationRecording()
             return
@@ -632,14 +630,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        Log.app.info("stopActiveRecordingFromNotch: no active recording state")
+        Log.app.info("stopActiveRecordingFromFeedback: no active recording state")
     }
 
     private func isStateInProgress(_ state: RecordingState) -> Bool {
         state == .recording || state == .processing
     }
 
-    private func restoreNotchForActiveRecordingAfterInfo(delay: TimeInterval = 1.6) {
+    private func restoreRecordingFeedbackAfterInfo(delay: TimeInterval = 1.6) {
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(delay))
             guard let self else { return }
@@ -685,8 +683,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func wireMeetingRecorderStatusMessages() {
         meetingRecorderService.onStatusMessage = { [weak self] message in
             Task { @MainActor in
-                NotchManager.shared.showInfo(message: message, duration: 2.0)
-                self?.restoreNotchForActiveRecordingAfterInfo(delay: 2.1)
+                DictationOverlayController.shared.showInfo(message: message, duration: 2.0)
+                self?.restoreRecordingFeedbackAfterInfo(delay: 2.1)
             }
         }
 
@@ -707,7 +705,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.handleMeetingStateChange(.error)
                 }
 
-                NotchManager.shared.showError(message: error.localizedDescription)
+                DictationOverlayController.shared.showError(message: error.localizedDescription)
             }
         }
     }
@@ -753,9 +751,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 duration: 1.5
             )
         } else {
-            NotchManager.shared.showInfo(message: "Stop current recording first", duration: 1.5)
+            DictationOverlayController.shared.showInfo(message: "Stop current recording first", duration: 1.5)
         }
-        restoreNotchForActiveRecordingAfterInfo()
+        restoreRecordingFeedbackAfterInfo()
 
         return false
     }
@@ -775,19 +773,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func shouldUseCompactOverlay(for mode: RecordingMode) -> Bool {
-        guard SettingsStorage.shared.recordingFeedbackSurface == .compactPanel else {
-            return false
-        }
-
-        switch mode {
-        case .voice, .translation:
-            return true
-        case .meeting, .meetingTranslation, .fileTranscription:
-            return false
-        }
-    }
-
     private func startDate(for mode: RecordingMode) -> Date? {
         switch mode {
         case .voice:
@@ -804,72 +789,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showFeedbackRecording(mode: RecordingMode) {
-        if shouldUseCompactOverlay(for: mode) {
-            NotchManager.shared.hide()
-            DictationOverlayController.shared.startRecording(mode: mode)
-        } else {
-            DictationOverlayController.shared.hide()
-            NotchManager.shared.startRecording(mode: mode)
-        }
+        DictationOverlayController.shared.startRecording(mode: mode)
     }
 
     private func showFeedbackProcessing(mode: RecordingMode) {
-        if shouldUseCompactOverlay(for: mode) {
-            NotchManager.shared.hide()
-            if startDate(for: mode) == nil {
-                DictationOverlayController.shared.begin(mode: mode)
-            } else {
-                DictationOverlayController.shared.startFinalizing(mode: mode)
-            }
+        if startDate(for: mode) == nil {
+            DictationOverlayController.shared.begin(mode: mode)
         } else {
-            DictationOverlayController.shared.hide()
-            NotchManager.shared.startProcessing(mode: mode)
+            DictationOverlayController.shared.startFinalizing(mode: mode)
         }
     }
 
-    private func showFeedbackSuccess(text: String, mode: RecordingMode) {
-        if shouldUseCompactOverlay(for: mode) {
-            NotchManager.shared.hide()
-            DictationOverlayController.shared.showSuccess(text: text)
-        } else {
-            DictationOverlayController.shared.hide()
-            NotchManager.shared.showSuccess(text: text)
-        }
+    private func showFeedbackSuccess(text: String, mode _: RecordingMode) {
+        DictationOverlayController.shared.showSuccess(text: text)
     }
 
-    private func showFeedbackError(message: String, mode: RecordingMode) {
-        if shouldUseCompactOverlay(for: mode) {
-            NotchManager.shared.hide()
-            DictationOverlayController.shared.showError(message: message)
-        } else {
-            DictationOverlayController.shared.hide()
-            NotchManager.shared.showError(message: message)
-        }
+    private func showFeedbackError(message: String, mode _: RecordingMode) {
+        DictationOverlayController.shared.showError(message: message)
     }
 
-    private func hideFeedback(mode: RecordingMode) {
-        if shouldUseCompactOverlay(for: mode) {
-            DictationOverlayController.shared.hide()
-        } else {
-            NotchManager.shared.hide()
-        }
+    private func hideFeedback(mode _: RecordingMode) {
+        DictationOverlayController.shared.hide()
     }
 
-    func updateRecordingFeedbackAudioLevel(_ level: Float, mode: RecordingMode) {
-        if shouldUseCompactOverlay(for: mode) {
-            DictationOverlayController.shared.updateAudioLevel(level)
-        } else {
-            NotchManager.shared.audioLevel = level
-        }
+    func updateRecordingFeedbackAudioLevel(_ level: Float, mode _: RecordingMode) {
+        DictationOverlayController.shared.updateAudioLevel(level)
     }
 
-    func updateRecordingFeedbackTokens(_ tokens: [RealtimeToken], mode: RecordingMode) {
-        guard shouldUseCompactOverlay(for: mode) else { return }
+    func updateRecordingFeedbackTokens(_ tokens: [RealtimeToken], mode _: RecordingMode) {
         DictationOverlayController.shared.processTokens(tokens)
     }
 
-    func updateRecordingFeedbackConnectionStatus(_ status: RealtimeConnectionStatus, mode: RecordingMode) {
-        guard shouldUseCompactOverlay(for: mode) else { return }
+    func updateRecordingFeedbackConnectionStatus(_ status: RealtimeConnectionStatus, mode _: RecordingMode) {
         DictationOverlayController.shared.updateConnectionStatus(status)
     }
 
@@ -878,15 +829,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mode: RecordingMode,
         duration: TimeInterval = 1.5
     ) {
-        if shouldUseCompactOverlay(for: mode) {
-            DictationOverlayController.shared.showInfoDuringRecording(
-                message: message,
-                mode: mode,
-                duration: duration
-            )
-        } else {
-            NotchManager.shared.showInfoDuringRecording(message: message, mode: mode, duration: duration)
-        }
+        DictationOverlayController.shared.showInfoDuringRecording(
+            message: message,
+            mode: mode,
+            duration: duration
+        )
     }
 
     func showRecordingFeedbackInfo(
@@ -894,11 +841,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mode: RecordingMode,
         duration: TimeInterval = 1.5
     ) {
-        if shouldUseCompactOverlay(for: mode) {
-            DictationOverlayController.shared.showInfo(message: message, duration: duration)
-        } else {
-            NotchManager.shared.showInfo(message: message, duration: duration)
-        }
+        DictationOverlayController.shared.showInfo(message: message, duration: duration)
     }
 
     func startAudioRecorderWithFallback(

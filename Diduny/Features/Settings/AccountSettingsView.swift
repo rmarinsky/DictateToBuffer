@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct AccountSettingsView: View {
@@ -6,6 +7,8 @@ struct AccountSettingsView: View {
     @State private var isTestingProxy = false
     @State private var proxyTestResult: ProxyTestResult?
     @State private var isRefreshingConfig = false
+    @State private var billingError: String?
+    @State private var isBillingActionLoading = false
 
     // Auth state
     @State private var authEmail: String = ""
@@ -139,6 +142,8 @@ struct AccountSettingsView: View {
 #endif
             }
 
+            billingSection
+
             cloudUsageSection
 
             usageSection
@@ -147,7 +152,85 @@ struct AccountSettingsView: View {
         .onAppear {
             proxyBaseURL = SettingsStorage.shared.proxyBaseURL
             if authService.isLoggedIn {
-                Task { await UsageService.shared.refresh() }
+                Task { await refreshAccountData() }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            guard authService.isLoggedIn else { return }
+            Task { await refreshAccountData(syncBilling: true) }
+        }
+    }
+
+    // MARK: - Billing Section
+
+    @ViewBuilder
+    private var billingSection: some View {
+        if authService.isLoggedIn, BillingService.shared.hasVisibleBillingState {
+            Section("Diduny Pro") {
+                let billing = BillingService.shared
+
+                if let status = billing.cachedStatus {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .firstTextBaseline) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(billingTitle(status))
+                                    .font(.headline)
+                                Text(billingSubtitle(status))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+
+                            Spacer()
+
+                            Text(billingBadge(status))
+                                .font(.caption.weight(.bold))
+                                .foregroundColor(billingBadgeColor(status))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(billingBadgeColor(status).opacity(0.14), in: Capsule())
+                        }
+
+                        HStack(spacing: 8) {
+                            billingPrimaryAction(status)
+
+                            Button {
+                                Task { await refreshAccountData(syncBilling: true) }
+                            } label: {
+                                Label("Refresh Status", systemImage: "arrow.clockwise")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(billing.isLoading || isBillingActionLoading)
+
+                            if billing.isLoading || isBillingActionLoading {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                        }
+                    }
+                } else if billing.isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Free")
+                            .font(.headline)
+                        Text("Cloud dictation includes 5 hours per month.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Button("Upgrade to Diduny Pro") {
+                            performBillingAction { try await BillingService.shared.startCheckout() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                }
+
+                if let billingError {
+                    Text(billingError)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
             }
         }
     }
@@ -161,11 +244,11 @@ struct AccountSettingsView: View {
                 let usageService = UsageService.shared
 
                 if let usage = usageService.cachedUsage {
-                    if usage.isWhitelisted {
+                    if usage.isUnlimited {
                         HStack {
                             Image(systemName: "infinity")
                                 .foregroundColor(.green)
-                            Text("Unlimited (whitelisted)")
+                            Text(unlimitedUsageLabel(usage))
                                 .foregroundColor(.secondary)
                         }
                     } else {
@@ -211,6 +294,159 @@ struct AccountSettingsView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func billingPrimaryAction(_ status: BillingStatusResponse) -> some View {
+        switch status.status {
+        case .checkoutPending:
+            Button("Refresh Status") {
+                Task { await refreshAccountData(syncBilling: true) }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        case .active:
+            if status.entitlement == .paid {
+                Button("Cancel Renewal") {
+                    performBillingAction { try await BillingService.shared.cancelRenewal() }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            } else {
+                Button("Upgrade to Diduny Pro") {
+                    performBillingAction { try await BillingService.shared.startCheckout() }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+        case .cancelled:
+            Button("Resume Renewal") {
+                performBillingAction { try await BillingService.shared.resumeRenewal() }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        case .expired, .pastDue:
+            Button("Upgrade to Diduny Pro") {
+                performBillingAction { try await BillingService.shared.startCheckout() }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+    }
+
+    private func billingTitle(_ status: BillingStatusResponse) -> String {
+        switch (status.entitlement, status.status) {
+        case (.grant, _):
+            "Unlimited Access"
+        case (.legacyUnlimited, _):
+            "Unlimited Access"
+        case (.paid, .cancelled):
+            "Diduny Pro"
+        case (.paid, _):
+            "Diduny Pro"
+        case (_, .checkoutPending):
+            "Checkout Pending"
+        default:
+            "Free"
+        }
+    }
+
+    private func billingSubtitle(_ status: BillingStatusResponse) -> String {
+        switch status.status {
+        case .active where status.entitlement == .paid:
+            if let renewsAt = formatISODate(status.renewsAt) {
+                return "Renews \(renewsAt)"
+            }
+            return "Unlimited cloud usage"
+        case .cancelled:
+            if let activeUntil = formatISODate(status.activeUntil) {
+                return "Active until \(activeUntil)"
+            }
+            return "Renewal cancelled"
+        case .checkoutPending:
+            return "Waiting for WayForPay confirmation"
+        case .active where status.entitlement == .grant:
+            return "Manual whitelist grant"
+        case .active where status.entitlement == .legacyUnlimited:
+            return "Legacy unlimited access"
+        case .pastDue:
+            return "Payment needs attention"
+        case .expired:
+            return "5 hours of cloud usage per month"
+        default:
+            return "5 hours of cloud usage per month"
+        }
+    }
+
+    private func billingBadge(_ status: BillingStatusResponse) -> String {
+        switch status.entitlement {
+        case .paid:
+            status.cancelAtPeriodEnd ? "CANCELLED" : "PRO"
+        case .grant:
+            "GRANT"
+        case .legacyUnlimited:
+            "LEGACY"
+        case .free:
+            status.status == .checkoutPending ? "PENDING" : "FREE"
+        }
+    }
+
+    private func billingBadgeColor(_ status: BillingStatusResponse) -> Color {
+        switch status.entitlement {
+        case .paid:
+            return status.cancelAtPeriodEnd ? .orange : Color("BrandAccentDeep")
+        case .grant, .legacyUnlimited:
+            return .green
+        case .free:
+            return status.status == .checkoutPending ? .orange : .secondary
+        }
+    }
+
+    private func unlimitedUsageLabel(_ usage: UsageResponse) -> String {
+        switch usage.entitlement {
+        case "paid":
+            "Unlimited cloud usage"
+        case "grant":
+            "Unlimited (whitelisted)"
+        case "legacy_unlimited":
+            "Unlimited (legacy)"
+        default:
+            "Unlimited"
+        }
+    }
+
+    private func refreshAccountData(syncBilling: Bool = false) async {
+        if syncBilling {
+            try? await BillingService.shared.sync(
+                orderReference: BillingService.shared.cachedStatus?.pendingOrderReference
+            )
+        } else {
+            await BillingService.shared.refresh()
+        }
+        await UsageService.shared.refresh()
+    }
+
+    private func performBillingAction(_ action: @escaping () async throws -> Void) {
+        isBillingActionLoading = true
+        billingError = nil
+        Task {
+            do {
+                try await action()
+                await refreshAccountData()
+            } catch {
+                billingError = error.localizedDescription
+            }
+            isBillingActionLoading = false
+        }
+    }
+
+    private func formatISODate(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let date = formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+        guard let date else { return nil }
+        return date.formatted(.dateTime.day().month(.abbreviated).year())
     }
 
     private func usageProgressColor(_ percent: Double) -> Color {
@@ -383,6 +619,7 @@ struct AccountSettingsView: View {
                 try await authService.verifyOtp(email: authEmail, code: otpCode)
                 otpCode = ""
                 authEmail = ""
+                await refreshAccountData()
             } catch {
                 authError = error.localizedDescription
             }
