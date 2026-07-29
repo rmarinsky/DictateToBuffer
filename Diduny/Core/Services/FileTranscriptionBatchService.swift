@@ -66,7 +66,7 @@ struct FileTranscriptionSettingsSnapshot {
     static func current() -> Self {
         let settings = SettingsStorage.shared
         return Self(
-            provider: settings.effectiveTranscriptionProvider,
+            provider: .local,
             languageHints: settings.speechLanguageHints,
             localModelName: settings.selectedWhisperModel
         )
@@ -1489,7 +1489,7 @@ private final class LiveFileTranscriptionBatchTranscriber: FileTranscriptionBatc
                 $0.name == settings.localModelName
             }), WhisperModelManager.shared.isModelDownloaded(model)
             else {
-                return "No local Whisper model downloaded. Log in for Cloud or download a model in Settings."
+                return "Download a local Whisper model in Settings to transcribe files and YouTube."
             }
             return nil
         }

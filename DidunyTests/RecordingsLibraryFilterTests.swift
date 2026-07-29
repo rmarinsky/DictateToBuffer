@@ -36,6 +36,16 @@ final class RecordingsLibraryFilterTests: XCTestCase {
         XCTAssertEqual(recording.libraryIconName, "play.rectangle.fill")
     }
 
+    func test_importedFilesAndYouTubeRequireLocalTranscription() {
+        let file = makeRecording(remoteSource: nil)
+        let youtube = makeRecording(remoteSource: makeYouTubeSource())
+        let voice = makeRecording(type: .voice, remoteSource: nil)
+
+        XCTAssertTrue(file.requiresLocalTranscription)
+        XCTAssertTrue(youtube.requiresLocalTranscription)
+        XCTAssertFalse(voice.requiresLocalTranscription)
+    }
+
     func test_hasTranslationMatchesAttachedTranslationArtifact() {
         var recording = makeRecording(remoteSource: nil)
         XCTAssertFalse(RecordingsLibraryView.RecordingTypeFilter.hasTranslation.matches(recording))
@@ -77,11 +87,14 @@ final class RecordingsLibraryFilterTests: XCTestCase {
         XCTAssertNil(selection.backDestination)
     }
 
-    private func makeRecording(remoteSource: RemoteMediaSourceMetadata?) -> Recording {
+    private func makeRecording(
+        type: Recording.RecordingType = .fileTranscription,
+        remoteSource: RemoteMediaSourceMetadata?
+    ) -> Recording {
         Recording(
             id: UUID(),
             createdAt: Date(),
-            type: .fileTranscription,
+            type: type,
             audioFileName: "video.m4a",
             durationSeconds: 120,
             fileSizeBytes: 42,

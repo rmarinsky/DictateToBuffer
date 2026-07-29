@@ -461,6 +461,10 @@ final class YouTubeRemoteMediaE2ETests: XCTestCase {
 
 @MainActor
 final class FileTranscriptionBatchServiceTests: XCTestCase {
+    func test_importedMediaSettingsAlwaysUseLocalProvider() {
+        XCTAssertEqual(FileTranscriptionSettingsSnapshot.current().provider, .local)
+    }
+
     func test_add_skipsDuplicateURLsWithinActiveBatch() {
         let service = FileTranscriptionBatchService(
             preparer: BatchTestPreparer(),

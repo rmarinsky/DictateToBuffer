@@ -188,6 +188,10 @@ struct Recording: Identifiable, Codable, Equatable {
             .joined(separator: "\n\n")
     }
 
+    var requiresLocalTranscription: Bool {
+        type == .fileTranscription
+    }
+
     /// Nested to avoid conflict with RecoveryState.RecordingType
     enum RecordingType: String, Codable, CaseIterable {
         case voice
