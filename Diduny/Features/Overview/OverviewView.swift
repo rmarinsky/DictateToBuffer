@@ -102,7 +102,7 @@ struct OverviewView: View {
         return count
     }
 
-    // MARK: - Daily series for chart
+    // MARK: - Series for chart
 
     struct DayStat: Identifiable {
         let id: Date
@@ -112,15 +112,37 @@ struct OverviewView: View {
         let label: String
     }
 
-    private var dailySeries: [DayStat] {
+    private var chartSeries: [DayStat] {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
+        if timePeriod == .year {
+            let currentMonth = cal.date(from: cal.dateComponents([.year, .month], from: today))!
+            let months = (0 ..< 12).reversed().compactMap {
+                cal.date(byAdding: .month, value: -$0, to: currentMonth)
+            }
+            let byMonth = Dictionary(grouping: periodRecordings) {
+                cal.date(from: cal.dateComponents([.year, .month], from: $0.createdAt))!
+            }
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MMM"
+            return months.map { month in
+                DayStat(
+                    id: month,
+                    minutes: RecordingStatistics(recordings: byMonth[month] ?? [])
+                        .totalTimeSavedSeconds(wordsPerMinute: typingSpeedWordsPerMinute) / 60,
+                    isToday: month == currentMonth,
+                    isFuture: false,
+                    label: formatter.string(from: month)
+                )
+            }
+        }
+
         let days = (0 ..< timePeriod.daysBack).map {
             cal.date(byAdding: .day, value: -(timePeriod.daysBack - 1 - $0), to: today)!
         }
         let byDay = Dictionary(grouping: periodRecordings) { cal.startOfDay(for: $0.createdAt) }
         let formatter = DateFormatter()
-        formatter.dateFormat = timePeriod == .year ? "MMM" : "EEE"
+        formatter.dateFormat = "EEE"
         return days.map { day in
             let mins = RecordingStatistics(recordings: byDay[day] ?? [])
                 .totalTimeSavedSeconds(wordsPerMinute: typingSpeedWordsPerMinute) / 60
@@ -135,13 +157,13 @@ struct OverviewView: View {
     }
 
     private var avgMinutes: Double {
-        let nonEmpty = dailySeries.filter { !$0.isFuture && $0.minutes > 0 }
+        let nonEmpty = chartSeries.filter { !$0.isFuture && $0.minutes > 0 }
         guard !nonEmpty.isEmpty else { return 0 }
         return nonEmpty.reduce(0) { $0 + $1.minutes } / Double(nonEmpty.count)
     }
 
     private var maxMinutes: Double {
-        dailySeries.map(\.minutes).max() ?? 1
+        chartSeries.map(\.minutes).max() ?? 1
     }
 
     // MARK: - Hero description
@@ -315,7 +337,7 @@ struct OverviewView: View {
                         }
                 }
 
-                ForEach(dailySeries) { day in
+                ForEach(chartSeries) { day in
                     if day.isFuture || day.minutes == 0 {
                         BarMark(
                             x: .value("Day", day.label),
