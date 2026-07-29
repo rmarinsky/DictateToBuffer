@@ -337,6 +337,7 @@ final class AsyncTranscriptionJobService {
         config: [String: Any],
         source: String? = nil,
         sourceDurationSeconds: TimeInterval? = nil,
+        onSubmitted: ((String) -> Void)? = nil,
         onProgressUpdate: @escaping (JobProgressUpdate) -> Void
     ) async throws -> GeneratedTranscript {
         try Task.checkCancellation()
@@ -347,9 +348,22 @@ final class AsyncTranscriptionJobService {
             source: source,
             sourceDurationSeconds: sourceDurationSeconds
         )
+        onSubmitted?(submission.jobId)
         return try await waitForResult(
             submission: submission,
             preferSpeakerDiarization: preferSpeakerDiarization,
+            onProgressUpdate: onProgressUpdate
+        )
+    }
+
+    func resumeFileDetailed(
+        jobID: String,
+        config: [String: Any],
+        onProgressUpdate: @escaping (JobProgressUpdate) -> Void
+    ) async throws -> GeneratedTranscript {
+        try await waitForResult(
+            submission: JobSubmission(jobId: jobID, status: "processing", createdAt: ""),
+            preferSpeakerDiarization: shouldPreferSpeakerDiarization(config: config),
             onProgressUpdate: onProgressUpdate
         )
     }

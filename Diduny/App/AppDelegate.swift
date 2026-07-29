@@ -596,9 +596,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await stopMeetingTranslationRecording()
             return
         }
+        if appState.meetingTranslationRecordingState == .processing,
+           appState.meetingTranslationRecordingStartTime == nil {
+            await cancelMeetingTranslationRecording()
+            return
+        }
 
         if appState.meetingRecordingState == .recording {
             await stopMeetingRecording()
+            return
+        }
+        if appState.meetingRecordingState == .processing,
+           appState.meetingRecordingStartTime == nil {
+            await cancelMeetingRecording()
             return
         }
 
@@ -606,9 +616,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await stopTranslationRecording()
             return
         }
+        if appState.translationRecordingState == .processing,
+           appState.translationRecordingStartTime == nil {
+            await cancelTranslationRecording()
+            return
+        }
 
         if appState.recordingState == .recording {
             await stopRecording()
+            return
+        }
+        if appState.recordingState == .processing,
+           appState.recordingStartTime == nil {
+            await cancelRecording()
             return
         }
 

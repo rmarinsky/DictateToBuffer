@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+if [[ "${SKIP_REMOTE_MEDIA_RUNTIME:-NO}" == "YES" ]]; then
+    echo "Skipping remote media runtime bundle for this build."
+    exit 0
+fi
+
 readonly YTDLP_VERSION="2026.06.09"
 readonly YTDLP_SHA256="b82c3626952e6c14eaf654cc565866775ffd0b9ffb7021628ac59b42c2f4f244"
 readonly DENO_VERSION="2.8.1"

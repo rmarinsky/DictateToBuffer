@@ -2,6 +2,23 @@
 import XCTest
 
 final class RecordingsLibraryFilterTests: XCTestCase {
+    @MainActor
+    func test_batchComposerActionTargetsRecordingsWithSharedTitle() {
+        let controller = MainWindowController.shared
+        controller.requestedSection = nil
+        controller.requestedBatchComposer = false
+        defer {
+            controller.requestedSection = nil
+            controller.requestedBatchComposer = false
+        }
+
+        controller.requestBatchComposer()
+
+        XCTAssertEqual(MainWindowController.batchComposerActionTitle, "Batch Files and URLs…")
+        XCTAssertEqual(controller.requestedSection, .recordings)
+        XCTAssertTrue(controller.requestedBatchComposer)
+    }
+
     func test_filesFilterMatchesOnlyImportedFileTranscriptions() {
         let file = makeRecording(remoteSource: nil)
         let youtube = makeRecording(remoteSource: makeYouTubeSource())
@@ -17,6 +34,40 @@ final class RecordingsLibraryFilterTests: XCTestCase {
 
         XCTAssertEqual(recording.libraryDisplayName, "YouTube Video")
         XCTAssertEqual(recording.libraryIconName, "play.rectangle.fill")
+    }
+
+    func test_hasTranslationMatchesAttachedTranslationArtifact() {
+        var recording = makeRecording(remoteSource: nil)
+        XCTAssertFalse(RecordingsLibraryView.RecordingTypeFilter.hasTranslation.matches(recording))
+
+        recording.translationTargetLanguageCode = "en"
+
+        XCTAssertTrue(RecordingsLibraryView.RecordingTypeFilter.hasTranslation.matches(recording))
+    }
+
+    func test_batchesFilterShowsBatchesInsteadOfIndividualRecordings() {
+        let recording = makeRecording(remoteSource: nil)
+
+        XCTAssertTrue(RecordingsLibraryView.RecordingTypeFilter.batches.showsBatches)
+        XCTAssertFalse(RecordingsLibraryView.RecordingTypeFilter.batches.matches(recording))
+    }
+
+    func test_recordingOpenedFromBatchCanNavigateBackButDirectRecordingCannot() {
+        let batchID = UUID()
+        let recordingID = UUID()
+        let nested = RecordingsInspectorSelection.recording(
+            recordingID,
+            parentBatchID: batchID
+        )
+        let direct = RecordingsInspectorSelection.recording(
+            recordingID,
+            parentBatchID: nil
+        )
+
+        XCTAssertEqual(nested.parentBatchID, batchID)
+        XCTAssertEqual(nested.backDestination, .batch(batchID))
+        XCTAssertNil(direct.parentBatchID)
+        XCTAssertNil(direct.backDestination)
     }
 
     private func makeRecording(remoteSource: RemoteMediaSourceMetadata?) -> Recording {

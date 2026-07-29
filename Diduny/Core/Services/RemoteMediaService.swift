@@ -7,6 +7,23 @@ struct RemoteMediaSourceMetadata: Codable, Equatable, Hashable {
     let canonicalURL: URL
     let title: String
     let channelName: String?
+    let description: String?
+
+    init(
+        provider: String,
+        mediaID: String,
+        canonicalURL: URL,
+        title: String,
+        channelName: String?,
+        description: String? = nil
+    ) {
+        self.provider = provider
+        self.mediaID = mediaID
+        self.canonicalURL = canonicalURL
+        self.title = title
+        self.channelName = channelName
+        self.description = description
+    }
 }
 
 struct TranscriptArtifact: Codable, Equatable {
@@ -59,6 +76,12 @@ struct YouTubeRemoteMediaSource: Codable, Equatable, Hashable {
 
     let mediaID: String
     let canonicalURL: URL
+
+    struct BatchValidation: Equatable {
+        let sources: [YouTubeRemoteMediaSource]
+        let duplicateCount: Int
+        let invalidValues: [String]
+    }
 
     enum ValidationError: LocalizedError, Equatable {
         case malformedURL
@@ -128,6 +151,38 @@ struct YouTubeRemoteMediaSource: Codable, Equatable, Hashable {
             let source = try normalize(value)
             return seen.insert(source.mediaID).inserted ? source : nil
         }
+    }
+
+    static func validateBatch(
+        _ rawValue: String,
+        excludingMediaIDs: Set<String> = []
+    ) -> BatchValidation {
+        let values = rawValue
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        var sources: [Self] = []
+        var seen = excludingMediaIDs
+        var duplicateCount = 0
+        var invalidValues: [String] = []
+
+        for value in values {
+            do {
+                let source = try normalize(value)
+                if seen.insert(source.mediaID).inserted {
+                    sources.append(source)
+                } else {
+                    duplicateCount += 1
+                }
+            } catch {
+                invalidValues.append(value)
+            }
+        }
+        return BatchValidation(
+            sources: sources,
+            duplicateCount: duplicateCount,
+            invalidValues: invalidValues
+        )
     }
 
     private static func isValidVideoID(_ value: String) -> Bool {
@@ -218,7 +273,7 @@ enum RemoteMediaExtractorError: LocalizedError, Equatable {
     }
 }
 
-struct RemoteMediaMetadata: Equatable {
+struct RemoteMediaMetadata: Codable, Equatable {
     let source: RemoteMediaSourceMetadata
     let durationSeconds: TimeInterval
     let audioFormatID: String
@@ -284,7 +339,8 @@ struct RemoteMediaMetadata: Equatable {
                 mediaID: payload.id,
                 canonicalURL: expectedSource.canonicalURL,
                 title: payload.title,
-                channelName: payload.channelName
+                channelName: payload.channelName,
+                description: payload.description
             ),
             durationSeconds: payload.duration,
             audioFormatID: compatibleAudio.id,
@@ -316,6 +372,7 @@ private struct YTDLPPayload: Decodable {
     let id: String
     let title: String
     let channelName: String?
+    let description: String?
     let duration: TimeInterval
     let originalLanguage: String?
     let isLive: Bool?
@@ -325,7 +382,7 @@ private struct YTDLPPayload: Decodable {
     let automaticCaptions: [String: [YTDLPCaption]]?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, duration, availability, formats, subtitles
+        case id, title, description, duration, availability, formats, subtitles
         case channelName = "uploader"
         case originalLanguage = "original_language"
         case isLive = "is_live"

@@ -48,6 +48,49 @@ struct TimedTranscriptSegment: Codable, Equatable {
     }
 }
 
+struct TranscriptVersion: Identifiable, Codable, Equatable {
+    enum Kind: String, Codable {
+        case cloud
+        case local
+        case translation
+    }
+
+    let id: UUID
+    let createdAt: Date
+    let kind: Kind
+    let provider: String?
+    let modelIdentifier: String?
+    let sourceLanguageCode: String?
+    let targetLanguageCode: String?
+    let text: String
+    let segments: [TimedTranscriptSegment]?
+    let provenance: GeneratedTranscriptProvenance?
+
+    init(
+        id: UUID = UUID(),
+        createdAt: Date = Date(),
+        kind: Kind,
+        provider: String? = nil,
+        modelIdentifier: String? = nil,
+        sourceLanguageCode: String? = nil,
+        targetLanguageCode: String? = nil,
+        text: String,
+        segments: [TimedTranscriptSegment]? = nil,
+        provenance: GeneratedTranscriptProvenance? = nil
+    ) {
+        self.id = id
+        self.createdAt = createdAt
+        self.kind = kind
+        self.provider = provider
+        self.modelIdentifier = modelIdentifier
+        self.sourceLanguageCode = sourceLanguageCode
+        self.targetLanguageCode = targetLanguageCode
+        self.text = text
+        self.segments = segments
+        self.provenance = provenance
+    }
+}
+
 struct Recording: Identifiable, Codable, Equatable {
     let id: UUID
     let createdAt: Date
@@ -83,6 +126,9 @@ struct Recording: Identifiable, Codable, Equatable {
     /// Phrase-level timestamps from the generated transcript provider.
     /// Optional so recordings created by older releases remain decodable.
     var transcriptSegments: [TimedTranscriptSegment]?
+    var title: String? = nil
+    var description: String? = nil
+    var transcriptHistory: [TranscriptVersion]? = nil
 
     var isYouTubeVideo: Bool {
         remoteSource?.provider == YouTubeRemoteMediaSource.provider
@@ -98,6 +144,40 @@ struct Recording: Identifiable, Codable, Equatable {
 
     var libraryBrandColor: Color {
         isYouTubeVideo ? .red : type.brandColor
+    }
+
+    var displayTitle: String {
+        if let title = title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+            return title
+        }
+        return remoteSource?.title ?? sourceFileName ?? libraryDisplayName
+    }
+
+    var resolvedTranscriptHistory: [TranscriptVersion] {
+        if let transcriptHistory, !transcriptHistory.isEmpty {
+            return transcriptHistory
+        }
+        guard let transcriptionText, !transcriptionText.isEmpty else { return [] }
+        let provider = generatedTranscriptProvenance?.provider
+        let kind: TranscriptVersion.Kind = if status == .translated || translationTargetLanguageCode != nil {
+            .translation
+        } else if provider?.localizedCaseInsensitiveContains("local") == true
+            || provider?.localizedCaseInsensitiveContains("whisper") == true
+        {
+            .local
+        } else {
+            .cloud
+        }
+        return [TranscriptVersion(
+            id: id,
+            createdAt: processedAt ?? createdAt,
+            kind: kind,
+            provider: provider,
+            targetLanguageCode: translationTargetLanguageCode,
+            text: transcriptionText,
+            segments: transcriptSegments,
+            provenance: generatedTranscriptProvenance
+        )]
     }
 
     var displayTranscriptText: String? {

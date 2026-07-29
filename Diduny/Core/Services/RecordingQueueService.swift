@@ -147,6 +147,8 @@ final class RecordingQueueService {
             let transcript: GeneratedTranscript
             let status: Recording.ProcessingStatus
             let translationTargetLanguageCode: String?
+            let historyKind: TranscriptVersion.Kind
+            let sourceLanguageCode: String?
             switch item.action {
             case .transcribe:
                 if provider == .cloud {
@@ -162,6 +164,8 @@ final class RecordingQueueService {
                 }
                 status = .transcribed
                 translationTargetLanguageCode = nil
+                historyKind = provider == .local ? .local : .cloud
+                sourceLanguageCode = nil
             case .transcribeDiarize:
                 if provider == .cloud {
                     transcript = try await transcribeViaJobs(
@@ -176,8 +180,11 @@ final class RecordingQueueService {
                 }
                 status = .transcribed
                 translationTargetLanguageCode = nil
+                historyKind = provider == .local ? .local : .cloud
+                sourceLanguageCode = nil
             case .translate:
                 let audioData = try await loadAudioData(from: audioURL)
+                let pair = SettingsStorage.shared.resolveTranslationLanguagePair()
                 let targetLanguage: String
                 if let explicitTargetLanguage = item.targetLanguage {
                     targetLanguage = explicitTargetLanguage
@@ -188,7 +195,6 @@ final class RecordingQueueService {
                         )
                     )
                 } else {
-                    let pair = SettingsStorage.shared.resolveTranslationLanguagePair()
                     targetLanguage = provider == .local ? "en" : pair.languageB
                     transcript = try await GeneratedTranscript(
                         text: service.translateAndTranscribe(
@@ -199,6 +205,8 @@ final class RecordingQueueService {
                 }
                 status = .translated
                 translationTargetLanguageCode = targetLanguage
+                historyKind = .translation
+                sourceLanguageCode = pair.languageA
             }
 
             guard !Task.isCancelled else {
@@ -218,7 +226,13 @@ final class RecordingQueueService {
                     ? transcript.segments
                     : nil,
                 translationTargetLanguageCode: translationTargetLanguageCode,
-                generatedTranscriptProvenance: provenance
+                generatedTranscriptProvenance: provenance,
+                kind: historyKind,
+                provider: provider.rawValue,
+                modelIdentifier: provider == .local
+                    ? item.whisperModelOverride ?? SettingsStorage.shared.selectedWhisperModel
+                    : nil,
+                sourceLanguageCode: sourceLanguageCode
             )
             currentJobStatus = nil
             Log.app.info("Queue processed recording \(item.id): \(status.rawValue)")

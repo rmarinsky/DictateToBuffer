@@ -1,25 +1,49 @@
 import SwiftUI
 
+enum RecordingsInspectorSelection: Equatable {
+    case recording(UUID, parentBatchID: UUID?)
+    case batch(UUID)
+
+    var parentBatchID: UUID? {
+        guard case let .recording(_, parentBatchID) = self else { return nil }
+        return parentBatchID
+    }
+
+    var backDestination: Self? {
+        parentBatchID.map(Self.batch)
+    }
+}
+
 struct RecordingsLibraryView: View {
     @State private var storage = RecordingsLibraryStorage.shared
+    @State private var batchStorage = TranscriptionBatchStorage.shared
     @State private var queueService = RecordingQueueService.shared
     @State private var playbackService = AudioPlaybackService.shared
     @State private var searchText = ""
     @State private var filter: RecordingTypeFilter = .all
-    @State private var selectedRecording: Recording? = nil
+    @State private var inspectorSelection: RecordingsInspectorSelection?
+    @State private var showBatchComposer = false
     @State private var showDeleteConfirmation = false
     @State private var showBulkDeleteConfirmation = false
     @State private var recordingToDelete: Recording? = nil
     @State private var isSelectionMode = false
     @State private var selectedRecordingIds = Set<UUID>()
     @State private var recordingToRetranscribe: Recording?
+    @State private var batchLoadErrorMessage: String?
+    @State private var deletionErrorMessage: String?
 
     enum RecordingTypeFilter: String, CaseIterable {
         case all = "All"
         case meetings = "Meetings"
         case voiceNotes = "Voice notes"
+        case hasTranslation = "Has Translation"
         case files = "Files"
         case youtube = "YouTube"
+        case batches = "Batches"
+
+        var showsBatches: Bool {
+            self == .batches
+        }
 
         func matches(_ recording: Recording) -> Bool {
             switch self {
@@ -29,10 +53,16 @@ struct RecordingsLibraryView: View {
                 recording.type.isMeetingLike
             case .voiceNotes:
                 recording.type == .voice || recording.type == .translation
+            case .hasTranslation:
+                recording.translationTargetLanguageCode != nil
+                    || recording.type == .translation
+                    || recording.type == .meetingTranslation
             case .files:
                 recording.type == .fileTranscription && !recording.isYouTubeVideo
             case .youtube:
                 recording.isYouTubeVideo
+            case .batches:
+                false
             }
         }
     }
@@ -42,11 +72,18 @@ struct RecordingsLibraryView: View {
             guard filter.matches(recording) else { return false }
             guard !searchText.isEmpty else { return true }
             let query = searchText.lowercased()
-            return recording.libraryDisplayName.lowercased().contains(query)
+            return recording.displayTitle.lowercased().contains(query)
+                || recording.libraryDisplayName.lowercased().contains(query)
+                || (recording.description?.lowercased().contains(query) ?? false)
                 || (recording.sourceFileName?.lowercased().contains(query) ?? false)
                 || (recording.remoteSource?.channelName?.lowercased().contains(query) ?? false)
-                || (recording.transcriptionText?.lowercased().contains(query) ?? false)
+                || (recording.remoteSource?.description?.lowercased().contains(query) ?? false)
+                || recording.resolvedTranscriptHistory.contains { $0.text.lowercased().contains(query) }
         }
+    }
+
+    private var filteredBatches: [TranscriptionBatch] {
+        batchStorage.batches.filter { $0.matches(searchText, recordings: storage.recordings) }
     }
 
     private var favoriteLanguages: [SupportedLanguage] {
@@ -74,7 +111,17 @@ struct RecordingsLibraryView: View {
                 .padding(.horizontal, 24)
                 .padding(.bottom, 16)
 
-            if storage.recordings.isEmpty {
+            if filter.showsBatches {
+                if batchStorage.batches.isEmpty {
+                    batchesEmptyState
+                } else if filteredBatches.isEmpty {
+                    noResultsState
+                } else {
+                    batchesCard
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 24)
+                }
+            } else if storage.recordings.isEmpty {
                 emptyState
             } else if filteredRecordings.isEmpty {
                 noResultsState
@@ -85,12 +132,21 @@ struct RecordingsLibraryView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .sheet(item: $selectedRecording) { recording in
-            RecordingDetailView(recording: recording)
-                .frame(minWidth: 640, idealWidth: 700, minHeight: 500)
+        .inspector(isPresented: Binding(
+            get: { inspectorSelection != nil },
+            set: { if !$0 { inspectorSelection = nil } }
+        )) {
+            inspectorContent
+                .inspectorColumnWidth(min: 380, ideal: 430, max: 500)
+                .frame(minHeight: 500)
+        }
+        .sheet(isPresented: $showBatchComposer) {
+            NewTranscriptionBatchSheet(recordings: storage.recordings)
         }
         .onAppear {
+            batchLoadErrorMessage = batchStorage.loadErrorMessage
             openRequestedRecordingIfAvailable()
+            openRequestedBatchComposerIfAvailable()
         }
         .onChange(of: MainWindowController.shared.requestedRecordingID) {
             openRequestedRecordingIfAvailable()
@@ -98,15 +154,23 @@ struct RecordingsLibraryView: View {
         .onChange(of: storage.recordings) {
             openRequestedRecordingIfAvailable()
         }
+        .onChange(of: MainWindowController.shared.requestedBatchComposer) {
+            openRequestedBatchComposerIfAvailable()
+        }
         .alert("Delete Recording", isPresented: $showDeleteConfirmation) {
             Button("Delete", role: .destructive) {
-                if let r = recordingToDelete {
-                    if playbackService.playingRecordingId == r.id {
+                if let recording = recordingToDelete {
+                    if playbackService.playingRecordingId == recording.id {
                         playbackService.stop()
                     }
-                    storage.deleteRecording(r)
-                    selectedRecordingIds.remove(r.id)
-                    if selectedRecording?.id == r.id { selectedRecording = nil }
+                    if storage.deleteRecording(recording) {
+                        selectedRecordingIds.remove(recording.id)
+                        if case let .recording(id, _) = inspectorSelection, id == recording.id {
+                            inspectorSelection = nil
+                        }
+                    } else {
+                        deletionErrorMessage = "The recording and its files were left unchanged."
+                    }
                 }
                 recordingToDelete = nil
             }
@@ -129,7 +193,7 @@ struct RecordingsLibraryView: View {
                 set: { if !$0 { recordingToRetranscribe = nil } }
             )
         ) {
-            Button("Replace Generated Transcript", role: .destructive) {
+            Button("Transcribe Again") {
                 if let recordingToRetranscribe {
                     queueService.enqueue([recordingToRetranscribe.id], action: .transcribe)
                 }
@@ -139,7 +203,29 @@ struct RecordingsLibraryView: View {
                 recordingToRetranscribe = nil
             }
         } message: {
-            Text("This replaces the generated transcript. Source captions and YouTube identity stay unchanged.")
+            Text("This adds a new transcript version. Earlier transcripts and source captions stay available.")
+        }
+        .alert(
+            "Batches Couldn't Be Loaded",
+            isPresented: Binding(
+                get: { batchLoadErrorMessage != nil },
+                set: { if !$0 { batchLoadErrorMessage = nil } }
+            )
+        ) {
+            Button("OK") { batchLoadErrorMessage = nil }
+        } message: {
+            Text(batchLoadErrorMessage ?? "Unknown error")
+        }
+        .alert(
+            "Couldn't Delete Recording",
+            isPresented: Binding(
+                get: { deletionErrorMessage != nil },
+                set: { if !$0 { deletionErrorMessage = nil } }
+            )
+        ) {
+            Button("OK") { deletionErrorMessage = nil }
+        } message: {
+            Text(deletionErrorMessage ?? "Unknown error")
         }
     }
 
@@ -151,45 +237,37 @@ struct RecordingsLibraryView: View {
                 .font(.title2.bold())
             Spacer()
             Button {
-                BatchTranscriptionWindowController.shared.selectFilesForNewBatch()
+                showBatchComposer = true
             } label: {
-                Label("Transcribe Files…", systemImage: "waveform.badge.plus")
+                Label(MainWindowController.batchComposerActionTitle, systemImage: "square.stack.3d.up")
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
-            .keyboardShortcut("o", modifiers: [.command, .shift])
-            .help("Select audio or video files to transcribe (⇧⌘O)")
-            .accessibilityIdentifier("Transcribe files")
+            .keyboardShortcut("b", modifiers: [.command, .shift])
+            .help("Create a batch from files, URLs, or existing recordings (⇧⌘B)")
+            .accessibilityIdentifier("Batch files and URLs")
 
-            Button {
-                BatchTranscriptionWindowController.shared.selectYouTubeURLsForNewBatch()
-            } label: {
-                Label("Transcribe YouTube URLs…", systemImage: "play.rectangle.on.rectangle")
+            if !filter.showsBatches {
+                Button {
+                    toggleSelectionMode()
+                } label: {
+                    Label(
+                        isSelectionMode ? "Done" : "Select",
+                        systemImage: isSelectionMode ? "checkmark.circle" : "checklist"
+                    )
+                }
+                .labelStyle(.titleAndIcon)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(storage.recordings.isEmpty)
+                .accessibilityIdentifier("Toggle recording selection")
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .keyboardShortcut("u", modifiers: [.command, .shift])
-            .help("Transcribe YouTube URLs (⇧⌘U)")
-
-            Button {
-                toggleSelectionMode()
-            } label: {
-                Label(
-                    isSelectionMode ? "Done" : "Select",
-                    systemImage: isSelectionMode ? "checkmark.circle" : "checklist"
-                )
-            }
-            .labelStyle(.titleAndIcon)
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(storage.recordings.isEmpty)
-            .accessibilityIdentifier("Toggle recording selection")
 
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.secondary)
                     .font(.system(size: 13))
-                TextField("Search transcripts", text: $searchText)
+                TextField(filter.showsBatches ? "Search batches" : "Search transcripts", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .frame(width: 160)
@@ -213,6 +291,13 @@ struct RecordingsLibraryView: View {
         }
     }
 
+    private func openRequestedBatchComposerIfAvailable() {
+        let controller = MainWindowController.shared
+        guard controller.requestedBatchComposer else { return }
+        controller.requestedBatchComposer = false
+        showBatchComposer = true
+    }
+
     // MARK: - Filter Chips
 
     private var filterChips: some View {
@@ -226,7 +311,7 @@ struct RecordingsLibraryView: View {
                 Spacer()
             }
 
-            if isSelectionMode {
+            if isSelectionMode, !filter.showsBatches {
                 bulkSelectionBar
             }
         }
@@ -274,7 +359,7 @@ struct RecordingsLibraryView: View {
                             if isSelectionMode {
                                 toggleSelection(for: recording)
                             } else {
-                                selectedRecording = recording
+                                inspectorSelection = .recording(recording.id, parentBatchID: nil)
                             }
                         },
                         onTranscribe: { transcribe(recording) },
@@ -299,13 +384,87 @@ struct RecordingsLibraryView: View {
         )
     }
 
+    private var batchesCard: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(Array(filteredBatches.enumerated()), id: \.element.id) { index, batch in
+                    Button {
+                        inspectorSelection = .batch(batch.id)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "square.stack.3d.up.fill")
+                                .foregroundStyle(Color.accentColor)
+                                .frame(width: 32, height: 32)
+                                .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(batch.name).font(.headline).foregroundStyle(.primary)
+                                Text(batch.description.isEmpty ? "No description" : batch.description)
+                                    .lineLimit(1)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 3) {
+                                Text("\(batch.recordingIDs.count) recordings")
+                                Text(batch.status(in: storage.recordings).rawValue)
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    if index < filteredBatches.count - 1 { Divider().padding(.horizontal, 16) }
+                }
+            }
+        }
+        .background(Color(.windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color(.separatorColor), lineWidth: 0.5)
+        }
+    }
+
+    @ViewBuilder
+    private var inspectorContent: some View {
+        switch inspectorSelection {
+        case let .recording(id, parentBatchID):
+            if let recording = storage.recordings.first(where: { $0.id == id }) {
+                RecordingDetailView(
+                    recording: recording,
+                    parentBatchName: parentBatchID.flatMap { id in
+                        batchStorage.batches.first(where: { $0.id == id })?.name
+                    },
+                    onBack: parentBatchID == nil ? nil : {
+                        inspectorSelection = inspectorSelection?.backDestination
+                    },
+                    onClose: { inspectorSelection = nil }
+                )
+            }
+        case let .batch(id):
+            if let batch = batchStorage.batches.first(where: { $0.id == id }) {
+                TranscriptionBatchInspectorView(
+                    batch: batch,
+                    onOpenRecording: { recordingID in
+                        inspectorSelection = .recording(recordingID, parentBatchID: id)
+                    },
+                    onClose: { inspectorSelection = nil }
+                )
+            }
+        case nil:
+            EmptyView()
+        }
+    }
+
     private func openRequestedRecordingIfAvailable() {
         let controller = MainWindowController.shared
         guard let id = controller.requestedRecordingID,
               let recording = storage.recordings.first(where: { $0.id == id })
         else { return }
 
-        selectedRecording = recording
+        inspectorSelection = .recording(recording.id, parentBatchID: nil)
         controller.requestedRecordingID = nil
     }
 
@@ -401,11 +560,14 @@ struct RecordingsLibraryView: View {
         if let playingId = playbackService.playingRecordingId, ids.contains(playingId) {
             playbackService.stop()
         }
-        if let selectedRecording, ids.contains(selectedRecording.id) {
-            self.selectedRecording = nil
+        if case let .recording(id, _) = inspectorSelection, ids.contains(id) {
+            inspectorSelection = nil
         }
-        storage.deleteRecordings(ids)
-        cancelSelection()
+        if storage.deleteRecordings(ids) {
+            cancelSelection()
+        } else {
+            deletionErrorMessage = "The selected recordings and their files were left unchanged."
+        }
     }
 
     // MARK: - Empty States
@@ -438,6 +600,15 @@ struct RecordingsLibraryView: View {
                 .foregroundColor(.secondary)
             Spacer()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var batchesEmptyState: some View {
+        ContentUnavailableView(
+            "No Batches Yet",
+            systemImage: "square.stack.3d.up",
+            description: Text("Create a batch to group related recordings and transcripts.")
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

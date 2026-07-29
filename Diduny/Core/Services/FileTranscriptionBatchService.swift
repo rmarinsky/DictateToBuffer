@@ -73,7 +73,7 @@ struct FileTranscriptionSettingsSnapshot {
     }
 }
 
-struct ImportedMediaIdentity: Equatable {
+struct ImportedMediaIdentity: Codable, Equatable {
     let fileName: String
     let fileSizeBytes: Int64?
 
@@ -84,14 +84,14 @@ struct ImportedMediaIdentity: Equatable {
     }
 }
 
-struct BatchTranscriptionItem: Identifiable, Equatable {
-    enum RemoteArtifactWork: Equatable {
+struct BatchTranscriptionItem: Codable, Identifiable, Equatable {
+    enum RemoteArtifactWork: Codable, Equatable {
         case all
         case captionsOnly
         case transcriptOnly
     }
 
-    enum Status: Equatable {
+    enum Status: Codable, Equatable {
         case queued
         case checkingLink
         case checkingDuplicate
@@ -134,6 +134,8 @@ struct BatchTranscriptionItem: Identifiable, Equatable {
     var sourceCaptionArtifacts: [TranscriptArtifact] = []
     var captionErrorMessage: String?
     var remoteArtifactWork: RemoteArtifactWork = .all
+    var downloadedAudioURL: URL?
+    var cloudJobID: String?
     var startedAt: Date?
     var finishedAt: Date?
 
@@ -198,6 +200,8 @@ protocol FileTranscriptionBatchTranscribing: AnyObject {
         settings: FileTranscriptionSettingsSnapshot,
         source: String,
         sourceDurationSeconds: TimeInterval?,
+        resumeJobID: String?,
+        onJobSubmitted: @escaping (String) -> Void,
         onUpdate: @escaping (JobProgressUpdate) -> Void
     ) async throws -> GeneratedTranscript
 }
@@ -259,6 +263,34 @@ extension FileTranscriptionBatchRecordingStoring {
     }
 }
 
+@MainActor
+protocol FileTranscriptionBatchPersisting: AnyObject {
+    func createBatch(name: String, description: String, recordingIDs: [UUID]) throws -> UUID
+    func addRecordingIDs(_ recordingIDs: [UUID], to batchID: UUID) throws
+    func replaceRecordingIDs(_ recordingIDs: [UUID], in batchID: UUID) throws
+    func replaceWorkItems(_ items: [BatchTranscriptionItem], in batchID: UUID) throws
+    func reopenBatch(_ batchID: UUID) throws
+    func closeBatch(_ batchID: UUID) throws
+}
+
+extension TranscriptionBatchStorage: FileTranscriptionBatchPersisting {
+    func createBatch(name: String, description: String, recordingIDs: [UUID]) throws -> UUID {
+        try create(
+            name: name,
+            description: description,
+            recordingIDs: recordingIDs
+        ).id
+    }
+
+    func closeBatch(_ batchID: UUID) throws {
+        try close(batchID: batchID)
+    }
+
+    func reopenBatch(_ batchID: UUID) throws {
+        try reopen(batchID: batchID)
+    }
+}
+
 @Observable
 @MainActor
 final class FileTranscriptionBatchService {
@@ -273,6 +305,10 @@ final class FileTranscriptionBatchService {
             guard let id = SettingsStorage.shared.selectedChromeProfileID else { return nil }
             return ChromeProfileStore.discover().first(where: { $0.id == id })
         },
+        remoteMediaAuthorized: {
+            SettingsStorage.shared.remoteMediaRightsAcknowledged
+        },
+        batchPersistence: TranscriptionBatchStorage.shared,
         settingsSnapshot: { .current() },
         playCompletionSound: {
             guard SettingsStorage.shared.playSoundOnCompletion else { return }
@@ -325,12 +361,16 @@ final class FileTranscriptionBatchService {
     private let preparer: FileTranscriptionBatchPreparing
     private let transcriber: FileTranscriptionBatchTranscribing
     private let recordingStore: FileTranscriptionBatchRecordingStoring
+    private let batchPersistence: FileTranscriptionBatchPersisting?
     private let remoteExtractor: RemoteMediaExtracting?
     private let chromeProfile: @MainActor () -> ChromeProfile?
+    private let remoteMediaAuthorized: @MainActor () -> Bool
     private let settingsSnapshot: @MainActor () -> FileTranscriptionSettingsSnapshot
     private let playCompletionSound: @MainActor () -> Void
 
     private var processingTask: Task<Void, Never>?
+    private var currentBatchID: UUID?
+    private var initialRecordingIDs: [UUID] = []
     private var activeSettingsSnapshot: FileTranscriptionSettingsSnapshot?
     private var hasPlayedCompletionSound = false
     private var schedulerContinuation: CheckedContinuation<Void, Never>?
@@ -347,31 +387,174 @@ final class FileTranscriptionBatchService {
         recordingStore: FileTranscriptionBatchRecordingStoring,
         remoteExtractor: RemoteMediaExtracting? = nil,
         chromeProfile: @escaping @MainActor () -> ChromeProfile? = { nil },
+        remoteMediaAuthorized: @escaping @MainActor () -> Bool = { true },
+        batchPersistence: FileTranscriptionBatchPersisting? = nil,
         settingsSnapshot: @escaping @MainActor () -> FileTranscriptionSettingsSnapshot,
         playCompletionSound: @escaping @MainActor () -> Void
     ) {
         self.preparer = preparer
         self.transcriber = transcriber
         self.recordingStore = recordingStore
+        self.batchPersistence = batchPersistence
         self.remoteExtractor = remoteExtractor
         self.chromeProfile = chromeProfile
+        self.remoteMediaAuthorized = remoteMediaAuthorized
         self.settingsSnapshot = settingsSnapshot
         self.playCompletionSound = playCompletionSound
     }
 
-    func beginBatch(urls: [URL]) {
-        resetFinishedBatchIfNeeded()
-        add(urls: urls)
-        startIfNeeded()
+    @discardableResult
+    func beginBatch(urls: [URL]) -> Bool {
+        beginBatch(urls: urls, name: "", description: "", existingRecordingIDs: [])
     }
 
-    func beginBatch(remoteSources: [YouTubeRemoteMediaSource]) {
+    @discardableResult
+    func beginBatch(
+        urls: [URL],
+        name: String,
+        description: String,
+        existingRecordingIDs: [UUID]
+    ) -> Bool {
+        beginBatch(
+            urls: urls,
+            remoteSources: [],
+            name: name,
+            description: description,
+            existingRecordingIDs: existingRecordingIDs
+        )
+    }
+
+    @discardableResult
+    func beginBatch(remoteSources: [YouTubeRemoteMediaSource]) -> Bool {
+        beginBatch(
+            remoteSources: remoteSources,
+            name: "",
+            description: "",
+            existingRecordingIDs: []
+        )
+    }
+
+    @discardableResult
+    func beginBatch(
+        remoteSources: [YouTubeRemoteMediaSource],
+        name: String,
+        description: String,
+        existingRecordingIDs: [UUID]
+    ) -> Bool {
+        beginBatch(
+            urls: [],
+            remoteSources: remoteSources,
+            name: name,
+            description: description,
+            existingRecordingIDs: existingRecordingIDs
+        )
+    }
+
+    @discardableResult
+    func beginBatch(
+        urls: [URL],
+        remoteSources: [YouTubeRemoteMediaSource],
+        name: String,
+        description: String,
+        existingRecordingIDs: [UUID]
+    ) -> Bool {
+        guard !isProcessing else { return false }
+        guard !urls.isEmpty || !remoteSources.isEmpty || !existingRecordingIDs.isEmpty else {
+            return false
+        }
         resetFinishedBatchIfNeeded()
+        guard currentBatchID == nil else { return false }
+        guard createPersistentBatch(
+            name: name,
+            description: description,
+            existingRecordingIDs: existingRecordingIDs
+        ) else { return false }
+        add(urls: urls)
         add(remoteSources: remoteSources)
         startIfNeeded()
+        finalizePersistentBatchIfFinished()
+        return true
+    }
+
+    @discardableResult
+    func append(
+        to batch: TranscriptionBatch,
+        urls: [URL],
+        remoteSources: [YouTubeRemoteMediaSource],
+        existingRecordingIDs: [UUID]
+    ) -> Bool {
+        guard !isProcessing else { return false }
+        guard !urls.isEmpty || !remoteSources.isEmpty || !existingRecordingIDs.isEmpty else {
+            return false
+        }
+        if !remoteSources.isEmpty {
+            guard remoteMediaAuthorized() else {
+                batchError = "Confirm that you own this content or have permission to transcribe it."
+                return false
+            }
+            guard chromeProfile() != nil else {
+                batchError = "Select a Google Chrome profile to transcribe YouTube URLs."
+                return false
+            }
+        }
+        resetFinishedBatchIfNeeded()
+        guard currentBatchID == nil else { return false }
+
+        do {
+            try batchPersistence?.reopenBatch(batch.id)
+            try batchPersistence?.addRecordingIDs(existingRecordingIDs, to: batch.id)
+        } catch {
+            batchError = "Could not reopen the transcription batch."
+            return false
+        }
+
+        var seenRecordingIDs = Set<UUID>()
+        currentBatchID = batch.id
+        initialRecordingIDs = (batch.recordingIDs + existingRecordingIDs).filter {
+            seenRecordingIDs.insert($0).inserted
+        }
+        items = batch.workItems ?? []
+        batchError = nil
+        add(urls: urls)
+        add(remoteSources: remoteSources)
+        startIfNeeded()
+        finalizePersistentBatchIfFinished()
+        return true
+    }
+
+    func resume(batch: TranscriptionBatch) {
+        guard canResume(batch: batch), let persistedItems = batch.workItems else {
+            return
+        }
+        do {
+            try batchPersistence?.reopenBatch(batch.id)
+        } catch {
+            batchError = "Could not reopen the transcription batch."
+            return
+        }
+        currentBatchID = batch.id
+        initialRecordingIDs = batch.recordingIDs
+        items = persistedItems.map { item in
+            var item = item
+            if !item.status.isTerminal || item.status == .authorizationPaused {
+                item.status = .failed
+            }
+            return item
+        }
+        retry(ids: Set(items.filter { $0.status != .completed && $0.status != .duplicate }.map(\.id)))
+    }
+
+    func canResume(batch: TranscriptionBatch) -> Bool {
+        !isProcessing
+            && (currentBatchID == nil || currentBatchID == batch.id)
+            && !(batch.workItems?.isEmpty ?? true)
     }
 
     func add(urls: [URL]) {
+        if batchPersistence != nil, currentBatchID == nil {
+            beginBatch(urls: urls)
+            return
+        }
         let existingURLs = Set(items.map(\.sourceURL.standardizedFileURL))
         var addedURLs = Set<URL>()
         let initialItemCount = items.count
@@ -390,16 +573,22 @@ final class FileTranscriptionBatchService {
                 item.durationSeconds = duplicate.durationSeconds
                 item.transcriptionText = duplicate.transcriptionText
                 item.recordingID = duplicate.recordingID
+                persistRecordingID(duplicate.recordingID)
             }
             items.append(item)
         }
 
         if items.count > initialItemCount {
+            persistWorkItems()
             wakeScheduler()
         }
     }
 
     func add(remoteSources: [YouTubeRemoteMediaSource]) {
+        if batchPersistence != nil, currentBatchID == nil {
+            beginBatch(remoteSources: remoteSources)
+            return
+        }
         let existingIDs = Set(items.compactMap { $0.remoteSource?.mediaID })
         var addedIDs = Set<String>()
         let initialItemCount = items.count
@@ -415,11 +604,13 @@ final class FileTranscriptionBatchService {
                 mediaID: source.mediaID
             ), canReuse(duplicate: duplicate) {
                 apply(duplicate: duplicate, to: &item)
+                persistRecordingID(duplicate.recordingID)
             }
             items.append(item)
         }
 
         if items.count > initialItemCount {
+            persistWorkItems()
             wakeScheduler()
         }
     }
@@ -429,6 +620,58 @@ final class FileTranscriptionBatchService {
             items.removeAll()
             activeSettingsSnapshot = nil
             hasPlayedCompletionSound = false
+            currentBatchID = nil
+            initialRecordingIDs = []
+        }
+    }
+
+    private func createPersistentBatch(
+        name: String,
+        description: String,
+        existingRecordingIDs: [UUID]
+    ) -> Bool {
+        initialRecordingIDs = existingRecordingIDs
+        guard let batchPersistence else { return true }
+        do {
+            currentBatchID = try batchPersistence.createBatch(
+                name: name,
+                description: description,
+                recordingIDs: existingRecordingIDs
+            )
+            return true
+        } catch {
+            batchError = "Could not create the transcription batch."
+            return false
+        }
+    }
+
+    private func persistRecordingID(_ recordingID: UUID) {
+        guard let batchPersistence, let currentBatchID else { return }
+        do {
+            try batchPersistence.addRecordingIDs([recordingID], to: currentBatchID)
+            try batchPersistence.replaceWorkItems(items, in: currentBatchID)
+        } catch {
+            batchError = "Could not save the transcription batch."
+        }
+    }
+
+    private func finalizePersistentBatchIfFinished() {
+        guard !isProcessing,
+              items.allSatisfy(\.status.isTerminal),
+              let batchPersistence,
+              let currentBatchID
+        else { return }
+        do {
+            try batchPersistence.replaceWorkItems(items, in: currentBatchID)
+            try batchPersistence.replaceRecordingIDs(
+                initialRecordingIDs + items.compactMap(\.recordingID),
+                in: currentBatchID
+            )
+            try batchPersistence.closeBatch(currentBatchID)
+            self.currentBatchID = nil
+            initialRecordingIDs = []
+        } catch {
+            batchError = "Could not finish saving the transcription batch."
         }
     }
 
@@ -540,6 +783,7 @@ final class FileTranscriptionBatchService {
             if !Task.isCancelled, items.contains(where: { $0.status == .queued }) {
                 startIfNeeded()
             }
+            finalizePersistentBatchIfFinished()
         }
         guard await preflightRemoteAuthorization() else { return }
 
@@ -710,7 +954,11 @@ final class FileTranscriptionBatchService {
         var captionAttemptFailed = false
 
         defer {
-            downloadedAudio?.removeTemporaryFiles()
+            if recordingID != nil {
+                downloadedAudio?.removeTemporaryFiles()
+                update(itemID) { $0.downloadedAudioURL = nil }
+                persistWorkItems()
+            }
             temporaryAudio?.removeTemporaryFile()
         }
 
@@ -785,49 +1033,65 @@ final class FileTranscriptionBatchService {
                     durationSeconds: metadata.durationSeconds
                 ), canReuse(duplicate: duplicate) {
                     update(itemID) { apply(duplicate: duplicate, to: &$0) }
+                    persistRecordingID(duplicate.recordingID)
                     return
                 }
 
-                let acquisition = try await withRemoteAcquisitionPermit {
-                    if items[initialIndex].remoteArtifactWork != .transcriptOnly {
-                        update(itemID) { $0.status = .retrievingCaptions }
-                        do {
-                            if let caption = try await remoteExtractor.retrieveCaption(
-                                for: source,
-                                metadata: metadata,
-                                profile: profile
-                            ) {
-                                update(itemID) { $0.sourceCaptionArtifacts = [caption] }
-                            }
-                        } catch RemoteMediaExtractorError.authorizationRequired {
-                            throw RemoteMediaExtractorError.authorizationRequired
-                        } catch {
-                            captionAttemptFailed = true
-                            update(itemID) {
-                                $0.captionErrorMessage = "Source captions could not be retrieved."
+                if let checkpointURL = items[initialIndex].downloadedAudioURL,
+                   FileManager.default.fileExists(atPath: checkpointURL.path)
+                {
+                    downloadedAudio = RemoteDownloadedAudio(
+                        fileURL: checkpointURL,
+                        temporaryDirectory: checkpointURL.deletingLastPathComponent()
+                    )
+                } else {
+                    let acquisition = try await withRemoteAcquisitionPermit {
+                        if items[initialIndex].remoteArtifactWork != .transcriptOnly,
+                           items[initialIndex].sourceCaptionArtifacts.isEmpty
+                        {
+                            update(itemID) { $0.status = .retrievingCaptions }
+                            do {
+                                if let caption = try await remoteExtractor.retrieveCaption(
+                                    for: source,
+                                    metadata: metadata,
+                                    profile: profile
+                                ) {
+                                    update(itemID) { $0.sourceCaptionArtifacts = [caption] }
+                                }
+                            } catch RemoteMediaExtractorError.authorizationRequired {
+                                throw RemoteMediaExtractorError.authorizationRequired
+                            } catch {
+                                captionAttemptFailed = true
+                                update(itemID) {
+                                    $0.captionErrorMessage = "Source captions could not be retrieved."
+                                }
                             }
                         }
-                    }
 
-                    update(itemID) {
-                        $0.status = .downloading
-                        $0.progressFraction = nil
-                    }
-                    return try await remoteExtractor.downloadAudio(
-                        for: source,
-                        metadata: metadata,
-                        profile: profile
-                    ) { [weak self] progress in
-                        Task { @MainActor in
-                            self?.update(itemID) {
-                                $0.downloadedBytes = progress.downloadedBytes
-                                $0.totalDownloadBytes = progress.totalBytes
-                                $0.progressFraction = progress.fractionCompleted
+                        update(itemID) {
+                            $0.status = .downloading
+                            $0.progressFraction = nil
+                        }
+                        return try await remoteExtractor.downloadAudio(
+                            for: source,
+                            metadata: metadata,
+                            profile: profile
+                        ) { [weak self] progress in
+                            Task { @MainActor in
+                                self?.update(itemID) {
+                                    $0.downloadedBytes = progress.downloadedBytes
+                                    $0.totalDownloadBytes = progress.totalBytes
+                                    $0.progressFraction = progress.fractionCompleted
+                                }
                             }
                         }
+                    }
+                    downloadedAudio = acquisition
+                    update(itemID) {
+                        $0.downloadedAudioURL = acquisition.fileURL
+                        $0.status = .preparing
                     }
                 }
-                downloadedAudio = acquisition
                 try Task.checkCancellation()
 
                 guard let downloadedAudio else {
@@ -849,6 +1113,7 @@ final class FileTranscriptionBatchService {
                 )
                 if let recordingID {
                     update(itemID) { $0.recordingID = recordingID }
+                    persistRecordingID(recordingID)
                     recordingStore.markProcessing(recordingID: recordingID)
                 }
             } else if let recordingID {
@@ -868,7 +1133,8 @@ final class FileTranscriptionBatchService {
                 audioFileURL: audioURL,
                 settings: settings,
                 source: item(withID: itemID)?.displayName ?? audioURL.lastPathComponent,
-                sourceDurationSeconds: item(withID: itemID)?.durationSeconds
+                sourceDurationSeconds: item(withID: itemID)?.durationSeconds,
+                itemID: itemID
             ) { [weak self] progressUpdate in
                 Task { @MainActor in
                     self?.apply(progressUpdate: progressUpdate, to: itemID)
@@ -956,6 +1222,7 @@ final class FileTranscriptionBatchService {
                 )
                 if let recordingID {
                     update(itemID) { $0.recordingID = recordingID }
+                    persistRecordingID(recordingID)
                     recordingStore.markProcessing(recordingID: recordingID)
                 }
             }
@@ -969,7 +1236,8 @@ final class FileTranscriptionBatchService {
                 audioFileURL: audioURL,
                 settings: settings,
                 source: item(withID: itemID)?.displayName ?? audioURL.lastPathComponent,
-                sourceDurationSeconds: item(withID: itemID)?.durationSeconds
+                sourceDurationSeconds: item(withID: itemID)?.durationSeconds,
+                itemID: itemID
             ) { [weak self] progressUpdate in
                 Task { @MainActor in
                     self?.apply(progressUpdate: progressUpdate, to: itemID)
@@ -981,7 +1249,7 @@ final class FileTranscriptionBatchService {
                 recordingStore.markCompleted(
                     recordingID: recordingID,
                     transcript: transcript,
-                    provenance: nil
+                    provenance: GeneratedTranscriptProvenance(provider: settings.provider.rawValue)
                 )
             }
             update(itemID) {
@@ -1024,6 +1292,7 @@ final class FileTranscriptionBatchService {
             items[index].errorMessage = nil
             items[index].finishedAt = nil
         }
+        persistWorkItems()
         processingTask?.cancel()
         wakeScheduler()
     }
@@ -1033,6 +1302,7 @@ final class FileTranscriptionBatchService {
         settings: FileTranscriptionSettingsSnapshot,
         source: String,
         sourceDurationSeconds: TimeInterval?,
+        itemID: UUID,
         onUpdate: @escaping (JobProgressUpdate) -> Void
     ) async throws -> GeneratedTranscript {
         let permits = settings.provider == .cloud
@@ -1046,6 +1316,11 @@ final class FileTranscriptionBatchService {
                 settings: settings,
                 source: source,
                 sourceDurationSeconds: sourceDurationSeconds,
+                resumeJobID: item(withID: itemID)?.cloudJobID,
+                onJobSubmitted: { [weak self] jobID in
+                    self?.update(itemID) { $0.cloudJobID = jobID }
+                    self?.persistWorkItems()
+                },
                 onUpdate: onUpdate
             )
             await permits.release()
@@ -1145,7 +1420,20 @@ final class FileTranscriptionBatchService {
         _ mutation: (inout BatchTranscriptionItem) -> Void
     ) {
         guard let index = index(of: itemID) else { return }
+        let oldStatus = items[index].status
         mutation(&items[index])
+        if items[index].status != oldStatus {
+            persistWorkItems()
+        }
+    }
+
+    private func persistWorkItems() {
+        guard let batchPersistence, let currentBatchID else { return }
+        do {
+            try batchPersistence.replaceWorkItems(items, in: currentBatchID)
+        } catch {
+            batchError = "Could not save the transcription batch."
+        }
     }
 }
 
@@ -1170,6 +1458,8 @@ private final class LiveFileTranscriptionBatchTranscriber: FileTranscriptionBatc
         settings: FileTranscriptionSettingsSnapshot,
         source: String,
         sourceDurationSeconds: TimeInterval?,
+        resumeJobID: String?,
+        onJobSubmitted: @escaping (String) -> Void,
         onUpdate: @escaping (JobProgressUpdate) -> Void
     ) async throws -> GeneratedTranscript {
         switch settings.provider {
@@ -1179,11 +1469,20 @@ private final class LiveFileTranscriptionBatchTranscriber: FileTranscriptionBatc
                 config["language_hints"] = settings.languageHints
                 config["language_hints_strict"] = true
             }
-            return try await AsyncTranscriptionJobService().transcribeFileDetailedWithRetry(
+            let service = AsyncTranscriptionJobService()
+            if let resumeJobID {
+                return try await service.resumeFileDetailed(
+                    jobID: resumeJobID,
+                    config: config,
+                    onProgressUpdate: onUpdate
+                )
+            }
+            return try await service.transcribeFileDetailedWithRetry(
                 audioFileURL: audioFileURL,
                 config: config,
                 source: source,
                 sourceDurationSeconds: sourceDurationSeconds,
+                onSubmitted: onJobSubmitted,
                 onProgressUpdate: onUpdate
             )
         case .local:
@@ -1296,12 +1595,15 @@ private final class LiveFileTranscriptionBatchRecordingStore: FileTranscriptionB
         transcript: GeneratedTranscript,
         provenance: GeneratedTranscriptProvenance?
     ) {
+        let provider = provenance?.provider ?? TranscriptionProvider.cloud.rawValue
         storage.completeTranscription(
             id: recordingID,
             status: .transcribed,
             text: transcript.text,
             segments: transcript.segments.isEmpty ? nil : transcript.segments,
-            generatedTranscriptProvenance: provenance
+            generatedTranscriptProvenance: provenance,
+            kind: provider == TranscriptionProvider.local.rawValue ? .local : .cloud,
+            provider: provider
         )
     }
 
