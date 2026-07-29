@@ -530,9 +530,6 @@ struct NewTranscriptionBatchPanel: View {
                 Button("Add Files…", systemImage: "plus") {
                     files.append(contentsOf: ImportedMediaPicker.selectFiles() ?? [])
                 }
-                Button("Add YouTube URLs", systemImage: "link") {
-                    isYouTubeURLInputFocused = true
-                }
                 Button("Add from Recordings", systemImage: "waveform") {
                     showRecordingPicker.toggle()
                 }
