@@ -295,6 +295,11 @@ struct RecordingStatistics {
     let meetingDurationSeconds: TimeInterval
     let importedFileDurationSeconds: TimeInterval
     let youtubeDurationSeconds: TimeInterval
+    let transcribedWordCount: Int
+    let mediaTimeSavedSeconds: TimeInterval
+
+    private let typingWordCount: Int
+    private let typingDurationSeconds: TimeInterval
 
     init(recordings: [Recording]) {
         recordingCount = recordings.count
@@ -306,5 +311,30 @@ struct RecordingStatistics {
             .filter { $0.type == .fileTranscription && !$0.isYouTubeVideo }
             .reduce(0) { $0 + $1.durationSeconds }
         youtubeDurationSeconds = recordings.filter(\.isYouTubeVideo).reduce(0) { $0 + $1.durationSeconds }
+        transcribedWordCount = recordings.reduce(0) { $0 + Self.wordCount(in: $1.transcriptionText) }
+
+        let typingRecordings = recordings.filter { $0.type != .fileTranscription }
+        typingWordCount = typingRecordings.reduce(0) { $0 + Self.wordCount(in: $1.transcriptionText) }
+        typingDurationSeconds = typingRecordings.reduce(0) { $0 + $1.durationSeconds }
+        mediaTimeSavedSeconds = recordings
+            .filter { $0.type == .fileTranscription && Self.hasReadableTranscript($0.transcriptionText) }
+            .reduce(0) { $0 + $1.durationSeconds }
+    }
+
+    func typingTimeSavedSeconds(wordsPerMinute: Double) -> TimeInterval {
+        let typingTime = Double(typingWordCount) / max(wordsPerMinute, 1) * 60
+        return max(typingTime - typingDurationSeconds, 0)
+    }
+
+    func totalTimeSavedSeconds(wordsPerMinute: Double) -> TimeInterval {
+        typingTimeSavedSeconds(wordsPerMinute: wordsPerMinute) + mediaTimeSavedSeconds
+    }
+
+    private static func wordCount(in text: String?) -> Int {
+        text?.split(whereSeparator: \.isWhitespace).count ?? 0
+    }
+
+    private static func hasReadableTranscript(_ text: String?) -> Bool {
+        !(text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
     }
 }

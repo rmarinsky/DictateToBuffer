@@ -126,9 +126,42 @@ final class RecordingStatisticsTests: XCTestCase {
         )
     }
 
+    func test_timeSavedPreservesTypingMathAndAddsOnlyReadableMediaDuration() {
+        let voice = makeRecording(
+            type: .voice,
+            duration: 60,
+            transcriptionText: words(count: 100)
+        )
+        let readableFile = makeRecording(
+            type: .fileTranscription,
+            duration: 300,
+            status: .failed,
+            transcriptionText: "Readable media transcript"
+        )
+        let unreadableYouTube = makeRecording(
+            type: .fileTranscription,
+            duration: 400,
+            status: .transcribed,
+            transcriptionText: " \n\t ",
+            remoteSource: makeYouTubeSource()
+        )
+        let statistics = RecordingStatistics(recordings: [voice, readableFile, unreadableYouTube])
+
+        XCTAssertEqual(
+            RecordingStatistics(recordings: [voice]).typingTimeSavedSeconds(wordsPerMinute: 50),
+            60
+        )
+        XCTAssertEqual(statistics.typingTimeSavedSeconds(wordsPerMinute: 50), 60)
+        XCTAssertEqual(statistics.mediaTimeSavedSeconds, 300)
+        XCTAssertEqual(statistics.totalTimeSavedSeconds(wordsPerMinute: 50), 360)
+        XCTAssertEqual(statistics.transcribedWordCount, 103)
+    }
+
     private func makeRecording(
         type: Recording.RecordingType,
         duration: TimeInterval,
+        status: Recording.ProcessingStatus = .transcribed,
+        transcriptionText: String? = "Transcript",
         remoteSource: RemoteMediaSourceMetadata? = nil
     ) -> Recording {
         Recording(
@@ -138,11 +171,15 @@ final class RecordingStatisticsTests: XCTestCase {
             audioFileName: "recording.m4a",
             durationSeconds: duration,
             fileSizeBytes: 42,
-            status: .transcribed,
-            transcriptionText: "Transcript",
+            status: status,
+            transcriptionText: transcriptionText,
             sourceDevice: nil,
             remoteSource: remoteSource
         )
+    }
+
+    private func words(count: Int) -> String {
+        Array(repeating: "word", count: count).joined(separator: " ")
     }
 
     private func makeYouTubeSource() -> RemoteMediaSourceMetadata {
