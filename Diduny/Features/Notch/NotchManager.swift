@@ -48,6 +48,15 @@ enum RecordingMode: Equatable {
         case .fileTranscription: "doc.richtext.fill"
         }
     }
+
+    var isMeeting: Bool {
+        switch self {
+        case .meeting, .meetingTranslation:
+            true
+        case .voice, .translation, .fileTranscription:
+            false
+        }
+    }
 }
 
 @Observable
