@@ -307,6 +307,7 @@ final class EdgeCommandPanelController: NSObject {
         let hostingView = EdgeCommandHostingView(rootView: EdgeCommandPanelView(
             model: model!,
             onAction: { [weak self] action in self?.perform(action) },
+            onExpand: { [weak self] in self?.showExpanded() },
             onCollapse: { [weak self] in self?.showCollapsed() },
             onDrag: { [weak self] in self?.dragPanel() },
             onDragEnd: { [weak self] in self?.finishDraggingPanel() }
@@ -384,6 +385,7 @@ private final class EdgeCommandHostingView<Content: View>: NSHostingView<Content
 private struct EdgeCommandPanelView: View {
     let model: EdgeCommandPanelModel
     let onAction: (EdgeCommandAction) -> Void
+    let onExpand: () -> Void
     let onCollapse: () -> Void
     let onDrag: () -> Void
     let onDragEnd: () -> Void
@@ -401,7 +403,12 @@ private struct EdgeCommandPanelView: View {
                 )
                 .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: anchor(for: model.dockEdge))))
             } else {
-                EdgeCommandTabView(edge: model.dockEdge, onDrag: onDrag, onDragEnd: onDragEnd)
+                EdgeCommandTabView(
+                    edge: model.dockEdge,
+                    onExpand: onExpand,
+                    onDrag: onDrag,
+                    onDragEnd: onDragEnd
+                )
                     .transition(.opacity)
             }
         }
@@ -430,27 +437,31 @@ private struct EdgeCommandPanelView: View {
 
 private struct EdgeCommandTabView: View {
     let edge: EdgeCommandPanelDockEdge
+    let onExpand: () -> Void
     let onDrag: () -> Void
     let onDragEnd: () -> Void
 
     var body: some View {
-        ZStack {
-            tabShape
-                .fill(.regularMaterial)
-            Capsule()
-                .fill(LinearGradient(
-                    colors: [Color("BrandAccentDeep"), Color.pink],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ))
-                .frame(
-                    width: edge == .left || edge == .right ? 3 : 24,
-                    height: edge == .left || edge == .right ? 24 : 3
-                )
-                .shadow(color: Color("BrandAccentDeep").opacity(0.45), radius: 5)
+        Button(action: onExpand) {
+            ZStack {
+                tabShape
+                    .fill(.regularMaterial)
+                Capsule()
+                    .fill(LinearGradient(
+                        colors: [Color("BrandAccentDeep"), Color.pink],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ))
+                    .frame(
+                        width: edge == .left || edge == .right ? 3 : 24,
+                        height: edge == .left || edge == .right ? 24 : 3
+                    )
+                    .shadow(color: Color("BrandAccentDeep").opacity(0.45), radius: 5)
+            }
+            .overlay(tabShape.stroke(Color("BrandTintBorder"), lineWidth: 0.5))
+            .contentShape(Rectangle())
         }
-        .overlay(tabShape.stroke(Color("BrandTintBorder"), lineWidth: 0.5))
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
         .gesture(dragGesture)
         .accessibilityLabel("Open Diduny quick actions")
     }
