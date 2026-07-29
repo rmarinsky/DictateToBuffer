@@ -17,11 +17,7 @@ struct MenuBarProcessingModeSelection {
     }
 
     mutating func select(_ provider: TranscriptionProvider) {
-        settings.transcriptionProvider = provider
-        settings.translationProvider = provider
-        if provider == .local {
-            settings.meetingRealtimeTranscriptionEnabled = false
-        }
+        settings.selectProcessingProvider(provider)
         self.provider = provider
     }
 }

@@ -647,6 +647,12 @@ final class SettingsStorage {
         transcriptionProvider == .cloud && !AuthService.hasStoredSession ? .local : transcriptionProvider
     }
 
+    func selectProcessingProvider(_ provider: TranscriptionProvider) {
+        transcriptionProvider = provider
+        translationProvider = provider
+        meetingRealtimeTranscriptionEnabled = provider == .cloud
+    }
+
     var selectedWhisperModel: String {
         get { defaults.string(forKey: Key.selectedWhisperModel.rawValue) ?? "" }
         set { defaults.set(newValue, forKey: Key.selectedWhisperModel.rawValue) }
