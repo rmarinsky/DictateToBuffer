@@ -108,6 +108,11 @@ struct EdgeCommandPanelModelTests {
             == NSRect(x: 577, y: 0, width: 286, height: 326))
     }
 
+    @Test("Expanded panels keep rounded corners when docked")
+    func expandedPanelsKeepRoundedCorners() {
+        #expect(EdgeCommandPanelPlacement.expandedCornerRadius == 15)
+    }
+
     @Test("Meeting feedback grows beyond the compact dictation panel")
     func meetingFeedbackUsesLargerScrollableFrame() {
         let visibleFrame = NSRect(x: 0, y: 0, width: 1440, height: 900)
