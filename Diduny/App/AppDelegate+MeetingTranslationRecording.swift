@@ -609,7 +609,7 @@ extension AppDelegate {
         }
 
         escapeService.onProgressEscape = { pressCount, _ in
-            NotchManager.shared.showInfoDuringRecording(
+            DictationOverlayController.shared.showInfoDuringRecording(
                 message: SettingsStorage.shared.escapeCancelRepeatHint(afterPressCount: pressCount),
                 mode: .meetingTranslation,
                 duration: 1.5
@@ -622,7 +622,7 @@ extension AppDelegate {
                 let shouldSaveAudio = SettingsStorage.shared.escapeCancelSaveAudio
                 await self?.cancelMeetingTranslationRecording()
                 let message = shouldSaveAudio ? "Recording cancelled and saved" : "Recording cancelled"
-                NotchManager.shared.showInfo(message: message)
+                DictationOverlayController.shared.showInfo(message: message)
             }
         }
 

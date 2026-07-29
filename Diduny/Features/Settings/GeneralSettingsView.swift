@@ -5,7 +5,6 @@ struct GeneralSettingsView: View {
     @State private var autoPaste = SettingsStorage.shared.autoPaste
     @State private var playSound = SettingsStorage.shared.playSoundOnCompletion
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
-    @State private var recordingFeedbackSurface = SettingsStorage.shared.recordingFeedbackSurface
     @State private var typingSpeedWordsPerMinute = SettingsStorage.shared.typingSpeedWordsPerMinute
     @State private var screenRecordingPromptEnabled = !SettingsStorage.shared.userDeclinedScreenRecording
     @State private var dictationRetention = SettingsStorage.shared.dictationTranslationHistoryRetentionPolicy
@@ -35,16 +34,6 @@ struct GeneralSettingsView: View {
                     .onChange(of: launchAtLogin) { _, newValue in
                         LaunchAtLogin.isEnabled = newValue
                     }
-
-                Picker("Recording feedback", selection: $recordingFeedbackSurface) {
-                    ForEach(RecordingFeedbackSurface.allCases) { surface in
-                        Text(surface.displayName).tag(surface)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .onChange(of: recordingFeedbackSurface) { _, newValue in
-                    SettingsStorage.shared.recordingFeedbackSurface = newValue
-                }
 
             } header: {
                 Text("Behavior")
@@ -157,7 +146,6 @@ struct GeneralSettingsView: View {
         .formStyle(.grouped)
         .onAppear {
             launchAtLogin = LaunchAtLogin.isEnabled
-            recordingFeedbackSurface = SettingsStorage.shared.recordingFeedbackSurface
             typingSpeedWordsPerMinute = SettingsStorage.shared.typingSpeedWordsPerMinute
             screenRecordingPromptEnabled = !SettingsStorage.shared.userDeclinedScreenRecording
             dictationRetention = SettingsStorage.shared.dictationTranslationHistoryRetentionPolicy

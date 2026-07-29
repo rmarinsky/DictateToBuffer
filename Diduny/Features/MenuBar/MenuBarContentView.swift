@@ -288,7 +288,7 @@ struct MenuBarContentView: View {
 
     private func selectCloudMode() {
         guard AuthService.shared.isLoggedIn else {
-            NotchManager.shared.showInfo(message: "Log in to use cloud processing", duration: 3.0)
+            DictationOverlayController.shared.showInfo(message: "Log in to use cloud processing", duration: 3.0)
             onOpenMainWindow(.account)
             return
         }
