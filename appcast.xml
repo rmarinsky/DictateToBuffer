@@ -220,5 +220,17 @@
       length="9196010"
       type="application/octet-stream" />
   </item>
+      <item>
+    <title>Version 2.0.0</title>
+    <pubDate>Wed, 29 Jul 2026 07:02:29 +0000</pubDate>
+    <sparkle:version>99</sparkle:version>
+    <sparkle:shortVersionString>2.0.0</sparkle:shortVersionString>
+    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+    <enclosure
+      url="https://github.com/rmarinsky/Diduny/releases/download/v2.0.0/Diduny-2.0.0.dmg"
+      sparkle:edSignature="Z9p9Xlgd0x5fmUYmR8+LrXA0VYaF8cejz4Muz9tEoKPIVI0vFOfD0CObfEMntK13KE3SfCyCT8avRwSnQa4VCg=="
+      length="9576221"
+      type="application/octet-stream" />
+  </item>
   </channel>
 </rss>
