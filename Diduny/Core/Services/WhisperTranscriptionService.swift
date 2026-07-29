@@ -205,8 +205,8 @@ actor LocalWhisperStreamingService {
             sampleRate: 16_000,
             windowDuration: 10,
             stepDuration: 3,
-            rmsThreshold: 0.008,
-            peakThreshold: 0.02
+            rmsThreshold: 0.0025,
+            peakThreshold: 0.015
         )
     }
 

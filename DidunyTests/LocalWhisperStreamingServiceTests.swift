@@ -31,6 +31,27 @@ final class LocalWhisperStreamingServiceTests: XCTestCase {
         XCTAssertEqual(callCount, 0)
     }
 
+    func testQuietSpeechRunsWhisper() async {
+        let calls = CallCounter()
+        let service = LocalWhisperStreamingService(
+            transcribe: { samples in
+                await calls.record(samples)
+                return "quiet speech"
+            },
+            onText: { _ in }
+        )
+        var samples = Array(repeating: Int16(80), count: 48_000)
+        for index in stride(from: 0, to: samples.count, by: 32) {
+            samples[index] = index.isMultiple(of: 64) ? 670 : -670
+        }
+
+        await service.appendPCM16(pcmData(samples))
+        await service.waitUntilIdle()
+
+        let callCount = await calls.count
+        XCTAssertEqual(callCount, 1)
+    }
+
     func testOverlappingWindowsEmitDeduplicatedCumulativeText() async {
         let transcriber = ScriptedTranscriber([
             "hello brave world",
