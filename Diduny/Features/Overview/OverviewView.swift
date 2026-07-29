@@ -345,6 +345,7 @@ struct OverviewView: View {
                         )
                         .foregroundStyle(Color.secondary.opacity(0.12))
                         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        .accessibilityHidden(true)
                     } else {
                         let opacity = 0.25 + 0.6 * (day.minutes / max(maxMinutes, 1))
                         BarMark(
