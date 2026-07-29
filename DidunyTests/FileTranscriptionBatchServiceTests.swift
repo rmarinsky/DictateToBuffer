@@ -220,25 +220,25 @@ final class YouTubeRemoteMediaSourceTests: XCTestCase {
         XCTAssertEqual(profiles.map(\.name), ["Roman", "Work"])
     }
 
-    func test_runtimeArguments_useSelectedChromeProfileBundledDenoAndExactAudioFormat() throws {
+    func test_runtimeArguments_useSelectedBrowserSessionBundledDenoAndExactAudioFormat() throws {
         let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
-        let profile = ChromeProfile(id: "Profile 2", name: "Work")
+        let session = BrowserSession(browser: .edge, profileID: "Profile 2", profileName: "Work")
         let denoURL = URL(fileURLWithPath: "/Applications/Diduny.app/Contents/Resources/deno")
 
         let metadata = BundledRemoteMediaExtractor.metadataArguments(
             source: source,
-            profile: profile,
+            session: session,
             denoURL: denoURL
         )
         let download = BundledRemoteMediaExtractor.downloadArguments(
             source: source,
-            profile: profile,
+            session: session,
             denoURL: denoURL,
             audioFormatID: "audio-best",
             outputTemplate: "/tmp/source.%(ext)s"
         )
 
-        XCTAssertTrue(metadata.contains("chrome:Profile 2"))
+        XCTAssertTrue(metadata.contains("edge:Profile 2"))
         XCTAssertTrue(metadata.contains("deno:\(denoURL.path)"))
         XCTAssertTrue(metadata.contains("--dump-single-json"))
         XCTAssertTrue(download.contains("audio-best"))
@@ -274,7 +274,7 @@ final class YouTubeRemoteMediaSourceTests: XCTestCase {
 
         let metadata = try await extractor.metadata(
             for: source,
-            profile: ChromeProfile(id: "Profile 1", name: "Personal")
+            session: BrowserSession(browser: .chrome, profileID: "Profile 1", profileName: "Personal")
         )
 
         XCTAssertEqual(metadata.source.title, "Public video")
@@ -353,11 +353,11 @@ final class YouTubeRemoteMediaE2ETests: XCTestCase {
 
         for rawURL in urls {
             let source = try YouTubeRemoteMediaSource.normalize(rawURL)
-            let metadata = try await extractor.metadata(for: source, profile: profile)
+            let metadata = try await extractor.metadata(for: source, session: profile)
             let downloaded = try await extractor.downloadAudio(
                 for: source,
                 metadata: metadata,
-                profile: profile,
+                session: profile,
                 onProgress: { _ in }
             )
             defer { downloaded.removeTemporaryFiles() }
@@ -1492,7 +1492,7 @@ private final class BatchTestRemoteExtractor: RemoteMediaExtracting {
 
     func metadata(
         for source: YouTubeRemoteMediaSource,
-        profile _: ChromeProfile
+        session _: BrowserSession
     ) async throws -> RemoteMediaMetadata {
         metadataCallCount += 1
         if metadataDelay > .zero {
@@ -1526,7 +1526,7 @@ private final class BatchTestRemoteExtractor: RemoteMediaExtracting {
     func retrieveCaption(
         for _: YouTubeRemoteMediaSource,
         metadata _: RemoteMediaMetadata,
-        profile _: ChromeProfile
+        session _: BrowserSession
     ) async throws -> TranscriptArtifact? {
         if remainingCaptionAuthorizationFailures > 0 {
             remainingCaptionAuthorizationFailures -= 1
@@ -1542,7 +1542,7 @@ private final class BatchTestRemoteExtractor: RemoteMediaExtracting {
     func downloadAudio(
         for source: YouTubeRemoteMediaSource,
         metadata _: RemoteMediaMetadata,
-        profile _: ChromeProfile,
+        session _: BrowserSession,
         onProgress: @escaping @Sendable (RemoteDownloadProgress) -> Void
     ) async throws -> RemoteDownloadedAudio {
         downloadCallCount += 1

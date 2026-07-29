@@ -454,10 +454,57 @@ enum WebVTTTranscriptParser {
     }
 }
 
-struct ChromeProfile: Codable, Equatable, Hashable, Identifiable {
-    let id: String
-    let name: String
+enum BrowserKind: String, Codable, CaseIterable {
+    case brave
+    case chrome
+    case edge
+    case firefox
+    case safari
+    case zen
+
+    var displayName: String {
+        switch self {
+        case .brave: "Brave"
+        case .chrome: "Google Chrome"
+        case .edge: "Microsoft Edge"
+        case .firefox: "Firefox"
+        case .safari: "Safari"
+        case .zen: "Zen"
+        }
+    }
+
+    var cookieSource: String {
+        self == .zen ? BrowserKind.firefox.rawValue : rawValue
+    }
 }
+
+struct BrowserSession: Codable, Equatable, Hashable, Identifiable {
+    let browser: BrowserKind
+    let profileID: String?
+    let profileName: String?
+
+    var id: String { profileID ?? browser.rawValue }
+    var selectionID: String { "\(browser.rawValue)|\(profileID ?? "")" }
+    var name: String { profileName ?? browser.displayName }
+    var displayName: String {
+        profileName.map { "\(browser.displayName) — \($0)" } ?? browser.displayName
+    }
+    var cookieArgument: String {
+        profileID.map { "\(browser.cookieSource):\($0)" } ?? browser.cookieSource
+    }
+
+    init(browser: BrowserKind, profileID: String? = nil, profileName: String? = nil) {
+        self.browser = browser
+        self.profileID = profileID
+        self.profileName = profileName
+    }
+
+    init(id: String, name: String) {
+        self.init(browser: .chrome, profileID: id, profileName: name)
+    }
+}
+
+typealias ChromeProfile = BrowserSession
 
 enum ChromeProfileStore {
     static var defaultUserDataDirectory: URL {
@@ -512,19 +559,19 @@ struct RemoteDownloadProgress: Equatable {
 protocol RemoteMediaExtracting: AnyObject {
     func metadata(
         for source: YouTubeRemoteMediaSource,
-        profile: ChromeProfile
+        session: BrowserSession
     ) async throws -> RemoteMediaMetadata
 
     func retrieveCaption(
         for source: YouTubeRemoteMediaSource,
         metadata: RemoteMediaMetadata,
-        profile: ChromeProfile
+        session: BrowserSession
     ) async throws -> TranscriptArtifact?
 
     func downloadAudio(
         for source: YouTubeRemoteMediaSource,
         metadata: RemoteMediaMetadata,
-        profile: ChromeProfile,
+        session: BrowserSession,
         onProgress: @escaping @Sendable (RemoteDownloadProgress) -> Void
     ) async throws -> RemoteDownloadedAudio
 }
@@ -554,14 +601,14 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
 
     func metadata(
         for source: YouTubeRemoteMediaSource,
-        profile: ChromeProfile
+        session: BrowserSession
     ) async throws -> RemoteMediaMetadata {
         let runtime = try runtime()
         let result = try await run(
             executableURL: runtime.ytDLP,
             arguments: Self.metadataArguments(
                 source: source,
-                profile: profile,
+                session: session,
                 denoURL: runtime.deno
             )
         )
@@ -571,7 +618,7 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
     func retrieveCaption(
         for source: YouTubeRemoteMediaSource,
         metadata: RemoteMediaMetadata,
-        profile: ChromeProfile
+        session: BrowserSession
     ) async throws -> TranscriptArtifact? {
         guard let track = metadata.preferredCaption else { return nil }
         let runtime = try runtime()
@@ -585,7 +632,7 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let outputTemplate = directory.appendingPathComponent("caption.%(ext)s").path
-        var arguments = Self.commonArguments(profile: profile, denoURL: runtime.deno)
+        var arguments = Self.commonArguments(session: session, denoURL: runtime.deno)
         arguments += [
             "--skip-download",
             track.kind == .authored ? "--write-subs" : "--write-auto-subs",
@@ -615,7 +662,7 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
     func downloadAudio(
         for source: YouTubeRemoteMediaSource,
         metadata: RemoteMediaMetadata,
-        profile: ChromeProfile,
+        session: BrowserSession,
         onProgress: @escaping @Sendable (RemoteDownloadProgress) -> Void
     ) async throws -> RemoteDownloadedAudio {
         try ensureDiskSpace(estimatedBytes: metadata.estimatedAudioBytes)
@@ -634,7 +681,7 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
                 executableURL: runtime.ytDLP,
                 arguments: Self.downloadArguments(
                     source: source,
-                    profile: profile,
+                    session: session,
                     denoURL: runtime.deno,
                     audioFormatID: metadata.audioFormatID,
                     outputTemplate: outputTemplate
@@ -659,10 +706,10 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
 
     nonisolated static func metadataArguments(
         source: YouTubeRemoteMediaSource,
-        profile: ChromeProfile,
+        session: BrowserSession,
         denoURL: URL
     ) -> [String] {
-        commonArguments(profile: profile, denoURL: denoURL) + [
+        commonArguments(session: session, denoURL: denoURL) + [
             "--skip-download",
             "--dump-single-json",
             source.canonicalURL.absoluteString
@@ -671,12 +718,12 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
 
     nonisolated static func downloadArguments(
         source: YouTubeRemoteMediaSource,
-        profile: ChromeProfile,
+        session: BrowserSession,
         denoURL: URL,
         audioFormatID: String,
         outputTemplate: String
     ) -> [String] {
-        commonArguments(profile: profile, denoURL: denoURL) + [
+        commonArguments(session: session, denoURL: denoURL) + [
             "--newline",
             "--progress",
             "--progress-template",
@@ -687,13 +734,16 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
         ]
     }
 
-    private nonisolated static func commonArguments(profile: ChromeProfile, denoURL: URL) -> [String] {
+    private nonisolated static func commonArguments(
+        session: BrowserSession,
+        denoURL: URL
+    ) -> [String] {
         [
             "--no-config",
             "--no-playlist",
             "--no-warnings",
             "--js-runtimes", "deno:\(denoURL.path)",
-            "--cookies-from-browser", "chrome:\(profile.id)"
+            "--cookies-from-browser", session.cookieArgument
         ]
     }
 

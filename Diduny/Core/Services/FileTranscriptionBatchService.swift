@@ -849,7 +849,7 @@ final class FileTranscriptionBatchService {
                         try Task.checkCancellation()
                         let metadata = try await remoteExtractor.metadata(
                             for: source,
-                            profile: profile
+                            session: profile
                         )
                         await remoteMetadataPermits.release()
                         return .metadata(itemID, metadata)
@@ -980,7 +980,7 @@ final class FileTranscriptionBatchService {
                         try await remoteExtractor.retrieveCaption(
                             for: source,
                             metadata: metadata,
-                            profile: profile
+                            session: profile
                         )
                     }
                     let artifacts = artifact.map { [$0] } ?? []
@@ -1016,7 +1016,7 @@ final class FileTranscriptionBatchService {
             if storedAudioURL == nil {
                 if metadata == nil {
                     update(itemID) { $0.status = .checkingLink }
-                    metadata = try await remoteExtractor.metadata(for: source, profile: profile)
+                    metadata = try await remoteExtractor.metadata(for: source, session: profile)
                 }
                 guard let metadata else {
                     throw RemoteMediaExtractorError.malformedMetadata
@@ -1054,7 +1054,7 @@ final class FileTranscriptionBatchService {
                                 if let caption = try await remoteExtractor.retrieveCaption(
                                     for: source,
                                     metadata: metadata,
-                                    profile: profile
+                                    session: profile
                                 ) {
                                     update(itemID) { $0.sourceCaptionArtifacts = [caption] }
                                 }
@@ -1075,7 +1075,7 @@ final class FileTranscriptionBatchService {
                         return try await remoteExtractor.downloadAudio(
                             for: source,
                             metadata: metadata,
-                            profile: profile
+                            session: profile
                         ) { [weak self] progress in
                             Task { @MainActor in
                                 self?.update(itemID) {
