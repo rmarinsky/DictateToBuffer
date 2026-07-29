@@ -174,6 +174,7 @@ final class SettingsStorageProviderTests: XCTestCase {
         XCTAssertEqual(SettingsStorage.shared.transcriptionProvider, .cloud)
         XCTAssertEqual(SettingsStorage.shared.translationProvider, .cloud)
         XCTAssertTrue(SettingsStorage.shared.meetingRealtimeTranscriptionEnabled)
+        XCTAssertTrue(SettingsStorage.shared.effectiveMeetingRealtimeTranscriptionEnabled)
     }
 
     func test_defaultHistoryRetentionPolicies_areForever() {

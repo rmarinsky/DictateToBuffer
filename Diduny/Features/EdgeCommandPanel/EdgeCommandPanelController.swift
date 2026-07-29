@@ -380,11 +380,7 @@ final class EdgeCommandPanelController: NSObject {
             openAccount()
             return
         }
-        SettingsStorage.shared.transcriptionProvider = provider
-        SettingsStorage.shared.translationProvider = provider
-        if provider == .local {
-            SettingsStorage.shared.meetingRealtimeTranscriptionEnabled = false
-        }
+        SettingsStorage.shared.selectProcessingProvider(provider)
         if let panel {
             position(panel, presentation: commandPresentation)
         }
