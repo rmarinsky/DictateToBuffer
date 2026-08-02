@@ -125,7 +125,7 @@ final class DictationOverlayController {
     }
 
     func copyCurrentTranscript() {
-        let text = store.bestText(includeProvisional: true)
+        let text = store.displayText
         guard !text.isEmpty else { return }
         ClipboardService.shared.copy(text: text, behavior: .raw)
         store.markCopied()

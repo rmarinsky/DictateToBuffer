@@ -161,6 +161,20 @@ struct EdgeCommandPanelModelTests {
 
 @MainActor
 struct EdgeCommandPanelLiveTextTests {
+    @Test("Meeting transcript keeps timestamps and speaker diarization")
+    func meetingTranscriptKeepsStructuredMetadata() {
+        let store = LiveDictationOverlayStore()
+        store.reset(mode: .meeting)
+
+        store.processTokens([
+            RealtimeToken(text: "Hello", isFinal: true, speaker: "1", startMs: 1_200),
+            RealtimeToken(text: "Hi", isFinal: true, speaker: "2", startMs: 65_000)
+        ])
+
+        #expect(store.displayText.contains("[00:01] Speaker 1: Hello"))
+        #expect(store.displayText.contains("[01:05] Speaker 2: Hi"))
+    }
+
     @Test("Meeting translation displays translated tokens instead of source tokens")
     func meetingTranslationPrefersTranslatedTokens() {
         let store = LiveDictationOverlayStore()

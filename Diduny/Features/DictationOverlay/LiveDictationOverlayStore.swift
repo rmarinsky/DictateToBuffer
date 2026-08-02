@@ -25,6 +25,7 @@ final class LiveDictationOverlayStore {
 
     private var fallbackFinalText = ""
     private var fallbackProvisionalText = ""
+    private let meetingTranscript = LiveTranscriptStore()
 
     var title: String {
         switch mode {
@@ -75,8 +76,14 @@ final class LiveDictationOverlayStore {
         bestText(includeProvisional: true)
     }
 
+    var displayText: String {
+        guard mode == .meeting else { return visibleText }
+        let structuredText = meetingTranscript.finalTranscriptText
+        return structuredText.isEmpty ? visibleText : structuredText
+    }
+
     var hasText: Bool {
-        !visibleText.isEmpty
+        !displayText.isEmpty
     }
 
     var canStop: Bool {
@@ -118,10 +125,15 @@ final class LiveDictationOverlayStore {
         provisionalText = ""
         fallbackFinalText = ""
         fallbackProvisionalText = ""
+        meetingTranscript.reset()
         copiedAt = nil
     }
 
     func processTokens(_ tokens: [RealtimeToken]) {
+        if mode == .meeting {
+            meetingTranscript.processTokens(tokens)
+        }
+
         let isTranslationMode: Bool = {
             switch mode {
             case .translation, .meetingTranslation:

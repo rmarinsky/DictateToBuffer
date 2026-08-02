@@ -124,7 +124,7 @@ struct LiveDictationOverlayView: View {
                     .stroke(Color.primary.opacity(0.07), lineWidth: 0.5)
             }
             .onAppear { scrollTranscriptToBottom(proxy) }
-            .onChange(of: store.visibleText) { _, _ in scrollTranscriptToBottom(proxy) }
+            .onChange(of: store.displayText) { _, _ in scrollTranscriptToBottom(proxy) }
             .onChange(of: store.phase) { _, _ in scrollTranscriptToBottom(proxy) }
         }
     }
@@ -158,7 +158,7 @@ struct LiveDictationOverlayView: View {
     }
 
     private var displayText: String {
-        store.visibleText.isEmpty ? "Listening…" : store.visibleText
+        store.displayText.isEmpty ? "Listening…" : store.displayText
     }
 
     private var stopButtonColor: Color {
