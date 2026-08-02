@@ -350,6 +350,7 @@ extension AppDelegate {
                     self?.updateRecordingFeedbackTokens(tokens, mode: .meeting)
                 case .segmentBoundary:
                     store?.markSegmentBoundary()
+                    self?.markRecordingFeedbackSegmentBoundary(mode: .meeting)
                 }
             }
         }

@@ -181,6 +181,23 @@ struct EdgeCommandPanelLiveTextTests {
         #expect(store.displayText.contains("Still speaking"))
     }
 
+    @Test("Meeting transcript keeps provider phrase boundaries")
+    func meetingTranscriptKeepsPhraseBoundaries() {
+        let store = LiveDictationOverlayStore()
+        store.reset(mode: .meeting)
+
+        store.processTokens([
+            RealtimeToken(text: "First phrase", isFinal: true, speaker: "1", startMs: 1_000)
+        ])
+        store.markSegmentBoundary()
+        store.processTokens([
+            RealtimeToken(text: "Second phrase", isFinal: true, speaker: "1", startMs: 8_000)
+        ])
+
+        #expect(store.displayText.contains("[00:01] Speaker 1: First phrase"))
+        #expect(store.displayText.contains("[00:08] Speaker 1: Second phrase"))
+    }
+
     @Test("Meeting translation displays translated tokens instead of source tokens")
     func meetingTranslationPrefersTranslatedTokens() {
         let store = LiveDictationOverlayStore()

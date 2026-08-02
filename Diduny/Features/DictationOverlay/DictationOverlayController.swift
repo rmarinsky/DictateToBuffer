@@ -120,6 +120,10 @@ final class DictationOverlayController {
         store.processTokens(tokens)
     }
 
+    func markSegmentBoundary() {
+        store.markSegmentBoundary()
+    }
+
     func updateConnectionStatus(_ status: RealtimeConnectionStatus) {
         store.connectionStatus = status
     }

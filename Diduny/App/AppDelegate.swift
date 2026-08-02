@@ -821,6 +821,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DictationOverlayController.shared.processTokens(tokens)
     }
 
+    func markRecordingFeedbackSegmentBoundary(mode _: RecordingMode) {
+        DictationOverlayController.shared.markSegmentBoundary()
+    }
+
     func updateRecordingFeedbackConnectionStatus(_ status: RealtimeConnectionStatus, mode _: RecordingMode) {
         DictationOverlayController.shared.updateConnectionStatus(status)
     }

@@ -186,6 +186,11 @@ final class LiveDictationOverlayStore {
         }
     }
 
+    func markSegmentBoundary() {
+        guard mode == .meeting else { return }
+        meetingTranscript.markSegmentBoundary()
+    }
+
     func bestText(includeProvisional: Bool) -> String {
         let primary = composedText(final: finalText, provisional: includeProvisional ? provisionalText : "")
         if !primary.isEmpty {
