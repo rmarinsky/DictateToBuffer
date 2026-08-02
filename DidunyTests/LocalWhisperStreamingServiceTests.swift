@@ -1,7 +1,33 @@
 @testable import Diduny
+import AppKit
 import XCTest
 
 final class LocalWhisperStreamingServiceTests: XCTestCase {
+    @MainActor
+    func testLocalMeetingModeCreatesLiveTranscriptPipeline() async {
+        let delegate = AppDelegate()
+
+        let store = await delegate.setupMeetingLiveTranscription(cloudModeEnabled: false)
+
+        XCTAssertTrue(store.isActive)
+        XCTAssertEqual(store.connectionStatus, .connected)
+        XCTAssertNotNil(delegate.localMeetingStreamingService)
+        XCTAssertNotNil(delegate.meetingRecorderService.onRealtimeAudioData)
+
+        TranscriptionWindowController.shared.showWindow(store: store)
+        let transcriptWindow = NSApp.windows.first { $0.title == "Live Transcript" }
+        XCTAssertEqual(transcriptWindow?.isVisible, true)
+        XCTAssertEqual(transcriptWindow?.level, .floating)
+        XCTAssertEqual(transcriptWindow?.collectionBehavior.contains(.canJoinAllSpaces), true)
+        XCTAssertEqual(transcriptWindow?.collectionBehavior.contains(.fullScreenAuxiliary), true)
+
+        TranscriptionWindowController.shared.closeWindow()
+        await delegate.stopMeetingLiveTranscription()
+
+        XCTAssertNil(delegate.localMeetingStreamingService)
+        XCTAssertNil(delegate.meetingRecorderService.onRealtimeAudioData)
+    }
+
     func testWhisperSegmentTimestampsConvertToMilliseconds() {
         XCTAssertEqual(WhisperContext.milliseconds(fromTimestamp: 123), 1_230)
         XCTAssertEqual(WhisperContext.milliseconds(fromTimestamp: 456), 4_560)

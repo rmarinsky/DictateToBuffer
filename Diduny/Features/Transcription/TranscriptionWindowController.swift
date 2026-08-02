@@ -14,6 +14,7 @@ final class TranscriptionWindowController {
         if let window {
             let view = LiveTranscriptView(store: store)
             window.contentView = NSHostingView(rootView: view)
+            window.level = .floating
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
@@ -30,6 +31,9 @@ final class TranscriptionWindowController {
         )
 
         window.title = "Live Transcript"
+        window.level = .floating
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.hidesOnDeactivate = false
         window.contentView = hostingView
         window.contentMinSize = NSSize(width: 350, height: 300)
         window.isReleasedWhenClosed = false

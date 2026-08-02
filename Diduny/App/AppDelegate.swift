@@ -161,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var meetingRecorderService = MeetingRecorderService()
     lazy var realtimeTranscriptionService = CloudRealtimeService()
     var localVoiceStreamingService: LocalWhisperStreamingService?
+    var localMeetingStreamingService: LocalWhisperStreamingService?
     var voiceRealtimeAccumulator: RealtimeVoiceAccumulator?
     var voiceRealtimeSessionEnabled: Bool = false
     var voiceRealtimeConnectionError: String?
