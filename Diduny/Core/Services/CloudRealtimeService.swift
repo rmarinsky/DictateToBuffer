@@ -710,7 +710,7 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
     /// ADR-0004 edge cases handled here:
     /// - `1001 Going Away` (proxy 8-hour cap or rolling restart): treat as graceful session end,
     ///   save partial transcript, show non-error UI, do NOT auto-reconnect.
-    /// - `401` from proxy on reconnect: refresh Supabase session silently, retry once.
+    /// - `401` from proxy on reconnect: refresh the session silently, retry once.
     ///   Never loop — if the refresh fails the user is prompted to re-login.
     private func handleDisconnect(closeCode: URLSessionWebSocketTask.CloseCode? = nil) {
         // Atomic check-and-clear prevents two concurrent callers (receive loop error
@@ -794,9 +794,9 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
                 self.resetReconnectAttempts()
                 Log.transcription.info("Cloud RT: Reconnected successfully")
             } catch let error as RealtimeTranscriptionError {
-                // ADR-0004: if WS upgrade returned 401, refresh Supabase token and retry once.
+                // ADR-0004: if WS upgrade returned 401, refresh the access token and retry once.
                 if case .connectionFailed(let msg) = error, msg.contains("401") {
-                    Log.transcription.info("Cloud RT: 401 on WS upgrade — refreshing Supabase session")
+                    Log.transcription.info("Cloud RT: 401 on WS upgrade — refreshing session")
                     do {
                         try await AuthService.shared.refreshTokens()
                         try await self.connectWebSocket()

@@ -157,7 +157,7 @@ final class OnboardingManager {
         // Timestamp is written on first launch; if it's already present before computeStartupAction
         // runs (because init() ran first this session), the user is NOT a legacy user — they simply
         // haven't finished onboarding. The legacy case is: an update install where the old app never
-        // wrote the timestamp, but a Supabase session is present.
+        // wrote the timestamp, but an authenticated session is present.
         // NOTE: init() always writes the timestamp on first launch of this build. So for a legacy
         // user updating from a pre-onboarding build, the timestamp is written THIS launch. We
         // therefore check the session BEFORE the timestamp write would disambiguate — which means

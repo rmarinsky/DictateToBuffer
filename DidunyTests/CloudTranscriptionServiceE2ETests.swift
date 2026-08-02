@@ -1,5 +1,4 @@
 import Foundation
-import Supabase
 import XCTest
 @testable import Diduny
 
@@ -82,9 +81,9 @@ final class CloudTranscriptionServiceE2ETests: XCTestCase {
     @MainActor
     private func ensureOtpSession(
         mailpitURL: String,
-    ) async throws -> Session {
-        if let session = await SupabaseService.shared.currentSession {
-            return session
+    ) async throws -> String {
+        if let accessToken = await AuthService.shared.getAccessToken() {
+            return accessToken
         }
 
         let env = ProcessInfo.processInfo.environment
@@ -95,10 +94,10 @@ final class CloudTranscriptionServiceE2ETests: XCTestCase {
         let code = try await waitForOTPCode(email: email, mailpitURL: mailpitURL)
         try await AuthService.shared.verifyOtp(email: email, code: code)
 
-        guard let session = await SupabaseService.shared.currentSession else {
-            throw XCTSkip("OTP flow completed but session is not available in this build.")
+        guard let accessToken = await AuthService.shared.getAccessToken() else {
+            throw XCTSkip("OTP flow completed but an access token is not available in this build.")
         }
-        return session
+        return accessToken
     }
 
     private func translationRequest(
@@ -183,7 +182,7 @@ final class CloudTranscriptionServiceE2ETests: XCTestCase {
     }
 
     @MainActor
-    func test_supabaseOtpLoginFlowViaEmail() async throws {
+    func test_ownedOtpLoginFlowViaEmail() async throws {
         guard isOptInEnabled() else {
             throw XCTSkip("Set DIDUNY_E2E_NATIVE=1 to run local native/backend e2e.")
         }
@@ -198,9 +197,9 @@ final class CloudTranscriptionServiceE2ETests: XCTestCase {
             throw XCTSkip("DIDUNY_E2E_MAILPIT_URL is required for OTP verification.")
         }
 
-        let session = try await ensureOtpSession(mailpitURL: mailpitURL)
-        XCTAssertNotNil(session.user.email)
-        XCTAssertFalse(nonEmpty(session.accessToken)?.isEmpty ?? true)
+        let accessToken = try await ensureOtpSession(mailpitURL: mailpitURL)
+        XCTAssertNotNil(AuthService.shared.userEmail)
+        XCTAssertFalse(accessToken.isEmpty)
     }
 
     @MainActor
@@ -222,12 +221,12 @@ final class CloudTranscriptionServiceE2ETests: XCTestCase {
         _ = try await ensureOtpSession(mailpitURL: mailpitURL)
         try await AuthService.shared.refreshTokens()
 
-        let session = await SupabaseService.shared.currentSession
-        XCTAssertNotNil(session?.accessToken)
+        let refreshedAccessToken = await AuthService.shared.getAccessToken()
+        XCTAssertNotNil(refreshedAccessToken)
     }
 
     @MainActor
-    func test_httpJwtIsValidatedForTranslationEndpoint() async throws {
+    func test_httpAccessTokenIsValidatedForTranslationEndpoint() async throws {
         guard isOptInEnabled() else {
             throw XCTSkip("Set DIDUNY_E2E_NATIVE=1 to run local native/backend e2e.")
         }
@@ -241,11 +240,11 @@ final class CloudTranscriptionServiceE2ETests: XCTestCase {
             throw XCTSkip("DIDUNY_E2E_TARGET_LANGUAGE is required.")
         }
 
-        let sessionToken = await SupabaseService.shared.currentSession?.accessToken
+        let sessionToken = await AuthService.shared.getAccessToken()
         let validToken = nonEmpty(ProcessInfo.processInfo.environment["DIDUNY_E2E_ACCESS_TOKEN"])
             ?? nonEmpty(sessionToken)
         guard let validToken else {
-            throw XCTSkip("DIDUNY_E2E_ACCESS_TOKEN or active Supabase session is required.")
+            throw XCTSkip("DIDUNY_E2E_ACCESS_TOKEN or an active Diduny session is required.")
         }
 
         let fixtureText = ProcessInfo.processInfo.environment["DIDUNY_E2E_EXPECTED_TEXT"]
@@ -274,7 +273,7 @@ final class CloudTranscriptionServiceE2ETests: XCTestCase {
     }
 
     @MainActor
-    func test_webSocketJwtAllowsValidSessionAndRejectsInvalid() async throws {
+    func test_webSocketAccessTokenAllowsValidSessionAndRejectsInvalid() async throws {
         guard isOptInEnabled() else {
             throw XCTSkip("Set DIDUNY_E2E_NATIVE=1 to run local native/backend e2e.")
         }
@@ -289,8 +288,7 @@ final class CloudTranscriptionServiceE2ETests: XCTestCase {
             throw XCTSkip("DIDUNY_E2E_MAILPIT_URL is required for session bootstrap.")
         }
 
-        let session = try await ensureOtpSession(mailpitURL: mailpitURL)
-        let validToken = session.accessToken
+        let validToken = try await ensureOtpSession(mailpitURL: mailpitURL)
         let invalidToken = "invalid-local-token"
 
         let validURL = try makeRealtimeURL(proxyBaseURL: proxyBaseURL, token: validToken)

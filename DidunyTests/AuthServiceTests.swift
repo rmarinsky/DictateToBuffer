@@ -1,69 +1,193 @@
 import XCTest
 @testable import Diduny
 
-/// Tests for the parts of AuthService that are unit-testable without a live
-/// Supabase endpoint: hasStoredSession flag, UserDefaults synchronisation,
-/// and the AuthError descriptions.
-///
-/// Network-dependent paths (OTP send/verify, session refresh) require a live
-/// Supabase project and are excluded from the CI unit-test target; they are
-/// covered by manual smoke tests per the Definition of Done.
 final class AuthServiceTests: XCTestCase {
-
-    // MARK: - hasStoredSession
-
-    func test_hasStoredSession_falseByDefault() {
-        UserDefaults.standard.removeObject(forKey: "_diduny_supabase_session_present")
-        XCTAssertFalse(AuthService.hasStoredSession)
+    override func tearDown() {
+        MockAuthURLProtocol.handler = nil
+        super.tearDown()
     }
 
-    func test_hasStoredSession_trueWhenFlagSet() {
-        UserDefaults.standard.set(true, forKey: "_diduny_supabase_session_present")
-        XCTAssertTrue(AuthService.hasStoredSession)
-        // Cleanup
-        UserDefaults.standard.removeObject(forKey: "_diduny_supabase_session_present")
-    }
-
-    func test_hasStoredSession_falseAfterFlagCleared() {
-        UserDefaults.standard.set(true, forKey: "_diduny_supabase_session_present")
-        UserDefaults.standard.set(false, forKey: "_diduny_supabase_session_present")
-        XCTAssertFalse(AuthService.hasStoredSession)
-        // Cleanup
-        UserDefaults.standard.removeObject(forKey: "_diduny_supabase_session_present")
-    }
-
-    // MARK: - AuthError descriptions
-
-    func test_authError_invalidURL_hasDescription() {
-        let error = AuthError.invalidURL
-        XCTAssertEqual(error.errorDescription, "Invalid auth URL")
-    }
-
-    func test_authError_invalidResponse_hasDescription() {
-        let error = AuthError.invalidResponse
-        XCTAssertEqual(error.errorDescription, "Invalid server response")
-    }
-
-    func test_authError_notAuthenticated_hasDescription() {
-        let error = AuthError.notAuthenticated
-        XCTAssertEqual(error.errorDescription, "Not authenticated — please log in")
-    }
-
-    func test_authError_serverError_includesMessage() {
-        let message = "Rate limit exceeded"
-        let error = AuthError.serverError(message)
-        XCTAssertEqual(error.errorDescription, message)
-    }
-
-    // MARK: - AuthState transitions (via shared instance, MainActor)
-
-    /// Verifies the initial state is loggedOut when no session flag is present.
     @MainActor
-    func test_initialState_isLoggedOut_whenNoSessionFlag() async {
-        // The shared instance is a singleton; we can only observe, not reset it.
-        // This test passes if AuthService.hasStoredSession reflects UserDefaults truthfully.
-        UserDefaults.standard.removeObject(forKey: "_diduny_supabase_session_present")
-        // Re-check the flag directly (not the live singleton which may already be loggedIn)
-        XCTAssertFalse(AuthService.hasStoredSession)
+    func test_sendOtp_postsToOwnedBackendAndTransitionsToOtpSent() async throws {
+        let service = makeService { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/auth/send-otp")
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(
+                try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: String],
+                ["email": "roman@example.com"]
+            )
+            return Self.response(for: request, body: #"{"message":"OTP sent"}"#)
+        }
+
+        try await service.sendOtp(email: "roman@example.com")
+
+        XCTAssertEqual(service.authState, .otpSent)
     }
+
+    @MainActor
+    func test_verifyOtpStoresOwnedTokensAndUser() async throws {
+        let store = MemoryAuthTokenStore()
+        let service = makeService(store: store) { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/auth/verify-otp")
+            XCTAssertEqual(
+                try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: String],
+                ["email": "roman@example.com", "otp": "123456"]
+            )
+            return Self.response(
+                for: request,
+                body: #"{"accessToken":"access","accessTokenExpiresAt":2000000,"refreshToken":"refresh","user":{"id":"user-1","email":"roman@example.com"}}"#
+            )
+        }
+
+        try await service.verifyOtp(email: "roman@example.com", code: "123456")
+
+        XCTAssertEqual(store.read(key: "auth_access_token"), "access")
+        XCTAssertEqual(store.read(key: "auth_refresh_token"), "refresh")
+        XCTAssertEqual(store.read(key: "auth_access_token_expires_at"), "2000000")
+        XCTAssertEqual(store.read(key: "auth_user_email"), "roman@example.com")
+        XCTAssertEqual(service.authState, .loggedIn)
+    }
+
+    @MainActor
+    func test_getAccessTokenRefreshesWhenExpiryIsNear() async throws {
+        let store = MemoryAuthTokenStore(values: [
+            "auth_access_token": "old-access",
+            "auth_access_token_expires_at": "1050000",
+            "auth_refresh_token": "old-refresh",
+            "auth_user_email": "roman@example.com",
+        ])
+        let service = makeService(store: store) { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/auth/refresh")
+            XCTAssertEqual(
+                try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: String],
+                ["refreshToken": "old-refresh"]
+            )
+            return Self.response(
+                for: request,
+                body: #"{"accessToken":"new-access","accessTokenExpiresAt":2000000,"refreshToken":"new-refresh"}"#
+            )
+        }
+
+        let token = await service.getAccessToken()
+
+        XCTAssertEqual(token, "new-access")
+        XCTAssertEqual(store.read(key: "auth_refresh_token"), "new-refresh")
+    }
+
+    @MainActor
+    func test_logoutRevokesBearerSessionAndClearsLocalTokens() async throws {
+        let store = MemoryAuthTokenStore(values: [
+            "auth_access_token": "access",
+            "auth_access_token_expires_at": "2000000",
+            "auth_refresh_token": "refresh",
+            "auth_user_email": "roman@example.com",
+        ])
+        let service = makeService(store: store) { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/auth/logout")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
+            return Self.response(for: request, body: #"{"message":"Logged out"}"#)
+        }
+
+        await service.logout()
+
+        XCTAssertNil(store.read(key: "auth_access_token"))
+        XCTAssertNil(store.read(key: "auth_refresh_token"))
+        XCTAssertNil(store.read(key: "auth_access_token_expires_at"))
+        XCTAssertNil(store.read(key: "auth_user_email"))
+        XCTAssertEqual(service.authState, .loggedOut)
+    }
+
+    func test_authErrorDescriptions() {
+        XCTAssertEqual(AuthError.invalidURL.errorDescription, "Invalid auth URL")
+        XCTAssertEqual(AuthError.invalidResponse.errorDescription, "Invalid server response")
+        XCTAssertEqual(AuthError.notAuthenticated.errorDescription, "Not authenticated — please log in")
+        XCTAssertEqual(AuthError.serverError("Rate limited").errorDescription, "Rate limited")
+    }
+
+    @MainActor
+    private func makeService(
+        store: MemoryAuthTokenStore = MemoryAuthTokenStore(),
+        handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)
+    ) -> AuthService {
+        MockAuthURLProtocol.handler = handler
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockAuthURLProtocol.self]
+        return AuthService(
+            baseURL: "https://api.test",
+            session: URLSession(configuration: configuration),
+            tokenStore: store,
+            now: { Date(timeIntervalSince1970: 1_000) },
+            migrateLegacySession: false
+        )
+    }
+
+    private static func response(
+        for request: URLRequest,
+        status: Int = 200,
+        body: String
+    ) -> (HTTPURLResponse, Data) {
+        (
+            HTTPURLResponse(
+                url: request.url!,
+                statusCode: status,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!,
+            Data(body.utf8)
+        )
+    }
+}
+
+private final class MemoryAuthTokenStore: AuthTokenStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: String]
+
+    init(values: [String: String] = [:]) {
+        self.values = values
+    }
+
+    func save(key: String, value: String) throws {
+        lock.withLock { values[key] = value }
+    }
+
+    func read(key: String) -> String? {
+        lock.withLock { values[key] }
+    }
+
+    func delete(key: String) {
+        _ = lock.withLock { values.removeValue(forKey: key) }
+    }
+}
+
+private final class MockAuthURLProtocol: URLProtocol, @unchecked Sendable {
+    static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with _: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        do {
+            var handledRequest = request
+            if handledRequest.httpBody == nil, let stream = handledRequest.httpBodyStream {
+                stream.open()
+                defer { stream.close() }
+                var body = Data()
+                var buffer = [UInt8](repeating: 0, count: 1_024)
+                while stream.hasBytesAvailable {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    guard count > 0 else { break }
+                    body.append(buffer, count: count)
+                }
+                handledRequest.httpBody = body
+            }
+            let (response, data) = try Self.handler!(handledRequest)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
 }

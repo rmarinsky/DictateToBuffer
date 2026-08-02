@@ -129,7 +129,6 @@
 		DEE6BFC7FC33767EDB94BFDE /* RecoveryStateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2133D27EF1A261954A78BEB /* RecoveryStateManager.swift */; };
 		DFE3D7FFABE00254D2B2F164 /* RecordingQueueService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E819431AE3C66AA9B422954A /* RecordingQueueService.swift */; };
 		E2A1278EF4D20EC10319BBF4 /* Recording.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5D4FC33778F42CC48FF44C5 /* Recording.swift */; };
-		E3591F430A848CDAB8D090B4 /* SupabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22F3DF3DBD7AB2A6B8F1B8D1 /* SupabaseService.swift */; };
 		E3E8F971F59805899C8277E0 /* MultipartFormDataFile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4731B0DD26DB57F2EAE71F8C /* MultipartFormDataFile.swift */; };
 		E49E98100BDACA9804603BC6 /* InProgressRecordingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C38884243E804534AE077F9 /* InProgressRecordingStore.swift */; };
 		E4DA7F7432AC5A880F8D5CE8 /* GeneralSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B850C5D55AE7652A88CE36F5 /* GeneralSettingsView.swift */; };
@@ -182,7 +181,6 @@
 		1A7E2F21047194B8A5423BF5 /* OnboardingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingManager.swift; sourceTree = "<group>"; };
 		22385D60DC75174064B0DF0F /* ObjCExceptionCatcher.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ObjCExceptionCatcher.m; sourceTree = "<group>"; };
 		22ECCCBC345EE579CFE2AD5F /* InProgressRecordingStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InProgressRecordingStoreTests.swift; sourceTree = "<group>"; };
-		22F3DF3DBD7AB2A6B8F1B8D1 /* SupabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseService.swift; sourceTree = "<group>"; };
 		2430641841403AB68C61B536 /* KeychainManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainManager.swift; sourceTree = "<group>"; };
 		24A8CC23A7C474D5EFDFBAC1 /* SleepFlushCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepFlushCoordinator.swift; sourceTree = "<group>"; };
 		2557CB1E6202CAC116B9137B /* RecordingMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingMode.swift; sourceTree = "<group>"; };
@@ -319,7 +317,6 @@
 				E6C0A2BB2B96403F5AD765B3 /* KeyboardShortcuts in Frameworks */,
 				247C7BD6AD352D40A40CCFD0 /* LaunchAtLogin in Frameworks */,
 				8089B2EF55ADCDC2F120C765 /* Sparkle in Frameworks */,
-				5A18DAA2CFAE9E95CCA51D24 /* Supabase in Frameworks */,
 				5C38E65B15A426A3B51A9EEB /* whisper.xcframework in Frameworks */,
 				2EF13108B3414D04405FD360 /* Accelerate.framework in Frameworks */,
 				D88F0858310A14339ADE4178 /* Metal.framework in Frameworks */,
@@ -450,7 +447,6 @@
 				49E8CCC2E5C38B9099C8E8D2 /* RemoteMediaService.swift */,
 				44C5A3AF31756F85C9143656 /* ShareableContentCache.swift */,
 				24A8CC23A7C474D5EFDFBAC1 /* SleepFlushCoordinator.swift */,
-				22F3DF3DBD7AB2A6B8F1B8D1 /* SupabaseService.swift */,
 				70DDD786E73A1532AE91FC20 /* SystemAudioCaptureService.swift */,
 				FEEA00E234538355F573DD94 /* TranscriptCleanupService.swift */,
 				684A014D6E9B1A40935A7608 /* UpdaterManager.swift */,
@@ -743,7 +739,6 @@
 				2E72BE3A05C906A8B16DBE4E /* KeyboardShortcuts */,
 				57D44526E8ECA54C87677F5B /* LaunchAtLogin */,
 				B9A32E3B977C8D9C16E2DC20 /* Sparkle */,
-				1682C3BCEB8B3B3CE61588C9 /* Supabase */,
 			);
 			productName = Diduny;
 			productReference = 4C5A21F6255692712508A475 /* Diduny.app */;
@@ -800,7 +795,6 @@
 				44A6802ED268E042B3E340B9 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
 				40D87DB8B850A83EB00FF9EE /* XCRemoteSwiftPackageReference "LaunchAtLogin-Modern" */,
 				9F0000456CA7E8DED8E2171B /* XCRemoteSwiftPackageReference "Sparkle" */,
-				4C5DFD55E5BB9D9D8AF44A0F /* XCRemoteSwiftPackageReference "supabase-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 166821B9EBE984E0D67F7515 /* Products */;
@@ -953,7 +947,6 @@
 				1FC13B68C69A30C9FD13E2F0 /* ShortcutsSettingsView.swift in Sources */,
 				E936FF3D499BC2EFB6DC0A14 /* SidebarView.swift in Sources */,
 				B62B0933F7CA028942582A14 /* SleepFlushCoordinator.swift in Sources */,
-				E3591F430A848CDAB8D090B4 /* SupabaseService.swift in Sources */,
 				8864F470B8EFDFF965ABAA76 /* SupportedLanguage.swift in Sources */,
 				8E61D4628397B11E5BCEE03D /* SystemAudioCaptureService.swift in Sources */,
 				247921044E1EB03B31AFDB28 /* TextTranslationView.swift in Sources */,
@@ -1390,14 +1383,6 @@
 				version = 2.4.0;
 			};
 		};
-		4C5DFD55E5BB9D9D8AF44A0F /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/supabase/supabase-swift";
-			requirement = {
-				kind = exactVersion;
-				version = 2.45.0;
-			};
-		};
 		9F0000456CA7E8DED8E2171B /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sparkle-project/Sparkle";
@@ -1409,11 +1394,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		1682C3BCEB8B3B3CE61588C9 /* Supabase */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 4C5DFD55E5BB9D9D8AF44A0F /* XCRemoteSwiftPackageReference "supabase-swift" */;
-			productName = Supabase;
-		};
 		2E72BE3A05C906A8B16DBE4E /* KeyboardShortcuts */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 44A6802ED268E042B3E340B9 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */;

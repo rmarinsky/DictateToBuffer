@@ -5,7 +5,7 @@ final class SettingsStorageProviderTests: XCTestCase {
     private let transcriptionProviderKey = "transcriptionProvider"
     private let translationProviderKey = "translationProvider"
     private let meetingRealtimeKey = "meetingRealtimeTranscriptionEnabled"
-    private let sessionPresentKey = "_diduny_supabase_session_present"
+    private let sessionPresentKey = "_diduny_auth_session_present"
     private let dictationRetentionKey = "dictationTranslationHistoryRetentionPolicy"
     private let meetingRetentionKey = "meetingHistoryRetentionPolicy"
     private let favoriteLanguagesKey = "favoriteLanguages"
