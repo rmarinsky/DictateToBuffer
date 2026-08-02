@@ -6,6 +6,7 @@ final class LocalWhisperStreamingServiceTests: XCTestCase {
     @MainActor
     func testLocalMeetingModeCreatesLiveTranscriptPipeline() async {
         let delegate = AppDelegate()
+        EdgeCommandPanelController.shared.configure(appDelegate: delegate)
 
         let store = await delegate.setupMeetingLiveTranscription(cloudModeEnabled: false)
 
@@ -14,14 +15,16 @@ final class LocalWhisperStreamingServiceTests: XCTestCase {
         XCTAssertNotNil(delegate.localMeetingStreamingService)
         XCTAssertNotNil(delegate.meetingRecorderService.onRealtimeAudioData)
 
-        TranscriptionWindowController.shared.showWindow(store: store)
-        let transcriptWindow = NSApp.windows.first { $0.title == "Live Transcript" }
-        XCTAssertEqual(transcriptWindow?.isVisible, true)
-        XCTAssertEqual(transcriptWindow?.level, .floating)
-        XCTAssertEqual(transcriptWindow?.collectionBehavior.contains(.canJoinAllSpaces), true)
-        XCTAssertEqual(transcriptWindow?.collectionBehavior.contains(.fullScreenAuxiliary), true)
+        DictationOverlayController.shared.startRecording(mode: .meeting)
+        let flowPanel = NSApp.windows.first {
+            $0.identifier?.rawValue == "ua.com.rmarinsky.diduny.edge-command-panel"
+        }
+        XCTAssertEqual(flowPanel?.isVisible, true)
+        XCTAssertEqual(flowPanel?.level, .floating)
+        XCTAssertEqual(flowPanel?.collectionBehavior.contains(.canJoinAllSpaces), true)
+        XCTAssertEqual(flowPanel?.collectionBehavior.contains(.fullScreenAuxiliary), true)
 
-        TranscriptionWindowController.shared.closeWindow()
+        DictationOverlayController.shared.dismiss()
         await delegate.stopMeetingLiveTranscription()
 
         XCTAssertNil(delegate.localMeetingStreamingService)

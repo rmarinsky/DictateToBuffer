@@ -218,6 +218,9 @@ final class EdgeCommandPanelModel {
 @MainActor
 final class EdgeCommandPanelController: NSObject {
     static let shared = EdgeCommandPanelController()
+    static let panelIdentifier = NSUserInterfaceItemIdentifier(
+        "ua.com.rmarinsky.diduny.edge-command-panel"
+    )
 
     private weak var appDelegate: AppDelegate?
     private var panel: EdgeCommandPanel?
@@ -398,6 +401,7 @@ final class EdgeCommandPanelController: NSObject {
             backing: .buffered,
             defer: false
         )
+        panel.identifier = Self.panelIdentifier
         panel.isFloatingPanel = true
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]

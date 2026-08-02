@@ -84,7 +84,7 @@ extension AppDelegate {
             await meetingRecorderService.cancelRecording()
         }
 
-        // Mark transcript as inactive but keep window open for review
+        // Release the live transcript after the Flow panel returns to idle.
         await MainActor.run {
             appState.liveTranscriptStore?.isActive = false
             appState.liveTranscriptStore = nil
@@ -214,12 +214,11 @@ extension AppDelegate {
                 appState.meetingRecordingStartTime = Date()
                 appState.liveTranscriptStore = store
                 handleMeetingStateChange(.recording)
+                if !cloudModeEnabled {
+                    updateRecordingFeedbackConnectionStatus(.connected, mode: .meeting)
+                }
             }
             startMetrics.finish(outcome: "ok")
-
-            await MainActor.run {
-                TranscriptionWindowController.shared.showWindow(store: store)
-            }
 
             // Activate escape cancel handler
             await MainActor.run {
@@ -280,15 +279,21 @@ extension AppDelegate {
             transcribe: { samples in
                 try await whisper.transcribeRawSamples(samples)
             },
-            onText: { [store] text in
+            onText: { [weak self, store] text in
                 await MainActor.run {
-                    store.processTokens([RealtimeToken(text: text, isFinal: false)])
+                    let tokens = [RealtimeToken(text: text, isFinal: false)]
+                    store.processTokens(tokens)
+                    self?.updateRecordingFeedbackTokens(tokens, mode: .meeting)
                 }
             },
-            onError: { [store] error in
+            onError: { [weak self, store] error in
                 Log.whisper.warning("Local meeting preview failed: \(error.localizedDescription)")
                 await MainActor.run {
                     store.connectionStatus = .failed("Live preview unavailable")
+                    self?.updateRecordingFeedbackConnectionStatus(
+                        .failed("Live preview unavailable"),
+                        mode: .meeting
+                    )
                 }
             }
         )

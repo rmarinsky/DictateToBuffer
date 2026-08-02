@@ -630,17 +630,6 @@ extension AppDelegate {
         }
 
         if SettingsStorage.shared.effectiveTranscriptionProvider == .local {
-            guard SettingsStorage.shared.recordingFeedbackSurface == .compactPanel else {
-                audioRecorder.onRealtimeAudioData = speechGatedAudioDelivery(
-                    deliver: { _ in },
-                    onNoSpeech: onNoSpeech
-                )
-                localVoiceStreamingService = nil
-                voiceRealtimeSessionEnabled = false
-                voiceRealtimeAccumulator = nil
-                return
-            }
-
             let whisper = whisperTranscriptionService
             let stream = LocalWhisperStreamingService(
                 transcribe: { samples in

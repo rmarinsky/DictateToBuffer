@@ -91,7 +91,7 @@ extension AppDelegate {
             await meetingRecorderService.cancelRecording()
         }
 
-        // Mark transcript as inactive but keep window open for review
+        // Release the live transcript after the Flow panel returns to idle.
         await MainActor.run {
             appState.liveTranscriptStore?.isActive = false
             appState.liveTranscriptStore = nil
@@ -219,10 +219,6 @@ extension AppDelegate {
                 appState.meetingTranslationRecordingStartTime = Date()
                 appState.liveTranscriptStore = store
                 handleMeetingTranslationStateChange(.recording)
-            }
-
-            await MainActor.run {
-                TranscriptionWindowController.shared.showWindow(store: store)
             }
 
             // Activate escape cancel handler
@@ -593,8 +589,6 @@ extension AppDelegate {
             ProcessInfo.processInfo.endActivity(token)
             meetingTranslationActivityToken = nil
         }
-
-        // Keep transcript window open — user closes manually
 
         Log.app.info("stopMeetingTranslationRecording: END")
     }
