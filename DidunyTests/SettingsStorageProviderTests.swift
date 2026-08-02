@@ -4,6 +4,7 @@ import XCTest
 final class SettingsStorageProviderTests: XCTestCase {
     private let transcriptionProviderKey = "transcriptionProvider"
     private let translationProviderKey = "translationProvider"
+    private let meetingRealtimeKey = "meetingRealtimeTranscriptionEnabled"
     private let sessionPresentKey = "_diduny_supabase_session_present"
     private let dictationRetentionKey = "dictationTranslationHistoryRetentionPolicy"
     private let meetingRetentionKey = "meetingHistoryRetentionPolicy"
@@ -21,6 +22,7 @@ final class SettingsStorageProviderTests: XCTestCase {
     private let textTranslationTargetLanguageKey = "textTranslationTargetLanguage"
     private var storedProvider: Any?
     private var storedTranslationProvider: Any?
+    private var storedMeetingRealtime: Any?
     private var storedSessionPresent: Any?
     private var storedDictationRetention: Any?
     private var storedMeetingRetention: Any?
@@ -41,6 +43,7 @@ final class SettingsStorageProviderTests: XCTestCase {
         super.setUp()
         storedProvider = UserDefaults.standard.object(forKey: transcriptionProviderKey)
         storedTranslationProvider = UserDefaults.standard.object(forKey: translationProviderKey)
+        storedMeetingRealtime = UserDefaults.standard.object(forKey: meetingRealtimeKey)
         storedSessionPresent = UserDefaults.standard.object(forKey: sessionPresentKey)
         storedDictationRetention = UserDefaults.standard.object(forKey: dictationRetentionKey)
         storedMeetingRetention = UserDefaults.standard.object(forKey: meetingRetentionKey)
@@ -63,6 +66,7 @@ final class SettingsStorageProviderTests: XCTestCase {
     override func tearDown() {
         restore(storedProvider, key: transcriptionProviderKey)
         restore(storedTranslationProvider, key: translationProviderKey)
+        restore(storedMeetingRealtime, key: meetingRealtimeKey)
         restore(storedSessionPresent, key: sessionPresentKey)
         restore(storedDictationRetention, key: dictationRetentionKey)
         restore(storedMeetingRetention, key: meetingRetentionKey)
@@ -87,6 +91,16 @@ final class SettingsStorageProviderTests: XCTestCase {
         XCTAssertEqual(SettingsStorage.shared.transcriptionProvider, .cloud)
     }
 
+    func test_defaultMeetingRealtimeTranscription_followsTranscriptionProvider() {
+        UserDefaults.standard.removeObject(forKey: meetingRealtimeKey)
+        SettingsStorage.shared.transcriptionProvider = .cloud
+
+        XCTAssertTrue(SettingsStorage.shared.meetingRealtimeTranscriptionEnabled)
+
+        SettingsStorage.shared.transcriptionProvider = .local
+        XCTAssertFalse(SettingsStorage.shared.meetingRealtimeTranscriptionEnabled)
+    }
+
     func test_explicitLocalTranscriptionProvider_isPreserved() {
         UserDefaults.standard.set(TranscriptionProvider.local.rawValue, forKey: transcriptionProviderKey)
 
@@ -97,6 +111,7 @@ final class SettingsStorageProviderTests: XCTestCase {
         UserDefaults.standard.set(true, forKey: sessionPresentKey)
         SettingsStorage.shared.transcriptionProvider = .local
         SettingsStorage.shared.translationProvider = .local
+        SettingsStorage.shared.meetingRealtimeTranscriptionEnabled = false
         var selection = MenuBarProcessingModeSelection()
 
         selection.select(.cloud)
@@ -104,6 +119,7 @@ final class SettingsStorageProviderTests: XCTestCase {
         XCTAssertEqual(selection.provider, .cloud)
         XCTAssertEqual(SettingsStorage.shared.transcriptionProvider, .cloud)
         XCTAssertEqual(SettingsStorage.shared.translationProvider, .cloud)
+        XCTAssertTrue(SettingsStorage.shared.meetingRealtimeTranscriptionEnabled)
     }
 
     func test_defaultHistoryRetentionPolicies_areForever() {

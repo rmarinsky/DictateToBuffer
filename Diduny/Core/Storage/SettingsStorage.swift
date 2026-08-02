@@ -755,7 +755,12 @@ final class SettingsStorage {
     /// `true` = Cloud mode (realtime websocket + async fallback).
     /// `false` = Local mode (audio recording only, process later from Recordings).
     var meetingRealtimeTranscriptionEnabled: Bool {
-        get { defaults.bool(forKey: Key.meetingRealtimeTranscriptionEnabled.rawValue) }
+        get {
+            if defaults.object(forKey: Key.meetingRealtimeTranscriptionEnabled.rawValue) == nil {
+                return transcriptionProvider == .cloud
+            }
+            return defaults.bool(forKey: Key.meetingRealtimeTranscriptionEnabled.rawValue)
+        }
         set { defaults.set(newValue, forKey: Key.meetingRealtimeTranscriptionEnabled.rawValue) }
     }
 
