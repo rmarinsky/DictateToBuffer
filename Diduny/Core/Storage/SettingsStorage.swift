@@ -149,6 +149,29 @@ final class SettingsStorage {
         migrateProxyURLIfNeeded()
     }
 
+    func applyNewUserDefaultsIfMissing() {
+        let values: [Key: Any] = [
+            .pushToTalkKey: PushToTalkKey.rightShift.rawValue,
+            .pushToTalkHoldEnabled: true,
+            .pushToTalkToggleEnabled: false,
+            .translationPushToTalkHoldEnabled: false,
+            .translationPushToTalkToggleEnabled: false,
+            .pushToTalkHoldStartDelaySeconds: 1.2,
+            .translationPushToTalkHoldStartDelaySeconds: 1.2,
+            .pushToTalkToggleTapCount: 3,
+            .translationPushToTalkToggleTapCount: 3,
+            .meetingHotkeyPressCount: 3,
+            .meetingTranslationHotkeyPressCount: 3,
+            .autoPaste: true,
+            .playSoundOnCompletion: true,
+            .typingSpeedWordsPerMinute: 40.0
+        ]
+
+        for (key, value) in values where defaults.object(forKey: key.rawValue) == nil {
+            defaults.set(value, forKey: key.rawValue)
+        }
+    }
+
     /// One-time migration from legacy `selectedDeviceID` (AudioDeviceID int) to `selectedDeviceUID` (String).
     private func migrateSelectedDeviceIfNeeded() {
         let legacyKey = "selectedDeviceID"

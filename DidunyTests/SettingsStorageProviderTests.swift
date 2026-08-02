@@ -43,6 +43,47 @@ final class SettingsStorageProviderTests: XCTestCase {
         XCTAssertEqual(Bundle.main.bundleIdentifier, "ua.com.rmarinsky.diduny.test")
     }
 
+    func test_newUserDefaults_doNotOverwritePersistedSettings() {
+        let defaults = UserDefaults.standard
+        let onboardingKey = "onboarding.completed"
+        let keys = [
+            "pushToTalkKey",
+            "pushToTalkHoldEnabled",
+            "pushToTalkToggleEnabled",
+            "translationPushToTalkHoldEnabled",
+            "translationPushToTalkToggleEnabled",
+            "pushToTalkHoldStartDelaySeconds",
+            "translationPushToTalkHoldStartDelaySeconds",
+            "pushToTalkToggleTapCount",
+            "translationPushToTalkToggleTapCount",
+            "meetingHotkeyPressCount",
+            "meetingTranslationHotkeyPressCount",
+            "autoPaste",
+            "playSoundOnCompletion",
+            "typingSpeedWordsPerMinute"
+        ]
+        let storedValues = keys.map { defaults.object(forKey: $0) }
+        let storedOnboarding = defaults.object(forKey: onboardingKey)
+        defer {
+            zip(keys, storedValues).forEach { restore($0.1, key: $0.0) }
+            restore(storedOnboarding, key: onboardingKey)
+        }
+
+        defaults.removeObject(forKey: onboardingKey)
+        SettingsStorage.shared.pushToTalkKey = .rightOption
+        SettingsStorage.shared.pushToTalkHoldEnabled = false
+        SettingsStorage.shared.autoPaste = false
+        SettingsStorage.shared.typingSpeedWordsPerMinute = 85
+
+        OnboardingManager.shared.setupDefaultsForNewUser()
+
+        XCTAssertEqual(SettingsStorage.shared.pushToTalkKey, .rightOption)
+        XCTAssertFalse(SettingsStorage.shared.pushToTalkHoldEnabled)
+        XCTAssertFalse(SettingsStorage.shared.autoPaste)
+        XCTAssertEqual(SettingsStorage.shared.typingSpeedWordsPerMinute, 85)
+        XCTAssertEqual(SettingsStorage.shared.meetingHotkeyPressCount, 3)
+    }
+
     override func setUp() {
         super.setUp()
         storedProvider = UserDefaults.standard.object(forKey: transcriptionProviderKey)
