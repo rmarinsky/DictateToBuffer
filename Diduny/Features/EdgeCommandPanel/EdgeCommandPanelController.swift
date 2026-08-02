@@ -57,7 +57,7 @@ enum EdgeCommandPanelPresentation: Equatable {
 
 enum EdgeCommandPanelPlacement {
     static let expandedCornerRadius: CGFloat = 15
-    static let liveControlHitTargetHeight: CGFloat = 38
+    static let liveControlHitTargetHeight: CGFloat = 44
 
     static func nearestDock(to proposedFrame: NSRect, in visibleFrame: NSRect) -> EdgeCommandPanelDock {
         let distances: [(EdgeCommandPanelDockEdge, CGFloat)] = [

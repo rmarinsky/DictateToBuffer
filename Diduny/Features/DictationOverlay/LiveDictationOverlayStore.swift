@@ -1,4 +1,5 @@
 import Foundation
+import KeyboardShortcuts
 import Observation
 
 enum LiveDictationOverlayPhase: Equatable {
@@ -94,6 +95,54 @@ final class LiveDictationOverlayStore {
 
     var canStop: Bool {
         phase == .recording || phase == .starting
+    }
+
+    var stopShortcutHint: String? {
+        guard canStop else { return nil }
+
+        switch mode {
+        case .voice:
+            if let modifierHint = modifierToggleHint(
+                key: SettingsStorage.shared.pushToTalkKey,
+                isEnabled: SettingsStorage.shared.pushToTalkToggleEnabled,
+                tapCount: SettingsStorage.shared.pushToTalkToggleTapCount
+            ) {
+                return modifierHint
+            }
+            return actionShortcutHint(.toggleRecording, pressCount: SettingsStorage.shared.recordingHotkeyPressCount)
+        case .translation:
+            if let modifierHint = modifierToggleHint(
+                key: SettingsStorage.shared.translationPushToTalkKey,
+                isEnabled: SettingsStorage.shared.translationPushToTalkToggleEnabled,
+                tapCount: SettingsStorage.shared.translationPushToTalkToggleTapCount
+            ) {
+                return modifierHint
+            }
+            return actionShortcutHint(
+                .toggleTranslation,
+                pressCount: SettingsStorage.shared.translationHotkeyPressCount
+            )
+        case .meeting:
+            return actionShortcutHint(
+                .toggleMeetingRecording,
+                pressCount: SettingsStorage.shared.meetingHotkeyPressCount
+            )
+        case .meetingTranslation:
+            return actionShortcutHint(
+                .toggleMeetingTranslation,
+                pressCount: SettingsStorage.shared.meetingTranslationHotkeyPressCount
+            )
+        case .fileTranscription:
+            return nil
+        }
+    }
+
+    var cancelShortcutHint: String? {
+        guard canStop, SettingsStorage.shared.escapeCancelEnabled else { return nil }
+        return repeatedShortcutHint(
+            SettingsStorage.shared.escapeCancelShortcut.displayName,
+            pressCount: SettingsStorage.shared.escapeCancelPressCount
+        )
     }
 
     var providerLabel: String {
@@ -209,6 +258,20 @@ final class LiveDictationOverlayStore {
 
     private func composedText(final: String, provisional: String) -> String {
         (final + provisional).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func modifierToggleHint(key: PushToTalkKey, isEnabled: Bool, tapCount: Int) -> String? {
+        guard isEnabled, key != .none else { return nil }
+        return repeatedShortcutHint(key.symbol, pressCount: tapCount)
+    }
+
+    private func actionShortcutHint(_ name: KeyboardShortcuts.Name, pressCount: Int) -> String? {
+        guard let shortcut = KeyboardShortcuts.getShortcut(for: name) else { return nil }
+        return repeatedShortcutHint(String(describing: shortcut), pressCount: pressCount)
+    }
+
+    private func repeatedShortcutHint(_ shortcut: String, pressCount: Int) -> String {
+        pressCount > 1 ? "\(shortcut) ×\(pressCount)" : shortcut
     }
 }
 

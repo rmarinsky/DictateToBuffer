@@ -115,7 +115,7 @@ struct EdgeCommandPanelModelTests {
 
     @Test("Live controls have a comfortable click target")
     func liveControlsHaveComfortableClickTarget() {
-        #expect(EdgeCommandPanelPlacement.liveControlHitTargetHeight >= 34)
+        #expect(EdgeCommandPanelPlacement.liveControlHitTargetHeight >= 44)
     }
 
     @Test("Meeting feedback grows beyond the compact dictation panel")
@@ -161,6 +161,42 @@ struct EdgeCommandPanelModelTests {
 
 @MainActor
 struct EdgeCommandPanelLiveTextTests {
+    @Test("Recording controls expose active stop and cancel shortcuts")
+    func recordingControlsExposeActiveShortcuts() {
+        let settings = SettingsStorage.shared
+        let previousKey = settings.pushToTalkKey
+        let previousToggleEnabled = settings.pushToTalkToggleEnabled
+        let previousTapCount = settings.pushToTalkToggleTapCount
+        let previousCancelEnabled = settings.escapeCancelEnabled
+        let previousCancelShortcut = settings.escapeCancelShortcut
+        let previousCancelPressCount = settings.escapeCancelPressCount
+        defer {
+            settings.pushToTalkKey = previousKey
+            settings.pushToTalkToggleEnabled = previousToggleEnabled
+            settings.pushToTalkToggleTapCount = previousTapCount
+            settings.escapeCancelEnabled = previousCancelEnabled
+            settings.escapeCancelShortcut = previousCancelShortcut
+            settings.escapeCancelPressCount = previousCancelPressCount
+        }
+
+        settings.pushToTalkKey = .rightShift
+        settings.pushToTalkToggleEnabled = true
+        settings.pushToTalkToggleTapCount = 2
+        settings.escapeCancelEnabled = true
+        settings.escapeCancelShortcut = .defaultShortcut
+        settings.escapeCancelPressCount = 3
+
+        let store = LiveDictationOverlayStore()
+        store.reset(mode: .voice)
+        store.phase = .recording
+
+        #expect(store.stopShortcutHint == "⇧ ×2")
+        #expect(store.cancelShortcutHint == "Esc ×3")
+
+        settings.escapeCancelEnabled = false
+        #expect(store.cancelShortcutHint == nil)
+    }
+
     @Test("Meeting transcript keeps timestamps and speaker diarization")
     func meetingTranscriptKeepsStructuredMetadata() {
         let store = LiveDictationOverlayStore()

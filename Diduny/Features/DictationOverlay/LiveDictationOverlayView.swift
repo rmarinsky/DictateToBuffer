@@ -133,7 +133,7 @@ struct LiveDictationOverlayView: View {
         HStack(spacing: 8) {
             Button(action: onCopy) {
                 Label(store.copiedAt == nil ? "Copy" : "Copied", systemImage: store.copiedAt == nil ? "doc.on.doc" : "checkmark")
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .font(.system(size: 12.5, weight: .semibold))
                     .frame(maxWidth: .infinity, minHeight: EdgeCommandPanelPlacement.liveControlHitTargetHeight)
                     .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
@@ -144,17 +144,93 @@ struct LiveDictationOverlayView: View {
             .help("Copy transcript")
 
             Button(action: store.phase == .pasted ? onDismiss : onStop) {
-                Label(store.phase == .pasted ? "Close" : "Stop", systemImage: store.phase == .pasted ? "xmark" : "stop.fill")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .frame(maxWidth: .infinity, minHeight: EdgeCommandPanelPlacement.liveControlHitTargetHeight)
-                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                HStack(spacing: 6) {
+                    Image(systemName: stopButtonIcon)
+                        .font(.system(size: 11, weight: .semibold))
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(stopButtonTitle)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .lineLimit(1)
+
+                        if let cancelShortcut = store.cancelShortcutHint {
+                            Text("Cancel  \(cancelShortcut)")
+                                .font(.system(size: 8.5, weight: .medium))
+                                .lineLimit(1)
+                                .opacity(0.72)
+                        }
+                    }
+
+                    Spacer(minLength: 2)
+
+                    if let stopShortcut = store.stopShortcutHint {
+                        shortcutKeycap(stopShortcut)
+                    }
+                }
+                .padding(.horizontal, 9)
+                .frame(maxWidth: .infinity, minHeight: EdgeCommandPanelPlacement.liveControlHitTargetHeight)
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .buttonStyle(.plain)
             .foregroundStyle(store.phase == .pasted || store.canStop ? Color.white : Color.secondary.opacity(0.55))
             .background(stopButtonColor, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .disabled(!store.canStop && store.phase != .pasted)
-            .help(store.phase == .pasted ? "Close" : "Stop recording")
+            .help(stopButtonHelp)
+            .accessibilityLabel(stopButtonTitle)
+            .accessibilityHint(stopButtonHelp)
         }
+    }
+
+    private func shortcutKeycap(_ shortcut: String) -> some View {
+        Text(shortcut)
+            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+            .lineLimit(1)
+            .padding(.horizontal, 5)
+            .frame(minHeight: 21)
+            .background(Color.white.opacity(0.14), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .stroke(Color.white.opacity(0.18), lineWidth: 0.5)
+            }
+    }
+
+    private var stopButtonTitle: String {
+        switch store.phase {
+        case .finalizing:
+            "Finishing…"
+        case .processing:
+            "Processing…"
+        case .pasted:
+            "Close"
+        default:
+            "Stop"
+        }
+    }
+
+    private var stopButtonIcon: String {
+        switch store.phase {
+        case .finalizing, .processing:
+            "ellipsis"
+        case .pasted:
+            "xmark"
+        default:
+            "stop.fill"
+        }
+    }
+
+    private var stopButtonHelp: String {
+        if store.phase == .pasted {
+            return "Close"
+        }
+
+        var parts = ["Stop and process recording"]
+        if let stopShortcut = store.stopShortcutHint {
+            parts.append("\(stopShortcut) also stops")
+        }
+        if let cancelShortcut = store.cancelShortcutHint {
+            parts.append("\(cancelShortcut) cancels")
+        }
+        return parts.joined(separator: ". ")
     }
 
     private var displayText: String {
