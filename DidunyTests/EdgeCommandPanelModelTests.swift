@@ -173,6 +173,12 @@ struct EdgeCommandPanelLiveTextTests {
 
         #expect(store.displayText.contains("[00:01] Speaker 1: Hello"))
         #expect(store.displayText.contains("[01:05] Speaker 2: Hi"))
+
+        store.processTokens([
+            RealtimeToken(text: "Still speaking", isFinal: false, speaker: "2", startMs: 66_000)
+        ])
+
+        #expect(store.displayText.contains("Still speaking"))
     }
 
     @Test("Meeting translation displays translated tokens instead of source tokens")

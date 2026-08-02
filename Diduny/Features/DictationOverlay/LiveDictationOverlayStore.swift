@@ -79,7 +79,13 @@ final class LiveDictationOverlayStore {
     var displayText: String {
         guard mode == .meeting else { return visibleText }
         let structuredText = meetingTranscript.finalTranscriptText
-        return structuredText.isEmpty ? visibleText : structuredText
+        guard !structuredText.isEmpty else { return visibleText }
+
+        let provisional = meetingTranscript.provisionalText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !provisional.isEmpty else { return structuredText }
+
+        let speaker = meetingTranscript.provisionalSpeaker.map { "Speaker \($0): " } ?? ""
+        return "\(structuredText)\n\n\(speaker)\(provisional)"
     }
 
     var hasText: Bool {
