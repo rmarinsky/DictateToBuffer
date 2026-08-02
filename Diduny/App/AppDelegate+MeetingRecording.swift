@@ -280,21 +280,19 @@ extension AppDelegate {
                 try await whisper.transcribeRawSamples(samples)
             },
             onText: { [weak self, store] text in
-                await MainActor.run {
-                    let tokens = [RealtimeToken(text: text, isFinal: false)]
-                    store.processTokens(tokens)
-                    self?.updateRecordingFeedbackTokens(tokens, mode: .meeting)
-                }
+                let tokens = [RealtimeToken(text: text, isFinal: false)]
+                await store.processTokens(tokens)
+                await self?.updateRecordingFeedbackTokens(tokens, mode: .meeting)
             },
             onError: { [weak self, store] error in
                 Log.whisper.warning("Local meeting preview failed: \(error.localizedDescription)")
                 await MainActor.run {
                     store.connectionStatus = .failed("Live preview unavailable")
-                    self?.updateRecordingFeedbackConnectionStatus(
-                        .failed("Live preview unavailable"),
-                        mode: .meeting
-                    )
                 }
+                await self?.updateRecordingFeedbackConnectionStatus(
+                    .failed("Live preview unavailable"),
+                    mode: .meeting
+                )
             }
         )
 
