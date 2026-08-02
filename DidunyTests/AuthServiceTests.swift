@@ -75,6 +75,34 @@ final class AuthServiceTests: XCTestCase {
     }
 
     @MainActor
+    func test_refreshClearsPartialCredentialsWhenRotatedTokenPersistenceFails() async {
+        let store = MemoryAuthTokenStore(
+            values: [
+                "auth_access_token": "old-access",
+                "auth_access_token_expires_at": "1050000",
+                "auth_refresh_token": "old-refresh",
+                "auth_user_email": "roman@example.com",
+            ],
+            failOnSaveKey: "auth_access_token"
+        )
+        let service = makeService(store: store) { request in
+            Self.response(
+                for: request,
+                body: #"{"accessToken":"new-access","accessTokenExpiresAt":2000000,"refreshToken":"new-refresh"}"#
+            )
+        }
+
+        let token = await service.getAccessToken()
+
+        XCTAssertNil(token)
+        XCTAssertNil(store.read(key: "auth_access_token"))
+        XCTAssertNil(store.read(key: "auth_refresh_token"))
+        XCTAssertNil(store.read(key: "auth_access_token_expires_at"))
+        XCTAssertNil(store.read(key: "auth_user_email"))
+        XCTAssertEqual(service.authState, .loggedOut)
+    }
+
+    @MainActor
     func test_logoutRevokesBearerSessionAndClearsLocalTokens() async throws {
         let store = MemoryAuthTokenStore(values: [
             "auth_access_token": "access",
@@ -141,12 +169,15 @@ final class AuthServiceTests: XCTestCase {
 private final class MemoryAuthTokenStore: AuthTokenStore, @unchecked Sendable {
     private let lock = NSLock()
     private var values: [String: String]
+    private let failOnSaveKey: String?
 
-    init(values: [String: String] = [:]) {
+    init(values: [String: String] = [:], failOnSaveKey: String? = nil) {
         self.values = values
+        self.failOnSaveKey = failOnSaveKey
     }
 
     func save(key: String, value: String) throws {
+        if key == failOnSaveKey { throw TestStoreError.saveFailed }
         lock.withLock { values[key] = value }
     }
 
@@ -157,6 +188,10 @@ private final class MemoryAuthTokenStore: AuthTokenStore, @unchecked Sendable {
     func delete(key: String) {
         _ = lock.withLock { values.removeValue(forKey: key) }
     }
+}
+
+private enum TestStoreError: Error {
+    case saveFailed
 }
 
 private final class MockAuthURLProtocol: URLProtocol, @unchecked Sendable {

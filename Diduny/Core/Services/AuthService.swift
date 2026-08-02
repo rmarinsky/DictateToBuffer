@@ -249,13 +249,18 @@ final class AuthService {
     }
 
     private func store(_ response: TokenResponse, email: String?) throws {
-        try tokenStore.save(key: Keys.refreshToken, value: response.refreshToken)
-        try tokenStore.save(key: Keys.accessToken, value: response.accessToken)
-        try tokenStore.save(key: Keys.accessTokenExpiresAt, value: String(response.accessTokenExpiresAt))
-        if let email, !email.isEmpty {
-            try tokenStore.save(key: Keys.userEmail, value: email)
+        do {
+            try tokenStore.save(key: Keys.refreshToken, value: response.refreshToken)
+            try tokenStore.save(key: Keys.accessToken, value: response.accessToken)
+            try tokenStore.save(key: Keys.accessTokenExpiresAt, value: String(response.accessTokenExpiresAt))
+            if let email, !email.isEmpty {
+                try tokenStore.save(key: Keys.userEmail, value: email)
+            }
+            UserDefaults.standard.set(true, forKey: Keys.sessionPresent)
+        } catch {
+            clearTokens()
+            throw error
         }
-        UserDefaults.standard.set(true, forKey: Keys.sessionPresent)
     }
 
     private func clearTokens() {
