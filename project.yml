@@ -39,7 +39,7 @@ settings:
     Debug:
       ONLY_ACTIVE_ARCH: YES
     Test:
-      ONLY_ACTIVE_ARCH: NO
+      ONLY_ACTIVE_ARCH: YES
     Release:
       ONLY_ACTIVE_ARCH: NO
 
@@ -58,12 +58,16 @@ targets:
       - target: Diduny
     settings:
       base:
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Diduny DEV.app/Contents/MacOS/Diduny DEV"
-        BUNDLE_LOADER: "$(TEST_HOST)"
         GENERATE_INFOPLIST_FILE: YES
       configs:
         Debug:
+          TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Diduny DEV.app/Contents/MacOS/Diduny DEV"
+          BUNDLE_LOADER: "$(TEST_HOST)"
           PRODUCT_BUNDLE_IDENTIFIER: ua.com.rmarinsky.diduny.dev.tests
+        Test:
+          TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Diduny TEST.app/Contents/MacOS/Diduny TEST"
+          BUNDLE_LOADER: "$(TEST_HOST)"
+          PRODUCT_BUNDLE_IDENTIFIER: ua.com.rmarinsky.diduny.test.tests
 
   Diduny:
     type: application
@@ -104,6 +108,7 @@ targets:
         Test:
           PRODUCT_NAME: "Diduny TEST"
           PRODUCT_BUNDLE_IDENTIFIER: ua.com.rmarinsky.diduny.test
+          SKIP_REMOTE_MEDIA_RUNTIME: YES
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: TEST_BUILD
         Release:
           PRODUCT_NAME: "Diduny"
@@ -123,7 +128,7 @@ schemes:
     run:
       config: Debug
     test:
-      config: Debug
+      config: Test
       targets:
         - DidunyTests
     archive:

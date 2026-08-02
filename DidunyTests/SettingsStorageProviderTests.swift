@@ -39,6 +39,10 @@ final class SettingsStorageProviderTests: XCTestCase {
     private var storedTextTranslationSourceLanguage: Any?
     private var storedTextTranslationTargetLanguage: Any?
 
+    func test_unitTestsUseIsolatedPreferencesDomain() {
+        XCTAssertEqual(Bundle.main.bundleIdentifier, "ua.com.rmarinsky.diduny.test")
+    }
+
     override func setUp() {
         super.setUp()
         storedProvider = UserDefaults.standard.object(forKey: transcriptionProviderKey)
