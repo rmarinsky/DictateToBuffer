@@ -183,7 +183,11 @@ struct EdgeCommandPanelLiveTextTests {
         settings.pushToTalkToggleEnabled = true
         settings.pushToTalkToggleTapCount = 2
         settings.escapeCancelEnabled = true
-        settings.escapeCancelShortcut = .defaultShortcut
+        settings.escapeCancelShortcut = RecordingCancelShortcut(
+            keyCode: 0,
+            modifiersRawValue: NSEvent.ModifierFlags.command.rawValue,
+            keyLabel: "A"
+        )
         settings.escapeCancelPressCount = 3
 
         let store = LiveDictationOverlayStore()

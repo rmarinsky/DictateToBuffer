@@ -140,7 +140,7 @@ final class LiveDictationOverlayStore {
     var cancelShortcutHint: String? {
         guard canStop, SettingsStorage.shared.escapeCancelEnabled else { return nil }
         return repeatedShortcutHint(
-            SettingsStorage.shared.escapeCancelShortcut.displayName,
+            "Esc",
             pressCount: SettingsStorage.shared.escapeCancelPressCount
         )
     }
