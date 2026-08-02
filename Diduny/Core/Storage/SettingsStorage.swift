@@ -125,6 +125,7 @@ final class SettingsStorage {
         case translationRealtimeSocketEnabled
         case transcriptionRealtimeSocketEnabled
         case meetingRealtimeTranscriptionEnabled
+        case meetingCloudSelectionMigrationCompleted
         case escapeCancelEnabled
         case escapeCancelShortcut
         case escapeCancelPressCount
@@ -224,6 +225,19 @@ final class SettingsStorage {
         default:
             break
         }
+    }
+
+    private func migrateLegacyCloudMeetingSelectionIfNeeded() {
+        guard defaults.object(forKey: Key.meetingCloudSelectionMigrationCompleted.rawValue) == nil else { return }
+        defaults.set(true, forKey: Key.meetingCloudSelectionMigrationCompleted.rawValue)
+
+        guard defaults.string(forKey: Key.transcriptionProvider.rawValue) == TranscriptionProvider.cloud.rawValue,
+              defaults.string(forKey: Key.translationProvider.rawValue) == TranscriptionProvider.cloud.rawValue,
+              defaults.object(forKey: Key.meetingRealtimeTranscriptionEnabled.rawValue) != nil,
+              !defaults.bool(forKey: Key.meetingRealtimeTranscriptionEnabled.rawValue)
+        else { return }
+
+        defaults.set(true, forKey: Key.meetingRealtimeTranscriptionEnabled.rawValue)
     }
 
     // MARK: - Audio Device
@@ -779,6 +793,7 @@ final class SettingsStorage {
     /// `false` = Local mode (audio recording only, process later from Recordings).
     var meetingRealtimeTranscriptionEnabled: Bool {
         get {
+            migrateLegacyCloudMeetingSelectionIfNeeded()
             if defaults.object(forKey: Key.meetingRealtimeTranscriptionEnabled.rawValue) == nil {
                 return transcriptionProvider == .cloud
             }
