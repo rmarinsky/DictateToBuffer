@@ -4,37 +4,52 @@ struct LiveDictationOverlayView: View {
     let store: LiveDictationOverlayStore
     let onCopy: () -> Void
     let onStop: () -> Void
+    let onDismiss: () -> Void
+    @State private var autoPaste = SettingsStorage.shared.autoPaste
     private static let transcriptBottomID = "transcript-bottom"
 
     var body: some View {
-        HStack(spacing: 12) {
-            OverlayStatusIcon(store: store, statusColor: statusColor, iconName: iconName)
+        VStack(spacing: 6) {
+            HStack(spacing: 12) {
+                OverlayStatusIcon(store: store, statusColor: statusColor, iconName: iconName)
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Text(store.title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text(store.title)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
 
-                    Text(store.statusText)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(statusColor)
-                        .lineLimit(1)
+                        Text(store.statusText)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(statusColor)
+                            .lineLimit(1)
 
-                    Spacer(minLength: 8)
+                        Spacer(minLength: 8)
 
-                    ElapsedTimeLabel(startedAt: store.startedAt)
+                        ElapsedTimeLabel(startedAt: store.startedAt)
+                    }
+
+                    transcriptView
                 }
 
-                transcriptView
+                controls
             }
 
-            controls
+            if store.phase == .pasted {
+                Toggle("Paste and close automatically", isOn: $autoPaste)
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: 11, weight: .medium))
+                    .onChange(of: autoPaste) { _, value in
+                        SettingsStorage.shared.autoPaste = value
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 50)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .frame(width: 560, height: 96)
+        .frame(width: 560, height: 120)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -99,16 +114,16 @@ struct LiveDictationOverlayView: View {
             .disabled(!store.hasText)
             .help("Copy transcript")
 
-            Button(action: onStop) {
-                Image(systemName: "stop.fill")
+            Button(action: store.phase == .pasted ? onDismiss : onStop) {
+                Image(systemName: store.phase == .pasted ? "xmark" : "stop.fill")
                     .font(.system(size: 12, weight: .bold))
                     .frame(width: 30, height: 30)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(store.canStop ? Color.white : Color.secondary.opacity(0.6))
-            .background(store.canStop ? Color.red : Color.primary.opacity(0.05), in: Circle())
-            .disabled(!store.canStop)
-            .help("Stop recording")
+            .foregroundStyle(store.phase == .pasted || store.canStop ? Color.white : Color.secondary.opacity(0.6))
+            .background(store.phase == .pasted ? Color.primary.opacity(0.16) : store.canStop ? Color.red : Color.primary.opacity(0.05), in: Circle())
+            .disabled(!store.canStop && store.phase != .pasted)
+            .help(store.phase == .pasted ? "Close" : "Stop recording")
         }
         .frame(width: 68)
     }

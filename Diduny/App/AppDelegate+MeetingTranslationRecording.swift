@@ -118,7 +118,7 @@ extension AppDelegate {
         Log.app.info("cancelMeetingTranslationRecording: END")
     }
 
-    func startMeetingTranslationRecording() async {
+    func startMeetingTranslationRecording(languagePair requestedPair: TranslationLanguagePair? = nil) async {
         Log.app.info("startMeetingTranslationRecording: BEGIN")
 
         guard canStartRecording(kind: .meetingTranslation) else {
@@ -143,7 +143,7 @@ extension AppDelegate {
         }
 
         // Meeting translation uses cloud realtime by default
-        let pair = SettingsStorage.shared.resolveTranslationLanguagePair()
+        let pair = requestedPair ?? SettingsStorage.shared.resolveTranslationLanguagePair()
         SettingsStorage.shared.markTranslationLanguagePairUsed(pair)
         activeMeetingTranslationLanguagePair = pair
         activeMeetingTranslationTargetLanguage = pair.languageB
