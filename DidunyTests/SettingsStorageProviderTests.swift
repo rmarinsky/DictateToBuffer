@@ -71,6 +71,7 @@ final class SettingsStorageProviderTests: XCTestCase {
             restore(storedOnboarding, key: onboardingKey)
         }
 
+        keys.forEach { defaults.removeObject(forKey: $0) }
         defaults.removeObject(forKey: onboardingKey)
         SettingsStorage.shared.pushToTalkKey = .rightOption
         SettingsStorage.shared.pushToTalkHoldEnabled = false
