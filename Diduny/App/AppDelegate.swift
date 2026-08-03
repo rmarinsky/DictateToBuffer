@@ -184,7 +184,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_: Notification) {
-        let isFreshInstall = OnboardingManager.shared.prepareForLaunch()
+        let hasExistingInstallState = AuthService.hasStoredSession
+            || SettingsStorage.hasPersistedFirstUseState
+            || RecordingsLibraryStorage.hasPersistedLibrary
+        let isFreshInstall = OnboardingManager.shared.prepareForLaunch(
+            hasExistingInstallState: hasExistingInstallState
+        )
         if let currentVersion = Bundle.main.object(
             forInfoDictionaryKey: "CFBundleShortVersionString"
         ) as? String {

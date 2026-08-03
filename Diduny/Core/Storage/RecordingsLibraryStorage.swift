@@ -15,6 +15,20 @@ struct RecordingDeletionRecovery: Codable, Equatable {
 final class RecordingsLibraryStorage {
     static let shared = RecordingsLibraryStorage()
 
+    nonisolated static var hasPersistedLibrary: Bool {
+        guard let appSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else { return false }
+        let bundleID = Bundle.main.bundleIdentifier ?? "Diduny"
+        let appDirectory = appSupport.appendingPathComponent(bundleID)
+        let metadataURL = appDirectory.appendingPathComponent("recordings_metadata.json")
+        if FileManager.default.fileExists(atPath: metadataURL.path) { return true }
+
+        let recordingsURL = appDirectory.appendingPathComponent("Recordings")
+        return (try? FileManager.default.contentsOfDirectory(atPath: recordingsURL.path).isEmpty) == false
+    }
+
     private(set) var recordings: [Recording] = []
 
     private let fileManager = FileManager.default

@@ -55,6 +55,16 @@ final class OnboardingManagerTests: XCTestCase {
         XCTAssertEqual(defaults.integer(forKey: "onboarding.currentStep"), 5)
     }
 
+    func test_existingInstallEvidenceNeverReceivesFreshDefaults() {
+        var applyCount = 0
+        let manager = OnboardingManager(defaults: defaults) { applyCount += 1 }
+
+        XCTAssertFalse(manager.prepareForLaunch(hasExistingInstallState: true))
+        XCTAssertEqual(applyCount, 0)
+        XCTAssertNotNil(defaults.object(forKey: "onboarding.firstLaunchTimestamp"))
+        XCTAssertFalse(manager.hasCompletedOnboarding)
+    }
+
     func test_hidingSetupGuideIsSessionOnlyAndNeverCompletesOnboarding() {
         let manager = OnboardingManager(defaults: defaults) {}
         _ = manager.prepareForLaunch()

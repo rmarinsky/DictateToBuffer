@@ -84,8 +84,8 @@ final class OnboardingManager {
     /// Applies first-install defaults before runtime services snapshot them.
     /// Returns true only on the first launch of a new installation.
     @discardableResult
-    func prepareForLaunch() -> Bool {
-        let freshInstall = isFirstLaunch
+    func prepareForLaunch(hasExistingInstallState: Bool = false) -> Bool {
+        let freshInstall = isFirstLaunch && !hasExistingInstallState
         if freshInstall {
             applyNewUserDefaults()
         }

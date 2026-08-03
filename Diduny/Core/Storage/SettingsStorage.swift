@@ -50,6 +50,12 @@ enum HistoryRetentionPolicy: String, CaseIterable, Identifiable {
 final class SettingsStorage {
     static let shared = SettingsStorage()
 
+    static var hasPersistedFirstUseState: Bool {
+        [Key.transcriptionProvider, .pushToTalkKey, .autoPaste].contains {
+            UserDefaults.standard.object(forKey: $0.rawValue) != nil
+        }
+    }
+
     private let defaults = UserDefaults.standard
     private static let baseFillerWords = [
         "е-е",
