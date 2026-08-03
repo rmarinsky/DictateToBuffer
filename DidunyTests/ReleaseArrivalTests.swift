@@ -84,4 +84,15 @@ final class UpdateArrivalStateTests: XCTestCase {
         XCTAssertEqual(state.highestLaunchedVersion, "2.1.0")
         XCTAssertNil(state.pendingReleaseLine)
     }
+
+    func testNewMajorMinorLineCreatesPersistentPendingNotice() {
+        defaults.set("2.1.4", forKey: UpdateArrivalState.highestLaunchedVersionKey)
+        let state = UpdateArrivalState(defaults: defaults)
+
+        state.recordLaunch(version: "2.2.0", isFreshInstall: false)
+
+        XCTAssertEqual(state.highestLaunchedVersion, "2.2.0")
+        XCTAssertEqual(state.pendingReleaseLine, "2.2")
+        XCTAssertEqual(UpdateArrivalState(defaults: defaults).pendingReleaseLine, "2.2")
+    }
 }
