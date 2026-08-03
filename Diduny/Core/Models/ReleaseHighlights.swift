@@ -38,4 +38,21 @@ struct ReleaseHighlights: Decodable, Equatable {
             )
         }
     }
+
+    static func bundled(in bundle: Bundle = .main) -> ReleaseHighlights? {
+        load(from: bundle.url(forResource: "ReleaseHighlights", withExtension: "json"))
+    }
+
+    static func load(from url: URL?) -> ReleaseHighlights? {
+        guard let url else {
+            NSLog("[Updates] ReleaseHighlights.json is missing")
+            return nil
+        }
+        do {
+            return try JSONDecoder().decode(ReleaseHighlights.self, from: Data(contentsOf: url))
+        } catch {
+            NSLog("[Updates] Invalid release highlights: %@", error.localizedDescription)
+            return nil
+        }
+    }
 }

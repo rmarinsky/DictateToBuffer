@@ -30,4 +30,15 @@ final class ReleaseHighlightsTests: XCTestCase {
             )
         }
     }
+
+    func testLoadHidesMissingAndMalformedContent() throws {
+        XCTAssertNil(ReleaseHighlights.load(from: nil))
+
+        let malformedURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("release-highlights-\(UUID().uuidString).json")
+        try Data(#"{"schemaVersion":1}"#.utf8).write(to: malformedURL)
+        defer { try? FileManager.default.removeItem(at: malformedURL) }
+
+        XCTAssertNil(ReleaseHighlights.load(from: malformedURL))
+    }
 }
