@@ -59,6 +59,7 @@ final class SettingsStorageProviderTests: XCTestCase {
             "meetingHotkeyPressCount",
             "meetingTranslationHotkeyPressCount",
             "autoPaste",
+            "transcriptionProvider",
             "playSoundOnCompletion",
             "typingSpeedWordsPerMinute"
         ]
@@ -73,14 +74,16 @@ final class SettingsStorageProviderTests: XCTestCase {
         defaults.removeObject(forKey: onboardingKey)
         SettingsStorage.shared.pushToTalkKey = .rightOption
         SettingsStorage.shared.pushToTalkHoldEnabled = false
-        SettingsStorage.shared.autoPaste = false
+        SettingsStorage.shared.autoPaste = true
+        SettingsStorage.shared.transcriptionProvider = .local
         SettingsStorage.shared.typingSpeedWordsPerMinute = 85
 
         SettingsStorage.shared.applyNewUserDefaultsIfMissing()
 
         XCTAssertEqual(SettingsStorage.shared.pushToTalkKey, .rightOption)
         XCTAssertFalse(SettingsStorage.shared.pushToTalkHoldEnabled)
-        XCTAssertFalse(SettingsStorage.shared.autoPaste)
+        XCTAssertTrue(SettingsStorage.shared.autoPaste)
+        XCTAssertEqual(SettingsStorage.shared.transcriptionProvider, .local)
         XCTAssertEqual(SettingsStorage.shared.typingSpeedWordsPerMinute, 85)
         XCTAssertEqual(SettingsStorage.shared.meetingHotkeyPressCount, 3)
     }
