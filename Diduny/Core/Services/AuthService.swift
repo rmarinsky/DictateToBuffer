@@ -14,6 +14,7 @@ final class AuthService {
 
     nonisolated static var hasStoredSession: Bool {
         UserDefaults.standard.bool(forKey: Keys.sessionPresent)
+            || UserDefaults.standard.bool(forKey: "_diduny_supabase_session_present")
     }
 
     enum AuthState: Equatable {
@@ -59,12 +60,20 @@ final class AuthService {
         self.session = session
         self.tokenStore = tokenStore
         self.now = now
-        authState = tokenStore.read(key: Keys.accessToken) == nil ? .loggedOut : .loggedIn
+        let hasCompleteSession = tokenStore.read(key: Keys.accessToken) != nil
+            && tokenStore.read(key: Keys.refreshToken) != nil
+            && tokenStore.read(key: Keys.accessTokenExpiresAt).flatMap(Int64.init) != nil
+        authState = hasCompleteSession ? .loggedIn : .loggedOut
+        if !hasCompleteSession {
+            tokenStore.delete(key: Keys.accessToken)
+            tokenStore.delete(key: Keys.refreshToken)
+            tokenStore.delete(key: Keys.accessTokenExpiresAt)
+            tokenStore.delete(key: Keys.userEmail)
+        }
         UserDefaults.standard.set(authState == .loggedIn, forKey: Keys.sessionPresent)
 
         if migrateLegacySession,
-           UserDefaults.standard.bool(forKey: "_diduny_supabase_session_present")
-        {
+           UserDefaults.standard.bool(forKey: "_diduny_supabase_session_present") {
             UserDefaults.standard.removeObject(forKey: "_diduny_supabase_session_present")
             KeychainManager.shared.delete(
                 serviceName: "supabase.gotrue.swift",
@@ -100,15 +109,23 @@ final class AuthService {
     }
 
     func logout() async {
+        let refreshInFlight = refreshTask
+        refreshInFlight?.cancel()
+        if let refreshInFlight {
+            _ = try? await refreshInFlight.value
+        }
+        let accessToken = tokenStore.read(key: Keys.accessToken)
+        clearTokens()
+
         if let url = URL(string: "\(proxyBaseURL)/api/v1/auth/logout") {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
-            if let accessToken = tokenStore.read(key: Keys.accessToken) {
+            request.timeoutInterval = 10
+            if let accessToken {
                 request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
             }
             _ = try? await session.data(for: request)
         }
-        clearTokens()
     }
 
     nonisolated func getAccessToken() async -> String? {
@@ -205,7 +222,13 @@ final class AuthService {
 
         do {
             let data = try await perform(request, errorPrefix: "Token refresh failed")
-            let response = try JSONDecoder().decode(TokenResponse.self, from: data)
+            let response: TokenResponse
+            do {
+                response = try JSONDecoder().decode(TokenResponse.self, from: data)
+            } catch {
+                clearTokens()
+                throw error
+            }
             try store(response, email: userEmail)
             authState = .loggedIn
         } catch AuthError.notAuthenticated {
@@ -232,7 +255,7 @@ final class AuthService {
         return data
     }
 
-    private nonisolated static func data(
+    nonisolated private static func data(
         for sourceRequest: URLRequest,
         session: URLSession
     ) async throws -> (Data, HTTPURLResponse) {

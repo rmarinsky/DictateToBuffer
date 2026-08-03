@@ -2,9 +2,49 @@ import XCTest
 @testable import Diduny
 
 final class AuthServiceTests: XCTestCase {
+    private let sessionPresentKey = "_diduny_auth_session_present"
+    private let migrationNoticeKey = "_diduny_auth_requires_relogin"
+    private let legacySessionPresentKey = "_diduny_supabase_session_present"
+    private var storedDefaults: [String: Any] = [:]
+
+    override func setUp() {
+        super.setUp()
+        for key in [sessionPresentKey, migrationNoticeKey, legacySessionPresentKey] {
+            storedDefaults[key] = UserDefaults.standard.object(forKey: key)
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+
     override func tearDown() {
         MockAuthURLProtocol.handler = nil
+        for key in [sessionPresentKey, migrationNoticeKey, legacySessionPresentKey] {
+            if let value = storedDefaults[key] {
+                UserDefaults.standard.set(value, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+        storedDefaults.removeAll()
         super.tearDown()
+    }
+
+    func test_hasStoredSessionRecognizesLegacySessionBeforeMigration() {
+        UserDefaults.standard.set(true, forKey: legacySessionPresentKey)
+
+        XCTAssertTrue(AuthService.hasStoredSession)
+    }
+
+    @MainActor
+    func test_initClearsPreexistingPartialCredentials() {
+        let store = MemoryAuthTokenStore(values: ["auth_access_token": "orphaned-access"])
+
+        let service = makeService(store: store) { request in
+            Self.response(for: request, body: #"{"message":"unused"}"#)
+        }
+
+        XCTAssertEqual(service.authState, .loggedOut)
+        XCTAssertNil(store.read(key: "auth_access_token"))
+        XCTAssertFalse(AuthService.hasStoredSession)
     }
 
     @MainActor
@@ -103,6 +143,28 @@ final class AuthServiceTests: XCTestCase {
     }
 
     @MainActor
+    func test_refreshClearsCredentialsWhenRotatedResponseCannotBeDecoded() async {
+        let store = MemoryAuthTokenStore(values: [
+            "auth_access_token": "old-access",
+            "auth_access_token_expires_at": "1050000",
+            "auth_refresh_token": "old-refresh",
+            "auth_user_email": "roman@example.com",
+        ])
+        let service = makeService(store: store) { request in
+            Self.response(for: request, body: #"{"accessToken":"new-access"}"#)
+        }
+
+        let token = await service.getAccessToken()
+
+        XCTAssertNil(token)
+        XCTAssertNil(store.read(key: "auth_access_token"))
+        XCTAssertNil(store.read(key: "auth_refresh_token"))
+        XCTAssertNil(store.read(key: "auth_access_token_expires_at"))
+        XCTAssertNil(store.read(key: "auth_user_email"))
+        XCTAssertEqual(service.authState, .loggedOut)
+    }
+
+    @MainActor
     func test_logoutRevokesBearerSessionAndClearsLocalTokens() async throws {
         let store = MemoryAuthTokenStore(values: [
             "auth_access_token": "access",
@@ -113,6 +175,9 @@ final class AuthServiceTests: XCTestCase {
         let service = makeService(store: store) { request in
             XCTAssertEqual(request.url?.path, "/api/v1/auth/logout")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
+            XCTAssertEqual(request.timeoutInterval, 10)
+            XCTAssertNil(store.read(key: "auth_access_token"))
+            XCTAssertNil(store.read(key: "auth_refresh_token"))
             return Self.response(for: request, body: #"{"message":"Logged out"}"#)
         }
 

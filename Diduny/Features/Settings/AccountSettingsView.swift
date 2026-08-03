@@ -406,7 +406,6 @@ struct AccountSettingsView: View {
     private func resendOtp() {
         otpCode = ""
         authError = nil
-        authService.cancelOtpFlow()
         sendOtp()
     }
 

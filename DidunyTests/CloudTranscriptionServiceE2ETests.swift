@@ -82,7 +82,8 @@ final class CloudTranscriptionServiceE2ETests: XCTestCase {
     private func ensureOtpSession(
         mailpitURL: String,
     ) async throws -> String {
-        if let accessToken = await AuthService.shared.getAccessToken() {
+        if AuthService.hasStoredSession,
+           let accessToken = await AuthService.shared.getAccessToken() {
             return accessToken
         }
 
