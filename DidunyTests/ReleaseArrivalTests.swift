@@ -56,3 +56,32 @@ final class ReleaseHighlightsTests: XCTestCase {
         )
     }
 }
+
+@MainActor
+final class UpdateArrivalStateTests: XCTestCase {
+    private var defaults: UserDefaults!
+    private var suiteName: String!
+
+    override func setUp() {
+        super.setUp()
+        suiteName = "UpdateArrivalStateTests.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults = nil
+        suiteName = nil
+        super.tearDown()
+    }
+
+    func testFreshInstallRecordsVersionWithoutPendingNotice() {
+        let state = UpdateArrivalState(defaults: defaults)
+
+        state.recordLaunch(version: "2.1.0", isFreshInstall: true)
+
+        XCTAssertEqual(state.highestLaunchedVersion, "2.1.0")
+        XCTAssertNil(state.pendingReleaseLine)
+    }
+}
