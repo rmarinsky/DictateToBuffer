@@ -94,5 +94,45 @@ final class UpdateArrivalStateTests: XCTestCase {
         XCTAssertEqual(state.highestLaunchedVersion, "2.2.0")
         XCTAssertEqual(state.pendingReleaseLine, "2.2")
         XCTAssertEqual(UpdateArrivalState(defaults: defaults).pendingReleaseLine, "2.2")
+
+        state.dismissPendingRelease()
+        state.recordLaunch(version: "3.0.0", isFreshInstall: false)
+        XCTAssertEqual(state.pendingReleaseLine, "3.0")
+    }
+
+    func testEstablishedInstallWithoutUpdateStateShowsCurrentReleaseLine() {
+        let state = UpdateArrivalState(defaults: defaults)
+
+        state.recordLaunch(version: "2.1.0", isFreshInstall: false)
+
+        XCTAssertEqual(state.highestLaunchedVersion, "2.1.0")
+        XCTAssertEqual(state.pendingReleaseLine, "2.1")
+    }
+
+    func testPatchDowngradeIdempotencyAndDismissalDoNotResurfaceNotice() {
+        defaults.set("2.2.0", forKey: UpdateArrivalState.highestLaunchedVersionKey)
+        defaults.set("2.2", forKey: UpdateArrivalState.pendingReleaseLineKey)
+        let state = UpdateArrivalState(defaults: defaults)
+
+        state.recordLaunch(version: "2.2.1", isFreshInstall: false)
+        XCTAssertEqual(state.highestLaunchedVersion, "2.2.1")
+        XCTAssertEqual(state.pendingReleaseLine, "2.2")
+
+        state.dismissPendingRelease()
+        state.recordLaunch(version: "2.2.1", isFreshInstall: false)
+        state.recordLaunch(version: "2.1.9", isFreshInstall: false)
+        state.recordLaunch(version: "2.2.2", isFreshInstall: false)
+
+        XCTAssertEqual(state.highestLaunchedVersion, "2.2.2")
+        XCTAssertNil(state.pendingReleaseLine)
+        XCTAssertNil(defaults.object(forKey: UpdateArrivalState.pendingReleaseLineKey))
+    }
+
+    func testUnavailableContentDoesNotClearPendingNotice() {
+        defaults.set("2.2", forKey: UpdateArrivalState.pendingReleaseLineKey)
+        let state = UpdateArrivalState(defaults: defaults)
+
+        XCTAssertNil(ReleaseHighlights.load(from: nil))
+        XCTAssertEqual(state.pendingReleaseLine, "2.2")
     }
 }
