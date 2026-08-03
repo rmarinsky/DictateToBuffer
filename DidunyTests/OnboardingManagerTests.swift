@@ -73,6 +73,17 @@ final class OnboardingManagerTests: XCTestCase {
         XCTAssertFalse(manager.hasCompletedOnboarding)
     }
 
+    func test_hidingIncompleteSetupDoesNotRevealUpdateHighlights() {
+        let manager = OnboardingManager(defaults: defaults) {}
+        _ = manager.prepareForLaunch()
+
+        manager.hideSetupGuideForSession()
+
+        XCTAssertFalse(manager.shouldShowSetupGuide)
+        XCTAssertFalse(manager.canShowUpdateHighlights)
+        XCTAssertFalse(manager.hasCompletedOnboarding)
+    }
+
     func test_completedUserCanOpenAndHideSetupGuideFromSettingsForCurrentSession() {
         let manager = OnboardingManager(defaults: defaults) {}
         manager.hasCompletedOnboarding = true
@@ -144,5 +155,28 @@ final class OnboardingManagerTests: XCTestCase {
         XCTAssertTrue(manager.hasCompletedOnboarding)
         XCTAssertEqual(defaults.integer(forKey: "onboarding.version"), 1)
         XCTAssertEqual(defaults.integer(forKey: "onboarding.currentStep"), 6)
+    }
+
+    func test_successfulSavedDictationKeepsSuccessGuideVisibleUntilDone() {
+        let manager = OnboardingManager(defaults: defaults) {}
+        _ = manager.prepareForLaunch()
+
+        XCTAssertTrue(
+            manager.didSaveSuccessfulDictation(
+                recordingID: UUID(),
+                text: "First cloud dictation",
+                provider: .cloud,
+                isAuthenticated: true
+            )
+        )
+
+        XCTAssertTrue(manager.hasCompletedOnboarding)
+        XCTAssertTrue(manager.shouldShowSetupGuide)
+        XCTAssertFalse(manager.canShowUpdateHighlights)
+
+        manager.hideSetupGuideForSession()
+
+        XCTAssertFalse(manager.shouldShowSetupGuide)
+        XCTAssertTrue(manager.canShowUpdateHighlights)
     }
 }

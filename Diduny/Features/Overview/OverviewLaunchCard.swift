@@ -19,7 +19,8 @@ struct OverviewLaunchCard: View {
     var body: some View {
         if onboarding.shouldShowSetupGuide {
             setupGuideCard
-        } else if let releaseLine = updateArrival.pendingReleaseLine {
+        } else if onboarding.canShowUpdateHighlights,
+                  let releaseLine = updateArrival.pendingReleaseLine {
             if let releaseHighlights {
                 whatsNewCard(releaseLine: releaseLine, highlights: releaseHighlights)
             }
@@ -39,11 +40,15 @@ struct OverviewLaunchCard: View {
 
                 Spacer()
 
-                Button("Set up later") {
+                Button(onboarding.hasCompletedOnboarding ? "Done" : "Set up later") {
                     onboarding.hideSetupGuideForSession()
                 }
                 .buttonStyle(.borderless)
-                .accessibilityHint("Collapses the setup guide until Diduny is relaunched")
+                .accessibilityHint(
+                    onboarding.hasCompletedOnboarding
+                        ? "Closes the completed setup guide"
+                        : "Collapses the setup guide until Diduny is relaunched"
+                )
             }
 
             setupStep(

@@ -49,6 +49,7 @@ final class OnboardingManager {
 
     private(set) var setupGuideHiddenForSession = false
     private(set) var setupGuideRequestedForSession = false
+    private(set) var didCompleteSetupThisSession = false
 
     init(
         defaults: UserDefaults = .standard,
@@ -93,7 +94,12 @@ final class OnboardingManager {
 
     var shouldShowSetupGuide: Bool {
         setupGuideRequestedForSession
+            || didCompleteSetupThisSession
             || (!hasCompletedOnboarding && !setupGuideHiddenForSession)
+    }
+
+    var canShowUpdateHighlights: Bool {
+        hasCompletedOnboarding && !shouldShowSetupGuide
     }
 
     /// Applies first-install defaults before runtime services snapshot them.
@@ -116,6 +122,7 @@ final class OnboardingManager {
     func hideSetupGuideForSession() {
         setupGuideHiddenForSession = true
         setupGuideRequestedForSession = false
+        didCompleteSetupThisSession = false
     }
 
     func showSetupGuide() {
@@ -149,6 +156,7 @@ final class OnboardingManager {
         }
 
         hasCompletedOnboarding = true
+        didCompleteSetupThisSession = true
         return true
     }
 
@@ -183,5 +191,6 @@ final class OnboardingManager {
         }
         setupGuideHiddenForSession = false
         setupGuideRequestedForSession = false
+        didCompleteSetupThisSession = false
     }
 }
