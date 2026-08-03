@@ -17,7 +17,7 @@ struct OverviewView: View {
             switch self { case .week: .weekOfYear; case .month: .month; case .year: .year }
         }
         var daysBack: Int { switch self { case .week: 7; case .month: 30; case .year: 365 } }
-        var chartTitle: String { switch self { case .week: "Spoken this week"; case .month: "Spoken this month"; case .year: "Spoken this year" } }
+        var chartTitle: String { switch self { case .week: "Time saved this week"; case .month: "Time saved this month"; case .year: "Time saved this year" } }
         var chartSubtitle: String { switch self { case .week, .month: "minutes per day"; case .year: "minutes per month" } }
     }
 
@@ -33,20 +33,23 @@ struct OverviewView: View {
 
     // MARK: - Computed stats
 
-    private var totalSeconds: Double {
-        periodRecordings.reduce(0) { $0 + $1.durationSeconds }
+    private var periodStatistics: RecordingStatistics {
+        RecordingStatistics(recordings: periodRecordings)
     }
 
-    private var typingTimeAvoidedSeconds: Double {
-        guard totalWords > 0 else { return 0 }
-        return Double(totalWords) / max(typingSpeedWordsPerMinute, 1) * 60
+    private var typingTimeSavedSeconds: Double {
+        periodStatistics.typingTimeSavedSeconds(wordsPerMinute: typingSpeedWordsPerMinute)
     }
 
-    private var netTimeSavedSeconds: Double {
-        max(typingTimeAvoidedSeconds - totalSeconds, 0)
+    private var mediaTimeSavedSeconds: Double {
+        periodStatistics.mediaTimeSavedSeconds
     }
 
-    private var totalHours: Double { typingTimeAvoidedSeconds / 3600 }
+    private var totalTimeSavedSeconds: Double {
+        periodStatistics.totalTimeSavedSeconds(wordsPerMinute: typingSpeedWordsPerMinute)
+    }
+
+    private var totalHours: Double { totalTimeSavedSeconds / 3600 }
 
     private var previousPeriodStart: Date {
         Calendar.current.date(byAdding: .day, value: -(timePeriod.daysBack * 2), to: Date()) ?? Date()
@@ -56,18 +59,14 @@ struct OverviewView: View {
         storage.recordings.filter { $0.createdAt >= previousPeriodStart && $0.createdAt < periodStart }
     }
 
-    private var previousTotalWords: Int {
-        previousPeriodRecordings.compactMap(\.transcriptionText).reduce(0) { $0 + $1.split(separator: " ").count }
-    }
-
-    private var previousTypingTimeAvoidedSeconds: Double {
-        guard previousTotalWords > 0 else { return 0 }
-        return Double(previousTotalWords) / max(typingSpeedWordsPerMinute, 1) * 60
+    private var previousTimeSavedSeconds: Double {
+        RecordingStatistics(recordings: previousPeriodRecordings)
+            .totalTimeSavedSeconds(wordsPerMinute: typingSpeedWordsPerMinute)
     }
 
     private var trendPercent: Int? {
-        guard previousTypingTimeAvoidedSeconds > 0 else { return nil }
-        return Int(((typingTimeAvoidedSeconds - previousTypingTimeAvoidedSeconds) / previousTypingTimeAvoidedSeconds * 100).rounded())
+        guard previousTimeSavedSeconds > 0 else { return nil }
+        return Int(((totalTimeSavedSeconds - previousTimeSavedSeconds) / previousTimeSavedSeconds * 100).rounded())
     }
 
     private var comparisonLabel: String {
@@ -85,10 +84,10 @@ struct OverviewView: View {
         }
     }
 
-    private var recordingCount: Int { periodRecordings.count }
+    private var recordingCount: Int { periodStatistics.recordingCount }
 
     private var totalWords: Int {
-        periodRecordings.compactMap(\.transcriptionText).reduce(0) { $0 + $1.split(separator: " ").count }
+        periodStatistics.transcribedWordCount
     }
 
     private var streak: Int {
@@ -103,7 +102,7 @@ struct OverviewView: View {
         return count
     }
 
-    // MARK: - Daily series for chart
+    // MARK: - Series for chart
 
     struct DayStat: Identifiable {
         let id: Date
@@ -113,17 +112,40 @@ struct OverviewView: View {
         let label: String
     }
 
-    private var dailySeries: [DayStat] {
+    private var chartSeries: [DayStat] {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
+        if timePeriod == .year {
+            let currentMonth = cal.date(from: cal.dateComponents([.year, .month], from: today))!
+            let months = (0 ..< 12).reversed().compactMap {
+                cal.date(byAdding: .month, value: -$0, to: currentMonth)
+            }
+            let byMonth = Dictionary(grouping: periodRecordings) {
+                cal.date(from: cal.dateComponents([.year, .month], from: $0.createdAt))!
+            }
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MMM"
+            return months.map { month in
+                DayStat(
+                    id: month,
+                    minutes: RecordingStatistics(recordings: byMonth[month] ?? [])
+                        .totalTimeSavedSeconds(wordsPerMinute: typingSpeedWordsPerMinute) / 60,
+                    isToday: month == currentMonth,
+                    isFuture: false,
+                    label: formatter.string(from: month)
+                )
+            }
+        }
+
         let days = (0 ..< timePeriod.daysBack).map {
             cal.date(byAdding: .day, value: -(timePeriod.daysBack - 1 - $0), to: today)!
         }
         let byDay = Dictionary(grouping: periodRecordings) { cal.startOfDay(for: $0.createdAt) }
         let formatter = DateFormatter()
-        formatter.dateFormat = timePeriod == .year ? "MMM" : "EEE"
+        formatter.dateFormat = "EEE"
         return days.map { day in
-            let mins = (byDay[day] ?? []).reduce(0) { $0 + $1.durationSeconds } / 60
+            let mins = RecordingStatistics(recordings: byDay[day] ?? [])
+                .totalTimeSavedSeconds(wordsPerMinute: typingSpeedWordsPerMinute) / 60
             return DayStat(
                 id: day,
                 minutes: mins,
@@ -135,24 +157,23 @@ struct OverviewView: View {
     }
 
     private var avgMinutes: Double {
-        let nonEmpty = dailySeries.filter { !$0.isFuture && $0.minutes > 0 }
+        let nonEmpty = chartSeries.filter { !$0.isFuture && $0.minutes > 0 }
         guard !nonEmpty.isEmpty else { return 0 }
         return nonEmpty.reduce(0) { $0 + $1.minutes } / Double(nonEmpty.count)
     }
 
     private var maxMinutes: Double {
-        dailySeries.map(\.minutes).max() ?? 1
+        chartSeries.map(\.minutes).max() ?? 1
     }
 
     // MARK: - Hero description
 
     private var heroDescription: String {
-        guard typingTimeAvoidedSeconds > 0 else {
+        guard totalTimeSavedSeconds > 0 else {
             return "Based on \(formatWordsPerMinute(typingSpeedWordsPerMinute)) WPM typing baseline"
         }
 
-        let netSaved = formatDurationCompact(netTimeSavedSeconds)
-        return "\(netSaved) net saved · \(formatWordsPerMinute(typingSpeedWordsPerMinute)) WPM typing baseline"
+        return "\(formatDurationCompact(typingTimeSavedSeconds)) typing · \(formatDurationCompact(mediaTimeSavedSeconds)) media"
     }
 
     // MARK: - Body
@@ -200,7 +221,7 @@ struct OverviewView: View {
     private var heroCard: some View {
         HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("TIME NOT TYPED · THIS \(timePeriod.rawValue.uppercased())")
+                Text("TIME SAVED · THIS \(timePeriod.rawValue.uppercased())")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(Color("BrandAccentDeep"))
                     .kerning(0.5)
@@ -234,13 +255,15 @@ struct OverviewView: View {
         )
     }
 
+    @ViewBuilder
     private var trendView: some View {
-        let value = trendPercent ?? 0
-        let arrow = value >= 0 ? "↗" : "↘"
-        let magnitude = abs(value)
-        return (Text(arrow).foregroundColor(.green) +
-            Text(" \(magnitude)% vs \(comparisonLabel)").foregroundColor(.secondary))
-            .font(.system(size: 12, weight: .medium))
+        if let value = trendPercent {
+            let arrow = value >= 0 ? "↗" : "↘"
+            let magnitude = abs(value)
+            (Text(arrow).foregroundColor(value >= 0 ? .green : .red) +
+                Text(" \(magnitude)% vs \(comparisonLabel)").foregroundColor(.secondary))
+                .font(.system(size: 12, weight: .medium))
+        }
     }
 
     private var waveformRibbon: some View {
@@ -263,14 +286,14 @@ struct OverviewView: View {
                 MetricCard(
                     icon: "waveform",
                     value: "\(recordingCount)",
-                    label: "Recordings spoken"
+                    label: "Recordings"
                 )
                 MetricCard(
                     icon: "text.alignleft",
                     value: totalWords >= 1000
                         ? String(format: "%.1fk", Double(totalWords) / 1000)
                         : "\(totalWords)",
-                    label: "Words dictated"
+                    label: "Words transcribed"
                 )
                 MetricCard(
                     icon: "dial.medium",
@@ -314,7 +337,7 @@ struct OverviewView: View {
                         }
                 }
 
-                ForEach(dailySeries) { day in
+                ForEach(chartSeries) { day in
                     if day.isFuture || day.minutes == 0 {
                         BarMark(
                             x: .value("Day", day.label),
@@ -322,6 +345,7 @@ struct OverviewView: View {
                         )
                         .foregroundStyle(Color.secondary.opacity(0.12))
                         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        .accessibilityHidden(true)
                     } else {
                         let opacity = 0.25 + 0.6 * (day.minutes / max(maxMinutes, 1))
                         BarMark(

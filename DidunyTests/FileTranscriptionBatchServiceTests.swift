@@ -193,7 +193,7 @@ final class YouTubeRemoteMediaSourceTests: XCTestCase {
         XCTAssertEqual(WebVTTTranscriptParser.parse(vtt), "Привіт\nсвіте")
     }
 
-    func test_chromeProfileDiscovery_returnsOnlyExistingProfileDirectories() throws {
+    func test_chromiumSessionDiscovery_keepsSelectedBrowserAndExistingProfiles() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("DidunyChromeProfiles-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -214,31 +214,123 @@ final class YouTubeRemoteMediaSourceTests: XCTestCase {
         """
         try Data(localState.utf8).write(to: root.appendingPathComponent("Local State"))
 
-        let profiles = ChromeProfileStore.discover(in: root)
+        let sessions = BrowserSessionStore.discoverChromium(browser: .edge, in: root)
 
-        XCTAssertEqual(profiles.map(\.id), ["Default", "Profile 2"])
-        XCTAssertEqual(profiles.map(\.name), ["Roman", "Work"])
+        XCTAssertEqual(sessions.map(\.browser), [.edge, .edge])
+        XCTAssertEqual(sessions.map(\.profileID), ["Default", "Profile 2"])
+        XCTAssertEqual(sessions.map(\.profileName), ["Roman", "Work"])
+        XCTAssertEqual(sessions.map(\.cookieArgument), ["edge:Default", "edge:Profile 2"])
     }
 
-    func test_runtimeArguments_useSelectedChromeProfileBundledDenoAndExactAudioFormat() throws {
+    func test_firefoxSessionDiscovery_supportsZenProfilePaths() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DidunyZenProfiles-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("Profiles/current"),
+            withIntermediateDirectories: true
+        )
+        let profilesINI = """
+        [Profile0]
+        Name=Roman
+        IsRelative=1
+        Path=Profiles/current
+
+        [Profile1]
+        Name=Deleted
+        IsRelative=1
+        Path=Profiles/deleted
+        """
+        try Data(profilesINI.utf8).write(to: root.appendingPathComponent("profiles.ini"))
+
+        let sessions = BrowserSessionStore.discoverFirefox(browser: .zen, in: root)
+
+        XCTAssertEqual(sessions.map(\.displayName), ["Zen — Roman"])
+        XCTAssertEqual(
+            sessions.map(\.cookieArgument),
+            ["firefox:\(root.appendingPathComponent("Profiles/current").path)"]
+        )
+    }
+
+    func test_browserSessionDiscovery_listsProfilesForInstalledBrowsers() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DidunyBrowserSessions-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        for (path, profileName) in [
+            ("Google/Chrome", "Roman"),
+            ("Microsoft Edge", "Work"),
+        ] {
+            let directory = root.appendingPathComponent(path)
+            try FileManager.default.createDirectory(
+                at: directory.appendingPathComponent("Default"),
+                withIntermediateDirectories: true
+            )
+            let localState = """
+            {"profile":{"info_cache":{"Default":{"name":"\(profileName)"}}}}
+            """
+            try Data(localState.utf8).write(to: directory.appendingPathComponent("Local State"))
+        }
+        let zen = root.appendingPathComponent("zen")
+        try FileManager.default.createDirectory(
+            at: zen.appendingPathComponent("Profiles/current"),
+            withIntermediateDirectories: true
+        )
+        try Data("[Profile0]\nName=Default\nIsRelative=1\nPath=Profiles/current".utf8)
+            .write(to: zen.appendingPathComponent("profiles.ini"))
+
+        let sessions = BrowserSessionStore.discover(
+            installedBrowsers: [.chrome, .edge, .safari, .zen],
+            applicationSupportDirectory: root
+        )
+
+        XCTAssertEqual(
+            sessions.map(\.displayName),
+            ["Google Chrome — Roman", "Microsoft Edge — Work", "Safari", "Zen — Default"]
+        )
+    }
+
+    func test_browserSessionSelection_prefersSavedSessionAndFallsBackToLegacyChromeProfile() {
+        let chrome = BrowserSession(browser: .chrome, profileID: "Default", profileName: "Roman")
+        let edge = BrowserSession(browser: .edge, profileID: "Default", profileName: "Work")
+        let sessions = [chrome, edge]
+
+        XCTAssertEqual(
+            BrowserSessionStore.selected(
+                from: sessions,
+                selectionID: edge.selectionID,
+                legacyChromeProfileID: nil
+            ),
+            edge
+        )
+        XCTAssertEqual(
+            BrowserSessionStore.selected(
+                from: sessions,
+                selectionID: nil,
+                legacyChromeProfileID: "Default"
+            ),
+            chrome
+        )
+    }
+
+    func test_runtimeArguments_useSelectedBrowserSessionBundledDenoAndExactAudioFormat() throws {
         let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
-        let profile = ChromeProfile(id: "Profile 2", name: "Work")
+        let session = BrowserSession(browser: .edge, profileID: "Profile 2", profileName: "Work")
         let denoURL = URL(fileURLWithPath: "/Applications/Diduny.app/Contents/Resources/deno")
 
         let metadata = BundledRemoteMediaExtractor.metadataArguments(
             source: source,
-            profile: profile,
+            session: session,
             denoURL: denoURL
         )
         let download = BundledRemoteMediaExtractor.downloadArguments(
             source: source,
-            profile: profile,
+            session: session,
             denoURL: denoURL,
             audioFormatID: "audio-best",
             outputTemplate: "/tmp/source.%(ext)s"
         )
 
-        XCTAssertTrue(metadata.contains("chrome:Profile 2"))
+        XCTAssertTrue(metadata.contains("edge:Profile 2"))
         XCTAssertTrue(metadata.contains("deno:\(denoURL.path)"))
         XCTAssertTrue(metadata.contains("--dump-single-json"))
         XCTAssertTrue(download.contains("audio-best"))
@@ -274,7 +366,7 @@ final class YouTubeRemoteMediaSourceTests: XCTestCase {
 
         let metadata = try await extractor.metadata(
             for: source,
-            profile: ChromeProfile(id: "Profile 1", name: "Personal")
+            session: BrowserSession(browser: .chrome, profileID: "Profile 1", profileName: "Personal")
         )
 
         XCTAssertEqual(metadata.source.title, "Public video")
@@ -353,11 +445,11 @@ final class YouTubeRemoteMediaE2ETests: XCTestCase {
 
         for rawURL in urls {
             let source = try YouTubeRemoteMediaSource.normalize(rawURL)
-            let metadata = try await extractor.metadata(for: source, profile: profile)
+            let metadata = try await extractor.metadata(for: source, session: profile)
             let downloaded = try await extractor.downloadAudio(
                 for: source,
                 metadata: metadata,
-                profile: profile,
+                session: profile,
                 onProgress: { _ in }
             )
             defer { downloaded.removeTemporaryFiles() }
@@ -369,6 +461,10 @@ final class YouTubeRemoteMediaE2ETests: XCTestCase {
 
 @MainActor
 final class FileTranscriptionBatchServiceTests: XCTestCase {
+    func test_importedMediaSettingsAlwaysUseLocalProvider() {
+        XCTAssertEqual(FileTranscriptionSettingsSnapshot.current().provider, .local)
+    }
+
     func test_add_skipsDuplicateURLsWithinActiveBatch() {
         let service = FileTranscriptionBatchService(
             preparer: BatchTestPreparer(),
@@ -400,6 +496,26 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
 
         XCTAssertEqual(service.items.count, 1)
         XCTAssertEqual(service.items.first?.remoteSource?.mediaID, "dQw4w9WgXcQ")
+    }
+
+    func test_beginRemoteBatchRequiresAuthorizedBrowserSessionBeforeAddingWork() throws {
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: BatchTestTranscriber(),
+            recordingStore: BatchTestRecordingStore(),
+            remoteExtractor: BatchTestRemoteExtractor(),
+            chromeProfile: { nil },
+            remoteMediaAuthorized: { true },
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+        let source = try YouTubeRemoteMediaSource.normalize("https://youtu.be/dQw4w9WgXcQ")
+
+        let accepted = service.beginBatch(remoteSources: [source])
+
+        XCTAssertFalse(accepted)
+        XCTAssertTrue(service.items.isEmpty)
+        XCTAssertEqual(service.batchError, "Select a browser session to transcribe YouTube URLs.")
     }
 
     func test_remoteAuthorizationPausesWholeBatchAndExplicitRetryCompletes() async throws {
@@ -691,6 +807,7 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertEqual(batchStore.createdDescription, "Reused source")
         XCTAssertEqual(batchStore.recordingIDs, [recordingID])
         XCTAssertTrue(batchStore.didClose)
+        XCTAssertEqual(service.lastCreatedBatchID, batchStore.batchID)
 
         service.add(urls: [URL(fileURLWithPath: "/tmp/late.m4a")])
         XCTAssertEqual(service.items.count, 1)
@@ -712,11 +829,46 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
 
         XCTAssertTrue(service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/first.m4a")]))
         try await waitUntil { transcriber.transcribedFileNames == ["first.m4a"] }
+        XCTAssertEqual(service.activeBatchID, batchStore.batchID)
         let accepted = service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/second.m4a")])
 
         XCTAssertFalse(accepted)
         XCTAssertEqual(batchStore.createCount, 1)
         XCTAssertEqual(service.items.map(\.sourceURL.lastPathComponent), ["first.m4a"])
+        transcriber.releaseAll()
+        try await waitUntil { !service.isProcessing }
+    }
+
+    func test_appendToActiveBatchAddsWorkWithoutOpeningAnotherBatch() async throws {
+        let transcriber = BatchTestTranscriber(waitsForRelease: true)
+        let batchStore = BatchTestPersistence()
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: transcriber,
+            recordingStore: BatchTestRecordingStore(),
+            batchPersistence: batchStore,
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+
+        XCTAssertTrue(service.beginBatch(urls: [URL(fileURLWithPath: "/tmp/first.m4a")]))
+        try await waitUntil { transcriber.transcribedFileNames == ["first.m4a"] }
+
+        let accepted = service.append(
+            to: TranscriptionBatch(id: batchStore.batchID, name: "Active"),
+            urls: [URL(fileURLWithPath: "/tmp/second.m4a")],
+            remoteSources: [],
+            existingRecordingIDs: []
+        )
+
+        XCTAssertTrue(accepted)
+        XCTAssertEqual(batchStore.createCount, 1)
+        XCTAssertEqual(
+            service.items.map(\.sourceURL.lastPathComponent),
+            ["first.m4a", "second.m4a"]
+        )
+        transcriber.releaseAll()
+        try await waitUntil { transcriber.transcribedFileNames.count == 2 }
         transcriber.releaseAll()
         try await waitUntil { !service.isProcessing }
     }
@@ -946,6 +1098,35 @@ final class FileTranscriptionBatchServiceTests: XCTestCase {
         XCTAssertEqual(service.items.first?.status, .completed)
         XCTAssertTrue(batchStore.didReopen)
         XCTAssertTrue(batchStore.didClose)
+    }
+
+    func test_resumePersistedBatchRetriesOnlySelectedItem() async throws {
+        var first = BatchTranscriptionItem(sourceURL: URL(fileURLWithPath: "/tmp/first.m4a"))
+        first.status = .failed
+        var second = BatchTranscriptionItem(sourceURL: URL(fileURLWithPath: "/tmp/second.m4a"))
+        second.status = .failed
+        let batch = TranscriptionBatch(
+            name: "Retry one",
+            isProcessingClosed: true,
+            workItems: [first, second]
+        )
+        let transcriber = BatchTestTranscriber(waitsForRelease: true)
+        let service = FileTranscriptionBatchService(
+            preparer: BatchTestPreparer(),
+            transcriber: transcriber,
+            recordingStore: BatchTestRecordingStore(),
+            batchPersistence: BatchTestPersistence(),
+            settingsSnapshot: { .testValue },
+            playCompletionSound: {}
+        )
+
+        service.resume(batch: batch, retrying: [first.id])
+        try await waitUntil { transcriber.transcribedFileNames == ["first.m4a"] }
+
+        XCTAssertEqual(service.activeBatchID, batch.id)
+        XCTAssertEqual(service.items.map(\.status), [.uploading, .failed])
+        transcriber.releaseAll()
+        try await waitUntil { !service.isProcessing }
     }
 
     func test_resumeDoesNotReplaceAnotherBlockedPersistentBatch() {
@@ -1492,7 +1673,7 @@ private final class BatchTestRemoteExtractor: RemoteMediaExtracting {
 
     func metadata(
         for source: YouTubeRemoteMediaSource,
-        profile _: ChromeProfile
+        session _: BrowserSession
     ) async throws -> RemoteMediaMetadata {
         metadataCallCount += 1
         if metadataDelay > .zero {
@@ -1526,7 +1707,7 @@ private final class BatchTestRemoteExtractor: RemoteMediaExtracting {
     func retrieveCaption(
         for _: YouTubeRemoteMediaSource,
         metadata _: RemoteMediaMetadata,
-        profile _: ChromeProfile
+        session _: BrowserSession
     ) async throws -> TranscriptArtifact? {
         if remainingCaptionAuthorizationFailures > 0 {
             remainingCaptionAuthorizationFailures -= 1
@@ -1542,7 +1723,7 @@ private final class BatchTestRemoteExtractor: RemoteMediaExtracting {
     func downloadAudio(
         for source: YouTubeRemoteMediaSource,
         metadata _: RemoteMediaMetadata,
-        profile _: ChromeProfile,
+        session _: BrowserSession,
         onProgress: @escaping @Sendable (RemoteDownloadProgress) -> Void
     ) async throws -> RemoteDownloadedAudio {
         downloadCallCount += 1

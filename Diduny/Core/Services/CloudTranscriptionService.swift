@@ -18,9 +18,7 @@ final class CloudTranscriptionService: TranscriptionServiceProtocol {
         RemoteConfigService.shared.sttModel(default: Self.defaultModel)
     }
 
-    private let maxAudioBytesForSpeechPrecheck = 25 * 1024 * 1024
     private let longRunningSessionBodyThresholdBytes = 10 * 1024 * 1024
-    private let strictSpeechPrecheck = false
 
     private lazy var longRunningSession: URLSession = {
         let config = URLSessionConfiguration.default
@@ -272,22 +270,10 @@ final class CloudTranscriptionService: TranscriptionServiceProtocol {
     // MARK: - Speech Pre-check
 
     private func ensureSpeechDetected(_ audioData: Data, context: String) async throws {
-        guard audioData.count <= maxAudioBytesForSpeechPrecheck else {
-            Log.transcription.info(
-                "\(context): skipping speech pre-check for large audio (\(audioData.count) bytes)"
-            )
-            return
-        }
-
         let hasSpeech = await AudioSpeechDetector.hasSpeech(in: audioData)
         guard hasSpeech else {
-            if strictSpeechPrecheck {
-                Log.transcription.info("\(context): no speech detected, skipping cloud request")
-                throw TranscriptionError.emptyTranscription
-            }
-
-            Log.transcription.info("\(context): no speech confidently detected, continuing with cloud")
-            return
+            Log.transcription.info("\(context): no speech detected, skipping cloud request")
+            throw TranscriptionError.emptyTranscription
         }
     }
 
@@ -466,7 +452,6 @@ enum AudioSpeechDetector {
     private static let frameSize = 320 // 20 ms at 16 kHz
     private static let minSpeechDurationSeconds: Double = 0.18
     private static let minRmsThreshold: Float = 0.0015
-    private static let dynamicThresholdMultiplier: Float = 1.8
     private static let minPeakThreshold: Float = 0.015
 
     static func hasSpeech(in audioData: Data) async -> Bool {
@@ -475,11 +460,23 @@ enum AudioSpeechDetector {
                 let samples = try AudioConverter.convertToWhisperFormat(audioData: audioData)
                 return detectSpeech(samples: samples)
             } catch {
-                // Fallback to cloud transcription when local analysis fails.
                 NSLog("[Transcription] Speech pre-check failed: \(error.localizedDescription)")
-                return true
+                return false
             }
         }.value
+    }
+
+    static func hasSpeech(inPCM16 data: Data) -> Bool {
+        guard data.count >= 2 else { return false }
+
+        let bytes = [UInt8](data)
+        var samples: [Float] = []
+        samples.reserveCapacity(bytes.count / 2)
+        for index in stride(from: 0, to: bytes.count - 1, by: 2) {
+            let bits = UInt16(bytes[index]) | (UInt16(bytes[index + 1]) << 8)
+            samples.append(Float(Int16(bitPattern: bits)) / 32_768)
+        }
+        return detectSpeech(samples: samples)
     }
 
     private static func detectSpeech(samples: [Float]) -> Bool {
@@ -487,10 +484,6 @@ enum AudioSpeechDetector {
 
         let frameMetrics = buildFrameMetrics(samples: samples)
         guard !frameMetrics.rmsValues.isEmpty else { return false }
-
-        let noiseFloor = percentile20(values: frameMetrics.rmsValues)
-        let rmsThreshold = max(minRmsThreshold, noiseFloor * dynamicThresholdMultiplier)
-        let peakThreshold = max(minPeakThreshold, rmsThreshold * 2.0)
 
         let minSpeechFrames = max(
             1,
@@ -508,8 +501,8 @@ enum AudioSpeechDetector {
 
         for index in frameMetrics.rmsValues.indices {
             let isVoiced =
-                frameMetrics.rmsValues[index] >= rmsThreshold &&
-                frameMetrics.peakValues[index] >= peakThreshold
+                frameMetrics.rmsValues[index] >= minRmsThreshold &&
+                frameMetrics.peakValues[index] >= minPeakThreshold
 
             if isVoiced {
                 voicedFrames += 1
@@ -554,13 +547,6 @@ enum AudioSpeechDetector {
         }
 
         return (rmsValues, peakValues)
-    }
-
-    private static func percentile20(values: [Float]) -> Float {
-        guard !values.isEmpty else { return 0 }
-        let sorted = values.sorted()
-        let index = min(sorted.count - 1, Int(Double(sorted.count) * 0.2))
-        return sorted[index]
     }
 }
 

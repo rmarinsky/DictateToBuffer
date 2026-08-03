@@ -91,7 +91,7 @@ extension AppDelegate {
             await meetingRecorderService.cancelRecording()
         }
 
-        // Mark transcript as inactive but keep window open for review
+        // Release the live transcript after the Flow panel returns to idle.
         await MainActor.run {
             appState.liveTranscriptStore?.isActive = false
             appState.liveTranscriptStore = nil
@@ -118,7 +118,7 @@ extension AppDelegate {
         Log.app.info("cancelMeetingTranslationRecording: END")
     }
 
-    func startMeetingTranslationRecording() async {
+    func startMeetingTranslationRecording(languagePair requestedPair: TranslationLanguagePair? = nil) async {
         Log.app.info("startMeetingTranslationRecording: BEGIN")
 
         guard canStartRecording(kind: .meetingTranslation) else {
@@ -143,7 +143,7 @@ extension AppDelegate {
         }
 
         // Meeting translation uses cloud realtime by default
-        let pair = SettingsStorage.shared.resolveTranslationLanguagePair()
+        let pair = requestedPair ?? SettingsStorage.shared.resolveTranslationLanguagePair()
         SettingsStorage.shared.markTranslationLanguagePairUsed(pair)
         activeMeetingTranslationLanguagePair = pair
         activeMeetingTranslationTargetLanguage = pair.languageB
@@ -221,10 +221,6 @@ extension AppDelegate {
                 handleMeetingTranslationStateChange(.recording)
             }
 
-            await MainActor.run {
-                TranscriptionWindowController.shared.showWindow(store: store)
-            }
-
             // Activate escape cancel handler
             await MainActor.run {
                 setupMeetingTranslationEscapeCancelHandler()
@@ -277,12 +273,14 @@ extension AppDelegate {
             guard !translatedTokens.isEmpty else { return }
             Task { @MainActor in
                 store?.processTokens(translatedTokens)
+                self.updateRecordingFeedbackTokens(translatedTokens, mode: .meetingTranslation)
             }
         }
 
-        rtService.onConnectionStatusChanged = { [weak store] status in
+        rtService.onConnectionStatusChanged = { [weak self, weak store] status in
             Task { @MainActor in
                 store?.connectionStatus = status
+                self?.updateRecordingFeedbackConnectionStatus(status, mode: .meetingTranslation)
             }
         }
 
@@ -592,8 +590,6 @@ extension AppDelegate {
             meetingTranslationActivityToken = nil
         }
 
-        // Keep transcript window open — user closes manually
-
         Log.app.info("stopMeetingTranslationRecording: END")
     }
 
@@ -607,7 +603,7 @@ extension AppDelegate {
         }
 
         escapeService.onProgressEscape = { pressCount, _ in
-            NotchManager.shared.showInfoDuringRecording(
+            DictationOverlayController.shared.showInfoDuringRecording(
                 message: SettingsStorage.shared.escapeCancelRepeatHint(afterPressCount: pressCount),
                 mode: .meetingTranslation,
                 duration: 1.5
@@ -620,7 +616,7 @@ extension AppDelegate {
                 let shouldSaveAudio = SettingsStorage.shared.escapeCancelSaveAudio
                 await self?.cancelMeetingTranslationRecording()
                 let message = shouldSaveAudio ? "Recording cancelled and saved" : "Recording cancelled"
-                NotchManager.shared.showInfo(message: message)
+                DictationOverlayController.shared.showInfo(message: message)
             }
         }
 

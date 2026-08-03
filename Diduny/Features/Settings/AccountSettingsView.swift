@@ -225,40 +225,42 @@ struct AccountSettingsView: View {
     private var usageSection: some View {
         Section("Usage") {
             let recordings = RecordingsLibraryStorage.shared.recordings
-
-            let totalDuration = recordings.reduce(0.0) { $0 + $1.durationSeconds }
-            let voiceDuration = recordings.filter { $0.type == .voice }.reduce(0.0) { $0 + $1.durationSeconds }
-            let translationDuration = recordings.filter { $0.type == .translation }.reduce(0.0) { $0 + $1.durationSeconds }
-            let meetingDuration = recordings.filter { $0.type.isMeetingLike }.reduce(0.0) { $0 + $1.durationSeconds }
+            let statistics = RecordingStatistics(recordings: recordings)
 
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Image(systemName: "clock.fill")
                         .foregroundColor(.accentColor)
+                        .accessibilityHidden(true)
                     Text("Total recording time")
                     Spacer()
-                    Text(formatDuration(totalDuration))
+                    Text(formatDuration(statistics.totalDurationSeconds))
                         .fontWeight(.semibold)
                         .monospacedDigit()
                 }
+                .accessibilityElement(children: .combine)
 
                 Divider()
 
-                usageRow(icon: "mic.fill", label: "Voice dictation", duration: voiceDuration, color: Color("BrandAccentDeep"))
-                usageRow(icon: "globe", label: "Translation", duration: translationDuration, color: .green)
-                usageRow(icon: "person.3.fill", label: "Meetings", duration: meetingDuration, color: .orange)
+                usageRow(icon: "mic.fill", label: "Voice dictation", duration: statistics.voiceDurationSeconds, color: Color("BrandAccentDeep"))
+                usageRow(icon: "globe", label: "Translation", duration: statistics.translationDurationSeconds, color: .green)
+                usageRow(icon: "person.3.fill", label: "Meetings", duration: statistics.meetingDurationSeconds, color: .orange)
+                usageRow(icon: "doc.fill", label: "Imported files", duration: statistics.importedFileDurationSeconds, color: .brown)
+                usageRow(icon: "play.rectangle.fill", label: "YouTube", duration: statistics.youtubeDurationSeconds, color: .red)
 
                 Divider()
 
                 HStack {
                     Image(systemName: "number")
                         .foregroundColor(.secondary)
+                        .accessibilityHidden(true)
                     Text("Total recordings")
                     Spacer()
-                    Text("\(recordings.count)")
+                    Text("\(statistics.recordingCount)")
                         .fontWeight(.semibold)
                         .monospacedDigit()
                 }
+                .accessibilityElement(children: .combine)
             }
 
             Text("Recording time is tracked locally. This data will be used to show how much time Diduny has saved you.")
@@ -273,6 +275,7 @@ struct AccountSettingsView: View {
             Image(systemName: icon)
                 .foregroundColor(color)
                 .frame(width: 16)
+                .accessibilityHidden(true)
             Text(label)
                 .foregroundColor(.secondary)
             Spacer()
@@ -280,6 +283,7 @@ struct AccountSettingsView: View {
                 .monospacedDigit()
                 .foregroundColor(.secondary)
         }
+        .accessibilityElement(children: .combine)
     }
 
     private func formatDuration(_ seconds: TimeInterval) -> String {

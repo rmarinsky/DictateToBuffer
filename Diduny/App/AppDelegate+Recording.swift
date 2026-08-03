@@ -66,7 +66,7 @@ extension AppDelegate {
         }
     }
 
-    func cancelRecording(cancelTask: Bool = true) async {
+    func cancelRecording(cancelTask: Bool = true, forceDiscardAudio: Bool = false) async {
         Log.app.info("cancelRecording: BEGIN")
 
         // Cancel any in-flight pipeline task (skip when called from within the task itself)
@@ -88,7 +88,7 @@ extension AppDelegate {
         // Deactivate escape cancel handler
         EscapeCancelService.shared.deactivate()
 
-        if SettingsStorage.shared.escapeCancelSaveAudio, audioRecorder.isRecording {
+        if !forceDiscardAudio, SettingsStorage.shared.escapeCancelSaveAudio, audioRecorder.isRecording {
             do {
                 let sourceDevice = audioRecorder.currentRecordingDeviceInfo
                 let audioData = try await audioRecorder.stopRecording()
@@ -382,12 +382,15 @@ extension AppDelegate {
             let realtimeResult = await realtimeStopTask.value
 
             let rawText: String
+            var transcriptSegments: [TimedTranscriptSegment]?
             if !realtimeResult.text.isEmpty {
                 rawText = realtimeResult.text
                 Log.app.info("stopRecording: Using realtime transcription (\(rawText.count) chars)")
             } else if SettingsStorage.shared.effectiveTranscriptionProvider == .local {
                 // Local Whisper — use original capture data, not the storage-compressed variant
-                rawText = try await whisperTranscriptionService.transcribe(audioData: audioData)
+                let transcript = try await whisperTranscriptionService.transcribeDetailed(audioData: audioData)
+                rawText = transcript.text
+                transcriptSegments = transcript.segments
                 Log.app.info("stopRecording: Local Whisper transcription (\(rawText.count) chars)")
             } else {
                 rawText = try await transcriptionService.transcribe(audioData: audioData)
@@ -452,7 +455,8 @@ extension AppDelegate {
                 type: .voice,
                 duration: duration,
                 transcriptionText: text,
-                sourceDevice: sourceDevice
+                sourceDevice: sourceDevice,
+                transcriptSegments: transcriptSegments?.isEmpty == false ? transcriptSegments : nil
             )
 
             if SettingsStorage.shared.playSoundOnCompletion {
@@ -484,7 +488,8 @@ extension AppDelegate {
                     duration: 2.0
                 )
                 do {
-                    let text = try await whisperTranscriptionService.transcribe(audioData: wavData)
+                    let transcript = try await whisperTranscriptionService.transcribeDetailed(audioData: wavData)
+                    let text = transcript.text
                     Log.app.info("stopRecording: Whisper fallback succeeded (\(text.count) chars)")
                     clipboardService.copy(text: text)
                     if SettingsStorage.shared.autoPaste {
@@ -511,7 +516,8 @@ extension AppDelegate {
                         RecordingsLibraryStorage.shared.saveRecording(
                             id: recordingId, audioData: audioData, type: .voice,
                             duration: duration, transcriptionText: text,
-                            sourceDevice: sourceDevice
+                            sourceDevice: sourceDevice,
+                            transcriptSegments: transcript.segments.isEmpty ? nil : transcript.segments
                         )
                     }
                     RecoveryStateManager.shared.clearState()
@@ -556,6 +562,25 @@ extension AppDelegate {
                 return true
             }()
 
+            if isEmptyTranscription {
+                RecoveryStateManager.shared.clearState()
+                await MainActor.run {
+                    appState.errorMessage = nil
+                    appState.isEmptyTranscription = true
+                    appState.deviceFallbackWarning = nil
+                    appState.recordingState = .idle
+                    appState.recordingStartTime = nil
+                    handleRecordingStateChange(.idle)
+                }
+                showRecordingFeedbackInfo(
+                    message: "No speech detected. Recording cancelled.",
+                    mode: .voice,
+                    duration: 2.5
+                )
+                Log.app.info("stopRecording: Empty recording cancelled without saving")
+                return
+            }
+
             if let audioData = capturedAudioData {
                 let duration = recordingStartTime.map { stopTime.timeIntervalSince($0) } ?? 0
                 RecordingsLibraryStorage.shared.saveRecording(
@@ -592,20 +617,63 @@ extension AppDelegate {
     // MARK: - Realtime Transcription (WebSocket)
 
     private func setupVoiceRealtimeTranscriptionIfNeeded() {
-        guard SettingsStorage.shared.effectiveTranscriptionProvider == .cloud else {
-            audioRecorder.onRealtimeAudioData = nil
+        let onNoSpeech: () -> Void = { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.appState.recordingState == .recording else { return }
+                await self.cancelRecording(forceDiscardAudio: true)
+                self.showRecordingFeedbackInfo(
+                    message: "No speech detected. Recording cancelled.",
+                    mode: .voice,
+                    duration: 2.5
+                )
+            }
+        }
+
+        if SettingsStorage.shared.effectiveTranscriptionProvider == .local {
+            let whisper = whisperTranscriptionService
+            let stream = LocalWhisperStreamingService(
+                transcribe: { samples in
+                    try await whisper.transcribeRawSamples(samples)
+                },
+                onText: { [weak self] text in
+                    await self?.updateRecordingFeedbackTokens(
+                        [RealtimeToken(text: text, isFinal: false)],
+                        mode: .voice
+                    )
+                },
+                onError: { [weak self] error in
+                    Log.whisper.warning("Local live preview failed: \(error.localizedDescription)")
+                    await self?.updateRecordingFeedbackConnectionStatus(
+                        .failed("Live preview unavailable"),
+                        mode: .voice
+                    )
+                }
+            )
+
+            localVoiceStreamingService = stream
+            audioRecorder.onRealtimeAudioData = speechGatedAudioDelivery(
+                deliver: { [weak stream] pcmData in
+                    Task { await stream?.appendPCM16(pcmData) }
+                },
+                onNoSpeech: onNoSpeech
+            )
             voiceRealtimeSessionEnabled = false
             voiceRealtimeAccumulator = nil
+            updateRecordingFeedbackConnectionStatus(.connected, mode: .voice)
             return
         }
 
+        localVoiceStreamingService = nil
         let accumulator = RealtimeVoiceAccumulator()
         voiceRealtimeAccumulator = accumulator
 
         let rtService = realtimeTranscriptionService
-        audioRecorder.onRealtimeAudioData = { [weak rtService] pcmData in
-            rtService?.sendAudioData(pcmData)
-        }
+        audioRecorder.onRealtimeAudioData = speechGatedAudioDelivery(
+            deliver: { [weak rtService] pcmData in
+                rtService?.sendAudioData(pcmData)
+            },
+            onNoSpeech: onNoSpeech
+        )
 
         // The accumulator (correctness path) processes every batch off-main;
         // only the overlay UI update is coalesced to ≤10Hz.
@@ -680,9 +748,29 @@ extension AppDelegate {
         }
     }
 
+    func speechGatedAudioDelivery(
+        deliver: @escaping (Data) -> Void,
+        onNoSpeech: @escaping () -> Void
+    ) -> (Data) -> Void {
+        let gate = RealtimeSpeechGate()
+        return { pcmData in
+            gate.append(pcmData).forEach(deliver)
+            guard gate.consumeNoSpeechTimeout() else { return }
+            onNoSpeech()
+        }
+    }
+
     private func stopVoiceRealtimeSession(finalize: Bool) async -> RealtimeSessionStopResult {
         if !finalize {
             audioRecorder.onRealtimeAudioData = nil
+        }
+
+        if let localVoiceStreamingService {
+            audioRecorder.onRealtimeAudioData = nil
+            self.localVoiceStreamingService = nil
+            await localVoiceStreamingService.stop()
+            updateRecordingFeedbackConnectionStatus(.disconnected, mode: .voice)
+            return .empty
         }
 
         let accumulator = voiceRealtimeAccumulator

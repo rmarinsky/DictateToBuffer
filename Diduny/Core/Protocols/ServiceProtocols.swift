@@ -19,9 +19,16 @@ protocol AudioRecorderProtocol: AnyObject {
 
 protocol TranscriptionServiceProtocol {
     func transcribe(audioData: Data) async throws -> String
+    func transcribeDetailed(audioData: Data) async throws -> GeneratedTranscript
     func translateAndTranscribe(audioData: Data) async throws -> String
     func translateAndTranscribe(audioData: Data, targetLanguage: String) async throws -> String
     func translateAndTranscribe(audioData: Data, languagePair: TranslationLanguagePair) async throws -> String
+}
+
+extension TranscriptionServiceProtocol {
+    func transcribeDetailed(audioData: Data) async throws -> GeneratedTranscript {
+        try await GeneratedTranscript(text: transcribe(audioData: audioData))
+    }
 }
 
 // MARK: - Clipboard Service Protocol

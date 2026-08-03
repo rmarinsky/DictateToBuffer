@@ -160,7 +160,7 @@ final class RecordingQueueService {
                     )
                 } else {
                     let audioData = try await loadAudioData(from: audioURL)
-                    transcript = try await GeneratedTranscript(text: service.transcribe(audioData: audioData))
+                    transcript = try await service.transcribeDetailed(audioData: audioData)
                 }
                 status = .transcribed
                 translationTargetLanguageCode = nil
@@ -176,7 +176,7 @@ final class RecordingQueueService {
                     )
                 } else {
                     let audioData = try await loadAudioData(from: audioURL)
-                    transcript = try await GeneratedTranscript(text: service.transcribe(audioData: audioData))
+                    transcript = try await service.transcribeDetailed(audioData: audioData)
                 }
                 status = .transcribed
                 translationTargetLanguageCode = nil
@@ -327,6 +327,13 @@ final class RecordingQueueService {
     }
 
     private func configuredProvider(for item: QueueItem) -> TranscriptionProvider {
+        if item.action == .transcribe,
+           RecordingsLibraryStorage.shared.recordings
+            .first(where: { $0.id == item.id })?
+            .requiresLocalTranscription == true
+        {
+            return .local
+        }
         if let override = item.providerOverride {
             return override
         }
@@ -364,7 +371,7 @@ final class RecordingQueueService {
             guard let model = WhisperModelManager.availableModels.first(where: { $0.name == modelName }),
                   WhisperModelManager.shared.isModelDownloaded(model)
             else {
-                return "No local Whisper model downloaded. Log in for Cloud or download a model in Settings."
+                return "Download a local Whisper model in Settings."
             }
             return nil
         }

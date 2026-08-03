@@ -4,6 +4,7 @@ import XCTest
 final class SettingsStorageProviderTests: XCTestCase {
     private let transcriptionProviderKey = "transcriptionProvider"
     private let translationProviderKey = "translationProvider"
+    private let meetingRealtimeKey = "meetingRealtimeTranscriptionEnabled"
     private let sessionPresentKey = "_diduny_supabase_session_present"
     private let dictationRetentionKey = "dictationTranslationHistoryRetentionPolicy"
     private let meetingRetentionKey = "meetingHistoryRetentionPolicy"
@@ -21,6 +22,7 @@ final class SettingsStorageProviderTests: XCTestCase {
     private let textTranslationTargetLanguageKey = "textTranslationTargetLanguage"
     private var storedProvider: Any?
     private var storedTranslationProvider: Any?
+    private var storedMeetingRealtime: Any?
     private var storedSessionPresent: Any?
     private var storedDictationRetention: Any?
     private var storedMeetingRetention: Any?
@@ -37,10 +39,57 @@ final class SettingsStorageProviderTests: XCTestCase {
     private var storedTextTranslationSourceLanguage: Any?
     private var storedTextTranslationTargetLanguage: Any?
 
+    func test_unitTestsUseIsolatedPreferencesDomain() {
+        XCTAssertEqual(Bundle.main.bundleIdentifier, "ua.com.rmarinsky.diduny.test")
+    }
+
+    func test_newUserDefaults_doNotOverwritePersistedSettings() {
+        let defaults = UserDefaults.standard
+        let onboardingKey = "onboarding.completed"
+        let keys = [
+            "pushToTalkKey",
+            "pushToTalkHoldEnabled",
+            "pushToTalkToggleEnabled",
+            "translationPushToTalkHoldEnabled",
+            "translationPushToTalkToggleEnabled",
+            "pushToTalkHoldStartDelaySeconds",
+            "translationPushToTalkHoldStartDelaySeconds",
+            "pushToTalkToggleTapCount",
+            "translationPushToTalkToggleTapCount",
+            "meetingHotkeyPressCount",
+            "meetingTranslationHotkeyPressCount",
+            "autoPaste",
+            "playSoundOnCompletion",
+            "typingSpeedWordsPerMinute"
+        ]
+        let storedValues = keys.map { defaults.object(forKey: $0) }
+        let storedOnboarding = defaults.object(forKey: onboardingKey)
+        defer {
+            zip(keys, storedValues).forEach { restore($0.1, key: $0.0) }
+            restore(storedOnboarding, key: onboardingKey)
+        }
+
+        keys.forEach { defaults.removeObject(forKey: $0) }
+        defaults.removeObject(forKey: onboardingKey)
+        SettingsStorage.shared.pushToTalkKey = .rightOption
+        SettingsStorage.shared.pushToTalkHoldEnabled = false
+        SettingsStorage.shared.autoPaste = false
+        SettingsStorage.shared.typingSpeedWordsPerMinute = 85
+
+        OnboardingManager.shared.setupDefaultsForNewUser()
+
+        XCTAssertEqual(SettingsStorage.shared.pushToTalkKey, .rightOption)
+        XCTAssertFalse(SettingsStorage.shared.pushToTalkHoldEnabled)
+        XCTAssertFalse(SettingsStorage.shared.autoPaste)
+        XCTAssertEqual(SettingsStorage.shared.typingSpeedWordsPerMinute, 85)
+        XCTAssertEqual(SettingsStorage.shared.meetingHotkeyPressCount, 3)
+    }
+
     override func setUp() {
         super.setUp()
         storedProvider = UserDefaults.standard.object(forKey: transcriptionProviderKey)
         storedTranslationProvider = UserDefaults.standard.object(forKey: translationProviderKey)
+        storedMeetingRealtime = UserDefaults.standard.object(forKey: meetingRealtimeKey)
         storedSessionPresent = UserDefaults.standard.object(forKey: sessionPresentKey)
         storedDictationRetention = UserDefaults.standard.object(forKey: dictationRetentionKey)
         storedMeetingRetention = UserDefaults.standard.object(forKey: meetingRetentionKey)
@@ -63,6 +112,7 @@ final class SettingsStorageProviderTests: XCTestCase {
     override func tearDown() {
         restore(storedProvider, key: transcriptionProviderKey)
         restore(storedTranslationProvider, key: translationProviderKey)
+        restore(storedMeetingRealtime, key: meetingRealtimeKey)
         restore(storedSessionPresent, key: sessionPresentKey)
         restore(storedDictationRetention, key: dictationRetentionKey)
         restore(storedMeetingRetention, key: meetingRetentionKey)
@@ -87,6 +137,24 @@ final class SettingsStorageProviderTests: XCTestCase {
         XCTAssertEqual(SettingsStorage.shared.transcriptionProvider, .cloud)
     }
 
+    func test_defaultMeetingRealtimeTranscription_followsTranscriptionProvider() {
+        UserDefaults.standard.removeObject(forKey: meetingRealtimeKey)
+        SettingsStorage.shared.transcriptionProvider = .cloud
+
+        XCTAssertTrue(SettingsStorage.shared.meetingRealtimeTranscriptionEnabled)
+
+        SettingsStorage.shared.transcriptionProvider = .local
+        XCTAssertFalse(SettingsStorage.shared.meetingRealtimeTranscriptionEnabled)
+    }
+
+    func test_explicitLocalMeetingMode_isPreservedWhenOtherProvidersUseCloud() {
+        UserDefaults.standard.set(TranscriptionProvider.cloud.rawValue, forKey: transcriptionProviderKey)
+        UserDefaults.standard.set(TranscriptionProvider.cloud.rawValue, forKey: translationProviderKey)
+        UserDefaults.standard.set(false, forKey: meetingRealtimeKey)
+
+        XCTAssertFalse(SettingsStorage.shared.meetingRealtimeTranscriptionEnabled)
+    }
+
     func test_explicitLocalTranscriptionProvider_isPreserved() {
         UserDefaults.standard.set(TranscriptionProvider.local.rawValue, forKey: transcriptionProviderKey)
 
@@ -97,6 +165,7 @@ final class SettingsStorageProviderTests: XCTestCase {
         UserDefaults.standard.set(true, forKey: sessionPresentKey)
         SettingsStorage.shared.transcriptionProvider = .local
         SettingsStorage.shared.translationProvider = .local
+        SettingsStorage.shared.meetingRealtimeTranscriptionEnabled = false
         var selection = MenuBarProcessingModeSelection()
 
         selection.select(.cloud)
@@ -104,6 +173,8 @@ final class SettingsStorageProviderTests: XCTestCase {
         XCTAssertEqual(selection.provider, .cloud)
         XCTAssertEqual(SettingsStorage.shared.transcriptionProvider, .cloud)
         XCTAssertEqual(SettingsStorage.shared.translationProvider, .cloud)
+        XCTAssertTrue(SettingsStorage.shared.meetingRealtimeTranscriptionEnabled)
+        XCTAssertTrue(SettingsStorage.shared.effectiveMeetingRealtimeTranscriptionEnabled)
     }
 
     func test_defaultHistoryRetentionPolicies_areForever() {

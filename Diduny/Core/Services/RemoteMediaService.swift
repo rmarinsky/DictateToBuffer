@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import OSLog
 
@@ -260,9 +261,9 @@ enum RemoteMediaExtractorError: LocalizedError, Equatable {
         case .noAudioOnlyStream:
             "Unsupported — no audio-only stream available."
         case .authorizationRequired:
-            "Sign in to YouTube in the selected Chrome profile, then retry authorization."
+            "Sign in to YouTube in the selected browser session, then retry authorization."
         case .sourceUnavailable:
-            "This YouTube video is unavailable to the selected Chrome profile."
+            "This YouTube video is unavailable to the selected browser session."
         case .extractorOutdated:
             "YouTube compatibility requires a Diduny update."
         case .insufficientDiskSpace:
@@ -454,18 +455,90 @@ enum WebVTTTranscriptParser {
     }
 }
 
-struct ChromeProfile: Codable, Equatable, Hashable, Identifiable {
-    let id: String
-    let name: String
+enum BrowserKind: String, Codable, CaseIterable, Hashable {
+    case brave
+    case chrome
+    case edge
+    case firefox
+    case safari
+    case zen
+
+    var displayName: String {
+        switch self {
+        case .brave: "Brave"
+        case .chrome: "Google Chrome"
+        case .edge: "Microsoft Edge"
+        case .firefox: "Firefox"
+        case .safari: "Safari"
+        case .zen: "Zen"
+        }
+    }
+
+    var cookieSource: String {
+        self == .zen ? BrowserKind.firefox.rawValue : rawValue
+    }
+
+    var bundleIdentifier: String {
+        switch self {
+        case .brave: "com.brave.Browser"
+        case .chrome: "com.google.Chrome"
+        case .edge: "com.microsoft.edgemac"
+        case .firefox: "org.mozilla.firefox"
+        case .safari: "com.apple.Safari"
+        case .zen: "app.zen-browser.zen"
+        }
+    }
+
+    var applicationSupportPath: String? {
+        switch self {
+        case .brave: "BraveSoftware/Brave-Browser"
+        case .chrome: "Google/Chrome"
+        case .edge: "Microsoft Edge"
+        case .firefox: "Firefox"
+        case .safari: nil
+        case .zen: "zen"
+        }
+    }
 }
 
-enum ChromeProfileStore {
+struct BrowserSession: Codable, Equatable, Hashable, Identifiable {
+    let browser: BrowserKind
+    let profileID: String?
+    let profileName: String?
+
+    var id: String { profileID ?? browser.rawValue }
+    var selectionID: String { "\(browser.rawValue)|\(profileID ?? "")" }
+    var name: String { profileName ?? browser.displayName }
+    var displayName: String {
+        profileName.map { "\(browser.displayName) — \($0)" } ?? browser.displayName
+    }
+    var cookieArgument: String {
+        profileID.map { "\(browser.cookieSource):\($0)" } ?? browser.cookieSource
+    }
+
+    init(browser: BrowserKind, profileID: String? = nil, profileName: String? = nil) {
+        self.browser = browser
+        self.profileID = profileID
+        self.profileName = profileName
+    }
+
+    init(id: String, name: String) {
+        self.init(browser: .chrome, profileID: id, profileName: name)
+    }
+}
+
+typealias ChromeProfile = BrowserSession
+
+enum BrowserSessionStore {
     static var defaultUserDataDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Google/Chrome", isDirectory: true)
     }
 
-    static func discover(in userDataDirectory: URL = defaultUserDataDirectory) -> [ChromeProfile] {
+    static func discoverChromium(
+        browser: BrowserKind,
+        in userDataDirectory: URL
+    ) -> [BrowserSession] {
         let stateURL = userDataDirectory.appendingPathComponent("Local State")
         guard let data = try? Data(contentsOf: stateURL),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -479,13 +552,128 @@ enum ChromeProfileStore {
             guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory),
                   isDirectory.boolValue
             else { return nil }
-            return ChromeProfile(id: id, name: metadata["name"] as? String ?? id)
+            return BrowserSession(
+                browser: browser,
+                profileID: id,
+                profileName: metadata["name"] as? String ?? id
+            )
         }
         .sorted { left, right in
             if left.id == "Default" { return true }
             if right.id == "Default" { return false }
             return left.id.localizedStandardCompare(right.id) == .orderedAscending
         }
+    }
+
+    static func discoverFirefox(
+        browser: BrowserKind,
+        in userDataDirectory: URL
+    ) -> [BrowserSession] {
+        guard let value = try? String(
+            contentsOf: userDataDirectory.appendingPathComponent("profiles.ini"),
+            encoding: .utf8
+        ) else { return [] }
+
+        var sections: [String: [String: String]] = [:]
+        var currentSection: String?
+        for rawLine in value.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.hasPrefix("["), line.hasSuffix("]") {
+                let section = String(line.dropFirst().dropLast())
+                currentSection = section.hasPrefix("Profile") ? section : nil
+            } else if let currentSection, let separator = line.firstIndex(of: "=") {
+                sections[currentSection, default: [:]][String(line[..<separator])] =
+                    String(line[line.index(after: separator)...])
+            }
+        }
+
+        return sections.keys.sorted().compactMap { section in
+            guard let values = sections[section],
+                  let path = values["Path"]
+            else { return nil }
+            let profileURL = values["IsRelative"] == "1"
+                ? userDataDirectory.appendingPathComponent(path, isDirectory: true)
+                : URL(fileURLWithPath: path, isDirectory: true)
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(
+                atPath: profileURL.path,
+                isDirectory: &isDirectory
+            ), isDirectory.boolValue else { return nil }
+            return BrowserSession(
+                browser: browser,
+                profileID: profileURL.path,
+                profileName: values["Name"] ?? profileURL.lastPathComponent
+            )
+        }
+    }
+
+    @MainActor
+    static func discover() -> [BrowserSession] {
+        let installed = Set(BrowserKind.allCases.filter {
+            NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleIdentifier) != nil
+        })
+        let applicationSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support", isDirectory: true)
+        return discover(
+            installedBrowsers: installed,
+            applicationSupportDirectory: applicationSupport
+        )
+    }
+
+    static func discover(
+        installedBrowsers: Set<BrowserKind>,
+        applicationSupportDirectory: URL
+    ) -> [BrowserSession] {
+        BrowserKind.allCases.flatMap { browser -> [BrowserSession] in
+            guard installedBrowsers.contains(browser) else { return [] }
+            guard let path = browser.applicationSupportPath else {
+                return [BrowserSession(browser: browser)]
+            }
+            let directory = applicationSupportDirectory.appendingPathComponent(path, isDirectory: true)
+            switch browser {
+            case .firefox, .zen:
+                let sessions = discoverFirefox(browser: browser, in: directory)
+                return sessions.isEmpty && browser == .firefox
+                    ? [BrowserSession(browser: browser)]
+                    : sessions
+            case .safari:
+                return [BrowserSession(browser: browser)]
+            default:
+                let sessions = discoverChromium(browser: browser, in: directory)
+                return sessions.isEmpty ? [BrowserSession(browser: browser)] : sessions
+            }
+        }
+    }
+
+    static func selected(
+        from sessions: [BrowserSession],
+        selectionID: String?,
+        legacyChromeProfileID: String?
+    ) -> BrowserSession? {
+        if let selectionID,
+           let selected = sessions.first(where: { $0.selectionID == selectionID })
+        {
+            return selected
+        }
+        if let legacyChromeProfileID,
+           let selected = sessions.first(where: {
+               $0.browser == .chrome && $0.profileID == legacyChromeProfileID
+           })
+        {
+            return selected
+        }
+        return sessions.first
+    }
+}
+
+enum ChromeProfileStore {
+    static func discover(
+        in userDataDirectory: URL = BrowserSessionStore.defaultUserDataDirectory
+    ) -> [ChromeProfile] {
+        BrowserSessionStore.discoverChromium(browser: .chrome, in: userDataDirectory)
     }
 }
 
@@ -512,19 +700,19 @@ struct RemoteDownloadProgress: Equatable {
 protocol RemoteMediaExtracting: AnyObject {
     func metadata(
         for source: YouTubeRemoteMediaSource,
-        profile: ChromeProfile
+        session: BrowserSession
     ) async throws -> RemoteMediaMetadata
 
     func retrieveCaption(
         for source: YouTubeRemoteMediaSource,
         metadata: RemoteMediaMetadata,
-        profile: ChromeProfile
+        session: BrowserSession
     ) async throws -> TranscriptArtifact?
 
     func downloadAudio(
         for source: YouTubeRemoteMediaSource,
         metadata: RemoteMediaMetadata,
-        profile: ChromeProfile,
+        session: BrowserSession,
         onProgress: @escaping @Sendable (RemoteDownloadProgress) -> Void
     ) async throws -> RemoteDownloadedAudio
 }
@@ -554,14 +742,14 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
 
     func metadata(
         for source: YouTubeRemoteMediaSource,
-        profile: ChromeProfile
+        session: BrowserSession
     ) async throws -> RemoteMediaMetadata {
         let runtime = try runtime()
         let result = try await run(
             executableURL: runtime.ytDLP,
             arguments: Self.metadataArguments(
                 source: source,
-                profile: profile,
+                session: session,
                 denoURL: runtime.deno
             )
         )
@@ -571,7 +759,7 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
     func retrieveCaption(
         for source: YouTubeRemoteMediaSource,
         metadata: RemoteMediaMetadata,
-        profile: ChromeProfile
+        session: BrowserSession
     ) async throws -> TranscriptArtifact? {
         guard let track = metadata.preferredCaption else { return nil }
         let runtime = try runtime()
@@ -585,7 +773,7 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let outputTemplate = directory.appendingPathComponent("caption.%(ext)s").path
-        var arguments = Self.commonArguments(profile: profile, denoURL: runtime.deno)
+        var arguments = Self.commonArguments(session: session, denoURL: runtime.deno)
         arguments += [
             "--skip-download",
             track.kind == .authored ? "--write-subs" : "--write-auto-subs",
@@ -615,7 +803,7 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
     func downloadAudio(
         for source: YouTubeRemoteMediaSource,
         metadata: RemoteMediaMetadata,
-        profile: ChromeProfile,
+        session: BrowserSession,
         onProgress: @escaping @Sendable (RemoteDownloadProgress) -> Void
     ) async throws -> RemoteDownloadedAudio {
         try ensureDiskSpace(estimatedBytes: metadata.estimatedAudioBytes)
@@ -634,7 +822,7 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
                 executableURL: runtime.ytDLP,
                 arguments: Self.downloadArguments(
                     source: source,
-                    profile: profile,
+                    session: session,
                     denoURL: runtime.deno,
                     audioFormatID: metadata.audioFormatID,
                     outputTemplate: outputTemplate
@@ -659,10 +847,10 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
 
     nonisolated static func metadataArguments(
         source: YouTubeRemoteMediaSource,
-        profile: ChromeProfile,
+        session: BrowserSession,
         denoURL: URL
     ) -> [String] {
-        commonArguments(profile: profile, denoURL: denoURL) + [
+        commonArguments(session: session, denoURL: denoURL) + [
             "--skip-download",
             "--dump-single-json",
             source.canonicalURL.absoluteString
@@ -671,12 +859,12 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
 
     nonisolated static func downloadArguments(
         source: YouTubeRemoteMediaSource,
-        profile: ChromeProfile,
+        session: BrowserSession,
         denoURL: URL,
         audioFormatID: String,
         outputTemplate: String
     ) -> [String] {
-        commonArguments(profile: profile, denoURL: denoURL) + [
+        commonArguments(session: session, denoURL: denoURL) + [
             "--newline",
             "--progress",
             "--progress-template",
@@ -687,13 +875,16 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
         ]
     }
 
-    private nonisolated static func commonArguments(profile: ChromeProfile, denoURL: URL) -> [String] {
+    private nonisolated static func commonArguments(
+        session: BrowserSession,
+        denoURL: URL
+    ) -> [String] {
         [
             "--no-config",
             "--no-playlist",
             "--no-warnings",
             "--js-runtimes", "deno:\(denoURL.path)",
-            "--cookies-from-browser", "chrome:\(profile.id)"
+            "--cookies-from-browser", session.cookieArgument
         ]
     }
 
@@ -792,7 +983,7 @@ final class BundledRemoteMediaExtractor: RemoteMediaExtracting {
                    let publicArguments = Self.removingBrowserSession(from: arguments)
                 {
                     Log.app.warning(
-                        "Selected Chrome profile cookies are unavailable; retrying public YouTube access"
+                        "Selected browser session cookies are unavailable; retrying public YouTube access"
                     )
                     return try await run(
                         executableURL: executableURL,

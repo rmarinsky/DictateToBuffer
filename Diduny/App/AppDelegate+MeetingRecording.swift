@@ -48,17 +48,8 @@ extension AppDelegate {
         // Deactivate escape cancel handler
         EscapeCancelService.shared.deactivate()
 
-        // Disconnect real-time transcription (if active or still connecting)
-        meetingRealtimeConnectTask?.cancel()
-        meetingRealtimeConnectTask = nil
-        if appState.liveTranscriptStore != nil || meetingRecorderService.onRealtimeAudioData != nil {
-            await realtimeTranscriptionService.disconnect()
-            realtimeTranscriptionService.clearCallbacks()
-            meetingRecorderService.onRealtimeAudioData = nil
-            // The transcript window stays open for review — deliver the tail.
-            await meetingTokenCoalescer?.flushNow()
-        }
-        meetingTokenCoalescer = nil
+        // Disconnect real-time transcription (if active or still connecting).
+        _ = await stopMeetingLiveTranscription()
 
         // Capture in-progress recording ID before stopRecording() clears it (RLR-M1).
         let cancelInProgressRecordingId = meetingRecorderService.currentRecordingId
@@ -93,7 +84,7 @@ extension AppDelegate {
             await meetingRecorderService.cancelRecording()
         }
 
-        // Mark transcript as inactive but keep window open for review
+        // Release the live transcript after the Flow panel returns to idle.
         await MainActor.run {
             appState.liveTranscriptStore?.isActive = false
             appState.liveTranscriptStore = nil
@@ -196,12 +187,7 @@ extension AppDelegate {
             // instead of running after it. Audio captured before the socket is
             // up is buffered by CloudRealtimeService and flushed on connect —
             // recording never waits for the network.
-            var store: LiveTranscriptStore?
-            if cloudModeEnabled {
-                store = await setupRealtimeTranscription()
-            } else {
-                Log.app.info("Local mode selected — recording audio only")
-            }
+            let store = await setupMeetingLiveTranscription(cloudModeEnabled: cloudModeEnabled)
 
             startMetrics.begin(.recorderStart)
             try await meetingRecorderService.startRecording()
@@ -215,12 +201,7 @@ extension AppDelegate {
                     .warning(
                         "startMeetingRecording: state changed during init (now \(recordingStateAfterStart)), aborting"
                     )
-                meetingRealtimeConnectTask?.cancel()
-                meetingRealtimeConnectTask = nil
-                meetingTokenCoalescer = nil
-                await realtimeTranscriptionService.disconnect()
-                realtimeTranscriptionService.clearCallbacks()
-                meetingRecorderService.onRealtimeAudioData = nil
+                _ = await stopMeetingLiveTranscription()
                 await meetingRecorderService.cancelRecording()
                 if let token = meetingActivityToken {
                     ProcessInfo.processInfo.endActivity(token)
@@ -233,15 +214,11 @@ extension AppDelegate {
                 appState.meetingRecordingStartTime = Date()
                 appState.liveTranscriptStore = store
                 handleMeetingStateChange(.recording)
-            }
-            startMetrics.finish(outcome: "ok")
-
-            // Show transcript window only if we have real-time transcription
-            if let store {
-                await MainActor.run {
-                    TranscriptionWindowController.shared.showWindow(store: store)
+                if !cloudModeEnabled {
+                    updateRecordingFeedbackConnectionStatus(.connected, mode: .meeting)
                 }
             }
+            startMetrics.finish(outcome: "ok")
 
             // Activate escape cancel handler
             await MainActor.run {
@@ -269,12 +246,7 @@ extension AppDelegate {
             Log.app.error("Meeting recording failed: \(error)")
 
             // Abort the in-flight realtime connect — nothing will consume it.
-            meetingRealtimeConnectTask?.cancel()
-            meetingRealtimeConnectTask = nil
-            meetingTokenCoalescer = nil
-            await realtimeTranscriptionService.disconnect()
-            realtimeTranscriptionService.clearCallbacks()
-            meetingRecorderService.onRealtimeAudioData = nil
+            _ = await stopMeetingLiveTranscription()
 
             // End App Nap prevention on failed start
             if let token = meetingActivityToken {
@@ -292,6 +264,71 @@ extension AppDelegate {
 
     // MARK: - Real-Time Transcription Setup
 
+    func setupMeetingLiveTranscription(cloudModeEnabled: Bool) async -> LiveTranscriptStore {
+        if cloudModeEnabled {
+            return await setupRealtimeTranscription()
+        }
+
+        Log.app.info("Local meeting mode selected — starting live Whisper preview")
+        let store = LiveTranscriptStore()
+        store.isActive = true
+        store.connectionStatus = .connected
+
+        let whisper = whisperTranscriptionService
+        let stream = LocalWhisperStreamingService(
+            transcribe: { samples in
+                try await whisper.transcribeRawSamples(samples)
+            },
+            onText: { [weak self, store] text in
+                let tokens = [RealtimeToken(text: text, isFinal: false)]
+                await store.processTokens(tokens)
+                await self?.updateRecordingFeedbackTokens(tokens, mode: .meeting)
+            },
+            onError: { [weak self, store] error in
+                Log.whisper.warning("Local meeting preview failed: \(error.localizedDescription)")
+                await MainActor.run {
+                    store.connectionStatus = .failed("Live preview unavailable")
+                }
+                await self?.updateRecordingFeedbackConnectionStatus(
+                    .failed("Live preview unavailable"),
+                    mode: .meeting
+                )
+            }
+        )
+
+        localMeetingStreamingService = stream
+        meetingRecorderService.onRealtimeAudioData = { [weak stream] pcmData in
+            Task { await stream?.appendPCM16(pcmData) }
+        }
+        return store
+    }
+
+    @discardableResult
+    func stopMeetingLiveTranscription(finalizeCloud: Bool = false) async -> Bool {
+        meetingRealtimeConnectTask?.cancel()
+        meetingRealtimeConnectTask = nil
+
+        if let localMeetingStreamingService {
+            meetingRecorderService.onRealtimeAudioData = nil
+            self.localMeetingStreamingService = nil
+            await localMeetingStreamingService.stop()
+            appState.liveTranscriptStore?.connectionStatus = .disconnected
+            return true
+        }
+
+        var didReceiveFinalization = true
+        if finalizeCloud, appState.liveTranscriptStore != nil {
+            let result = await realtimeTranscriptionService.finalize(profile: .safe)
+            didReceiveFinalization = result.didReceiveFinishedSignal
+        }
+        await realtimeTranscriptionService.disconnect()
+        realtimeTranscriptionService.clearCallbacks()
+        meetingRecorderService.onRealtimeAudioData = nil
+        await meetingTokenCoalescer?.flushNow()
+        meetingTokenCoalescer = nil
+        return didReceiveFinalization
+    }
+
     private func setupRealtimeTranscription() async -> LiveTranscriptStore {
         let store = await MainActor.run { LiveTranscriptStore() }
 
@@ -305,13 +342,15 @@ extension AppDelegate {
         // Wire token callbacks. Batches are coalesced to ≤10Hz before touching
         // the @Observable store — per-message main-actor updates made SwiftUI
         // re-render for every WS message and lag grew with the meeting.
-        let coalescer = RealtimeTokenCoalescer { [weak store] events in
+        let coalescer = RealtimeTokenCoalescer { [weak self, weak store] events in
             for event in events {
                 switch event {
                 case let .tokens(tokens):
                     store?.processTokens(tokens)
+                    self?.updateRecordingFeedbackTokens(tokens, mode: .meeting)
                 case .segmentBoundary:
                     store?.markSegmentBoundary()
+                    self?.markRecordingFeedbackSegmentBoundary(mode: .meeting)
                 }
             }
         }
@@ -320,9 +359,10 @@ extension AppDelegate {
             coalescer?.add(tokens)
         }
 
-        rtService.onConnectionStatusChanged = { [weak store] status in
+        rtService.onConnectionStatusChanged = { [weak self, weak store] status in
             Task { @MainActor in
                 store?.connectionStatus = status
+                self?.updateRecordingFeedbackConnectionStatus(status, mode: .meeting)
             }
         }
 
@@ -380,7 +420,7 @@ extension AppDelegate {
         let chapterNumber = appState.meetingChapters.count + 1
         let chapter = MeetingChapter(timestampSeconds: elapsed, label: "Chapter \(chapterNumber)")
         appState.meetingChapters.append(chapter)
-        NotchManager.shared.showInfo(message: "Chapter \(chapterNumber) added", duration: 1.0)
+        DictationOverlayController.shared.showInfo(message: "Chapter \(chapterNumber) added", duration: 1.0)
         Log.app.info("Meeting chapter \(chapterNumber) added at \(elapsed)s")
     }
 
@@ -402,21 +442,7 @@ extension AppDelegate {
         }
 
         // Finalize and disconnect real-time transcription (if active)
-        meetingRealtimeConnectTask?.cancel()
-        meetingRealtimeConnectTask = nil
-        let hasRealtimeSession = await MainActor.run { appState.liveTranscriptStore != nil }
-        var didReceiveRealtimeFinalization = true
-        if hasRealtimeSession {
-            let finalizeResult = await realtimeTranscriptionService.finalize(profile: .safe)
-            didReceiveRealtimeFinalization = finalizeResult.didReceiveFinishedSignal
-            await realtimeTranscriptionService.disconnect()
-            realtimeTranscriptionService.clearCallbacks()
-            meetingRecorderService.onRealtimeAudioData = nil
-            // Deliver the transcript tail still sitting in the coalescer
-            // before anything reads the store.
-            await meetingTokenCoalescer?.flushNow()
-        }
-        meetingTokenCoalescer = nil
+        let didReceiveRealtimeFinalization = await stopMeetingLiveTranscription(finalizeCloud: true)
 
         // Next meeting start should hit a warm SCShareableContent cache.
         ShareableContentCache.shared.prewarm()
@@ -522,15 +548,15 @@ extension AppDelegate {
                     Task { @MainActor in
                         switch status {
                         case .queued:
-                            NotchManager.shared.showInfo(message: "Queued...", duration: 30)
+                            DictationOverlayController.shared.showInfo(message: "Queued...", duration: 30)
                         case .uploading:
-                            NotchManager.shared.showInfo(message: "Uploading...", duration: 30)
+                            DictationOverlayController.shared.showInfo(message: "Uploading...", duration: 30)
                         case .processing:
                             // Processing can take tens of minutes for large files —
                             // use persistent processing state instead of auto-dismissing info
-                            NotchManager.shared.startProcessing(mode: .meeting)
+                            DictationOverlayController.shared.startProcessing(mode: .meeting)
                         case .finalizing:
-                            NotchManager.shared.showInfo(message: "Finishing up...", duration: 30)
+                            DictationOverlayController.shared.showInfo(message: "Finishing up...", duration: 30)
                         default:
                             break
                         }
@@ -595,7 +621,7 @@ extension AppDelegate {
                 }
 
                 if !cloudModeEnabled {
-                    NotchManager.shared.showInfo(
+                    DictationOverlayController.shared.showInfo(
                         message: "Recording saved. Open Recordings and choose a local model to transcribe.",
                         duration: 3.0
                     )
@@ -705,7 +731,7 @@ extension AppDelegate {
         }
 
         escapeService.onProgressEscape = { pressCount, _ in
-            NotchManager.shared.showInfoDuringRecording(
+            DictationOverlayController.shared.showInfoDuringRecording(
                 message: SettingsStorage.shared.escapeCancelRepeatHint(afterPressCount: pressCount),
                 mode: .meeting,
                 duration: 1.5
@@ -718,7 +744,7 @@ extension AppDelegate {
                 let shouldSaveAudio = SettingsStorage.shared.escapeCancelSaveAudio
                 await self?.cancelMeetingRecording()
                 let message = shouldSaveAudio ? "Recording cancelled and saved" : "Recording cancelled"
-                NotchManager.shared.showInfo(message: message)
+                DictationOverlayController.shared.showInfo(message: message)
             }
         }
 

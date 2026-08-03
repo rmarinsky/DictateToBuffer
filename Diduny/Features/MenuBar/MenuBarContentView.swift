@@ -17,11 +17,7 @@ struct MenuBarProcessingModeSelection {
     }
 
     mutating func select(_ provider: TranscriptionProvider) {
-        settings.transcriptionProvider = provider
-        settings.translationProvider = provider
-        if provider == .local {
-            settings.meetingRealtimeTranscriptionEnabled = false
-        }
+        settings.selectProcessingProvider(provider)
         self.provider = provider
     }
 }
@@ -290,7 +286,7 @@ struct MenuBarContentView: View {
 
     private func selectCloudMode() {
         guard AuthService.shared.isLoggedIn else {
-            NotchManager.shared.showInfo(message: "Log in to use cloud processing", duration: 3.0)
+            DictationOverlayController.shared.showInfo(message: "Log in to use cloud processing", duration: 3.0)
             onOpenMainWindow(.account)
             return
         }

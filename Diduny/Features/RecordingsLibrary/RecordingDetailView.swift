@@ -280,7 +280,15 @@ struct RecordingDetailView: View {
 
             HStack(spacing: 8) {
                 localTranscriptionButton
-                cloudTranscriptionButton
+                if !currentRecording.requiresLocalTranscription {
+                    cloudTranscriptionButton
+                }
+            }
+
+            if currentRecording.requiresLocalTranscription {
+                Text("Imported files and YouTube audio are transcribed locally to protect cloud limits.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             translationMenu

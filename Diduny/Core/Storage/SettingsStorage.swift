@@ -84,7 +84,6 @@ final class SettingsStorage {
         case autoPaste
         case playSoundOnCompletion
         case launchAtLogin
-        case recordingFeedbackSurface
         case typingSpeedWordsPerMinute
         case pushToTalkKey
         case pushToTalkHoldEnabled
@@ -137,6 +136,7 @@ final class SettingsStorage {
         case proxyBaseURL
         case remoteConfigURL
         case userDeclinedScreenRecording
+        case selectedBrowserSessionID
         case selectedChromeProfileID
         case remoteMediaRightsAcknowledged
     }
@@ -146,6 +146,29 @@ final class SettingsStorage {
         migratePreferredDeviceKeyIfNeeded()
         migrateTranscriptionProviderIfNeeded()
         migrateProxyURLIfNeeded()
+    }
+
+    func applyNewUserDefaultsIfMissing() {
+        let values: [Key: Any] = [
+            .pushToTalkKey: PushToTalkKey.rightShift.rawValue,
+            .pushToTalkHoldEnabled: true,
+            .pushToTalkToggleEnabled: false,
+            .translationPushToTalkHoldEnabled: false,
+            .translationPushToTalkToggleEnabled: false,
+            .pushToTalkHoldStartDelaySeconds: 1.2,
+            .translationPushToTalkHoldStartDelaySeconds: 1.2,
+            .pushToTalkToggleTapCount: 3,
+            .translationPushToTalkToggleTapCount: 3,
+            .meetingHotkeyPressCount: 3,
+            .meetingTranslationHotkeyPressCount: 3,
+            .autoPaste: true,
+            .playSoundOnCompletion: true,
+            .typingSpeedWordsPerMinute: 40.0
+        ]
+
+        for (key, value) in values where defaults.object(forKey: key.rawValue) == nil {
+            defaults.set(value, forKey: key.rawValue)
+        }
     }
 
     /// One-time migration from legacy `selectedDeviceID` (AudioDeviceID int) to `selectedDeviceUID` (String).
@@ -255,6 +278,17 @@ final class SettingsStorage {
         }
     }
 
+    var selectedBrowserSessionID: String? {
+        get { defaults.string(forKey: Key.selectedBrowserSessionID.rawValue) }
+        set {
+            if let newValue {
+                defaults.set(newValue, forKey: Key.selectedBrowserSessionID.rawValue)
+            } else {
+                defaults.removeObject(forKey: Key.selectedBrowserSessionID.rawValue)
+            }
+        }
+    }
+
     var remoteMediaRightsAcknowledged: Bool {
         get { defaults.bool(forKey: Key.remoteMediaRightsAcknowledged.rawValue) }
         set { defaults.set(newValue, forKey: Key.remoteMediaRightsAcknowledged.rawValue) }
@@ -263,18 +297,6 @@ final class SettingsStorage {
     var launchAtLogin: Bool {
         get { LaunchAtLogin.isEnabled }
         set { LaunchAtLogin.isEnabled = newValue }
-    }
-
-    var recordingFeedbackSurface: RecordingFeedbackSurface {
-        get {
-            guard let rawValue = defaults.string(forKey: Key.recordingFeedbackSurface.rawValue),
-                  let surface = RecordingFeedbackSurface(rawValue: rawValue)
-            else {
-                return .compactPanel
-            }
-            return surface
-        }
-        set { defaults.set(newValue.rawValue, forKey: Key.recordingFeedbackSurface.rawValue) }
     }
 
     var typingSpeedWordsPerMinute: Double {
@@ -660,6 +682,12 @@ final class SettingsStorage {
         transcriptionProvider == .cloud && !AuthService.hasStoredSession ? .local : transcriptionProvider
     }
 
+    func selectProcessingProvider(_ provider: TranscriptionProvider) {
+        transcriptionProvider = provider
+        translationProvider = provider
+        meetingRealtimeTranscriptionEnabled = provider == .cloud
+    }
+
     var selectedWhisperModel: String {
         get { defaults.string(forKey: Key.selectedWhisperModel.rawValue) ?? "" }
         set { defaults.set(newValue, forKey: Key.selectedWhisperModel.rawValue) }
@@ -743,7 +771,12 @@ final class SettingsStorage {
     /// `true` = Cloud mode (realtime websocket + async fallback).
     /// `false` = Local mode (audio recording only, process later from Recordings).
     var meetingRealtimeTranscriptionEnabled: Bool {
-        get { defaults.bool(forKey: Key.meetingRealtimeTranscriptionEnabled.rawValue) }
+        get {
+            if defaults.object(forKey: Key.meetingRealtimeTranscriptionEnabled.rawValue) == nil {
+                return transcriptionProvider == .cloud
+            }
+            return defaults.bool(forKey: Key.meetingRealtimeTranscriptionEnabled.rawValue)
+        }
         set { defaults.set(newValue, forKey: Key.meetingRealtimeTranscriptionEnabled.rawValue) }
     }
 

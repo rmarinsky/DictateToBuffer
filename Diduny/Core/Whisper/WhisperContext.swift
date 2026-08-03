@@ -22,7 +22,11 @@ actor WhisperContext {
         }
     }
 
-    func transcribe(samples: [Float], language: String? = nil, initialPrompt: String? = nil, translate: Bool = false) throws -> String {
+    static func milliseconds(fromTimestamp timestamp: Int64) -> Int {
+        Int(timestamp) * 10
+    }
+
+    func transcribe(samples: [Float], language: String? = nil, initialPrompt: String? = nil, translate: Bool = false) throws -> GeneratedTranscript {
         guard let context else {
             throw WhisperError.contextNotInitialized
         }
@@ -35,7 +39,7 @@ actor WhisperContext {
         params.print_progress = false
         params.print_timestamps = false
         params.print_special = false
-        params.no_timestamps = true
+        params.no_timestamps = false
         params.single_segment = false
         params.translate = translate
 
@@ -70,15 +74,29 @@ actor WhisperContext {
 
         let segmentCount = whisper_full_n_segments(context)
         var text = ""
+        var segments: [TimedTranscriptSegment] = []
 
         for i in 0 ..< segmentCount {
             if let segmentText = whisper_full_get_segment_text(context, i) {
-                text += String(cString: segmentText)
+                let segmentText = String(cString: segmentText)
+                text += segmentText
+                let segment = TimedTranscriptSegment(
+                    startMilliseconds: Self.milliseconds(
+                        fromTimestamp: whisper_full_get_segment_t0(context, i)
+                    ),
+                    endMilliseconds: Self.milliseconds(
+                        fromTimestamp: whisper_full_get_segment_t1(context, i)
+                    ),
+                    text: segmentText.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+                if !segment.text.isEmpty {
+                    segments.append(segment)
+                }
             }
         }
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         Log.whisper.info("Transcription complete: \(trimmed.prefix(50))...")
-        return trimmed
+        return GeneratedTranscript(text: trimmed, segments: segments)
     }
 }

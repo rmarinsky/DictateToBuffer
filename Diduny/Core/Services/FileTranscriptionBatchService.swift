@@ -66,7 +66,7 @@ struct FileTranscriptionSettingsSnapshot {
     static func current() -> Self {
         let settings = SettingsStorage.shared
         return Self(
-            provider: settings.effectiveTranscriptionProvider,
+            provider: .local,
             languageHints: settings.speechLanguageHints,
             localModelName: settings.selectedWhisperModel
         )
@@ -115,6 +115,10 @@ struct BatchTranscriptionItem: Codable, Identifiable, Equatable {
             default:
                 false
             }
+        }
+
+        var showsInBatchInspector: Bool {
+            self != .completed && self != .duplicate
         }
     }
 
@@ -302,8 +306,11 @@ final class FileTranscriptionBatchService {
         recordingStore: LiveFileTranscriptionBatchRecordingStore(),
         remoteExtractor: BundledRemoteMediaExtractor(),
         chromeProfile: {
-            guard let id = SettingsStorage.shared.selectedChromeProfileID else { return nil }
-            return ChromeProfileStore.discover().first(where: { $0.id == id })
+            BrowserSessionStore.selected(
+                from: BrowserSessionStore.discover(),
+                selectionID: SettingsStorage.shared.selectedBrowserSessionID,
+                legacyChromeProfileID: SettingsStorage.shared.selectedChromeProfileID
+            )
         },
         remoteMediaAuthorized: {
             SettingsStorage.shared.remoteMediaRightsAcknowledged
@@ -354,6 +361,10 @@ final class FileTranscriptionBatchService {
         activeItemIDs.count
     }
 
+    var activeBatchID: UUID? {
+        currentBatchID
+    }
+
     func isActive(_ itemID: UUID) -> Bool {
         activeItemIDs.contains(itemID)
     }
@@ -370,6 +381,7 @@ final class FileTranscriptionBatchService {
 
     private var processingTask: Task<Void, Never>?
     private var currentBatchID: UUID?
+    private(set) var lastCreatedBatchID: UUID?
     private var initialRecordingIDs: [UUID] = []
     private var activeSettingsSnapshot: FileTranscriptionSettingsSnapshot?
     private var hasPlayedCompletionSound = false
@@ -462,6 +474,16 @@ final class FileTranscriptionBatchService {
         guard !urls.isEmpty || !remoteSources.isEmpty || !existingRecordingIDs.isEmpty else {
             return false
         }
+        if !remoteSources.isEmpty {
+            guard remoteMediaAuthorized() else {
+                batchError = "Confirm that you own this content or have permission to transcribe it."
+                return false
+            }
+            guard chromeProfile() != nil else {
+                batchError = "Select a browser session to transcribe YouTube URLs."
+                return false
+            }
+        }
         resetFinishedBatchIfNeeded()
         guard currentBatchID == nil else { return false }
         guard createPersistentBatch(
@@ -483,7 +505,6 @@ final class FileTranscriptionBatchService {
         remoteSources: [YouTubeRemoteMediaSource],
         existingRecordingIDs: [UUID]
     ) -> Bool {
-        guard !isProcessing else { return false }
         guard !urls.isEmpty || !remoteSources.isEmpty || !existingRecordingIDs.isEmpty else {
             return false
         }
@@ -493,9 +514,25 @@ final class FileTranscriptionBatchService {
                 return false
             }
             guard chromeProfile() != nil else {
-                batchError = "Select a Google Chrome profile to transcribe YouTube URLs."
+                batchError = "Select a browser session to transcribe YouTube URLs."
                 return false
             }
+        }
+        if let currentBatchID {
+            guard currentBatchID == batch.id else { return false }
+            do {
+                try batchPersistence?.addRecordingIDs(existingRecordingIDs, to: batch.id)
+            } catch {
+                batchError = "Could not update the transcription batch."
+                return false
+            }
+            initialRecordingIDs.append(contentsOf: existingRecordingIDs.filter {
+                !initialRecordingIDs.contains($0)
+            })
+            add(urls: urls)
+            add(remoteSources: remoteSources)
+            startIfNeeded()
+            return true
         }
         resetFinishedBatchIfNeeded()
         guard currentBatchID == nil else { return false }
@@ -523,9 +560,16 @@ final class FileTranscriptionBatchService {
     }
 
     func resume(batch: TranscriptionBatch) {
+        resume(batch: batch, retrying: Set(batch.retryableWorkItems.map(\.id)))
+    }
+
+    func resume(batch: TranscriptionBatch, retrying itemIDs: Set<UUID>) {
         guard canResume(batch: batch), let persistedItems = batch.workItems else {
             return
         }
+        let retryableIDs = Set(batch.retryableWorkItems.map(\.id))
+        let selectedIDs = itemIDs.intersection(retryableIDs)
+        guard !selectedIDs.isEmpty else { return }
         do {
             try batchPersistence?.reopenBatch(batch.id)
         } catch {
@@ -541,7 +585,7 @@ final class FileTranscriptionBatchService {
             }
             return item
         }
-        retry(ids: Set(items.filter { $0.status != .completed && $0.status != .duplicate }.map(\.id)))
+        retry(ids: selectedIDs)
     }
 
     func canResume(batch: TranscriptionBatch) -> Bool {
@@ -633,11 +677,13 @@ final class FileTranscriptionBatchService {
         initialRecordingIDs = existingRecordingIDs
         guard let batchPersistence else { return true }
         do {
-            currentBatchID = try batchPersistence.createBatch(
+            let batchID = try batchPersistence.createBatch(
                 name: name,
                 description: description,
                 recordingIDs: existingRecordingIDs
             )
+            currentBatchID = batchID
+            lastCreatedBatchID = batchID
             return true
         } catch {
             batchError = "Could not create the transcription batch."
@@ -687,7 +733,7 @@ final class FileTranscriptionBatchService {
                 return
             }
             guard chromeProfile() != nil else {
-                batchError = "Select a Google Chrome profile to transcribe YouTube URLs."
+                batchError = "Select a browser session to transcribe YouTube URLs."
                 return
             }
         }
@@ -849,7 +895,7 @@ final class FileTranscriptionBatchService {
                         try Task.checkCancellation()
                         let metadata = try await remoteExtractor.metadata(
                             for: source,
-                            profile: profile
+                            session: profile
                         )
                         await remoteMetadataPermits.release()
                         return .metadata(itemID, metadata)
@@ -980,7 +1026,7 @@ final class FileTranscriptionBatchService {
                         try await remoteExtractor.retrieveCaption(
                             for: source,
                             metadata: metadata,
-                            profile: profile
+                            session: profile
                         )
                     }
                     let artifacts = artifact.map { [$0] } ?? []
@@ -1016,7 +1062,7 @@ final class FileTranscriptionBatchService {
             if storedAudioURL == nil {
                 if metadata == nil {
                     update(itemID) { $0.status = .checkingLink }
-                    metadata = try await remoteExtractor.metadata(for: source, profile: profile)
+                    metadata = try await remoteExtractor.metadata(for: source, session: profile)
                 }
                 guard let metadata else {
                     throw RemoteMediaExtractorError.malformedMetadata
@@ -1054,7 +1100,7 @@ final class FileTranscriptionBatchService {
                                 if let caption = try await remoteExtractor.retrieveCaption(
                                     for: source,
                                     metadata: metadata,
-                                    profile: profile
+                                    session: profile
                                 ) {
                                     update(itemID) { $0.sourceCaptionArtifacts = [caption] }
                                 }
@@ -1075,7 +1121,7 @@ final class FileTranscriptionBatchService {
                         return try await remoteExtractor.downloadAudio(
                             for: source,
                             metadata: metadata,
-                            profile: profile
+                            session: profile
                         ) { [weak self] progress in
                             Task { @MainActor in
                                 self?.update(itemID) {
@@ -1447,7 +1493,7 @@ private final class LiveFileTranscriptionBatchTranscriber: FileTranscriptionBatc
                 $0.name == settings.localModelName
             }), WhisperModelManager.shared.isModelDownloaded(model)
             else {
-                return "No local Whisper model downloaded. Log in for Cloud or download a model in Settings."
+                return "Download a local Whisper model in Settings to transcribe files and YouTube."
             }
             return nil
         }
@@ -1492,7 +1538,7 @@ private final class LiveFileTranscriptionBatchTranscriber: FileTranscriptionBatc
             }.value
             let service = WhisperTranscriptionService()
             service.modelNameOverride = settings.localModelName
-            return try await GeneratedTranscript(text: service.transcribe(audioData: audioData))
+            return try await service.transcribeDetailed(audioData: audioData)
         }
     }
 }

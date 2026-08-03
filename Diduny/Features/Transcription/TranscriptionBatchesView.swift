@@ -1,4 +1,35 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
+
+enum ImportedMediaPicker {
+    static let allowedContentTypes: [UTType] = [
+        .audio,
+        .mpeg4Audio,
+        .mp3,
+        .wav,
+        .aiff,
+        UTType("org.xiph.flac") ?? .audio,
+        UTType("public.ogg-audio") ?? .audio,
+        .mpeg4Movie,
+        .movie,
+        .video
+    ]
+
+    @MainActor
+    static func selectFiles() -> [URL]? {
+        let panel = NSOpenPanel()
+        panel.title = "Select Audio or Video Files to Transcribe"
+        panel.prompt = "Transcribe"
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = allowedContentTypes
+
+        NSApp.activate(ignoringOtherApps: true)
+        return panel.runModal() == .OK ? panel.urls : nil
+    }
+}
 
 private enum BatchSourceEditor {
     case youtube
@@ -9,8 +40,7 @@ struct TranscriptionBatchInspectorView: View {
     let batch: TranscriptionBatch
     let onOpenRecording: (UUID) -> Void
     let onClose: () -> Void
-    private let chromeProfiles: [ChromeProfile]
-    private let showsYouTubeAuthorizationControls: Bool
+    private let browserSessions: [BrowserSession]
 
     @State private var batches = TranscriptionBatchStorage.shared
     @State private var recordings = RecordingsLibraryStorage.shared
@@ -22,7 +52,7 @@ struct TranscriptionBatchInspectorView: View {
     @State private var sourceEditor: BatchSourceEditor?
     @State private var youtubeURLText = ""
     @State private var selectedRecordingIDs = Set<UUID>()
-    @State private var selectedChromeProfileID: String
+    @State private var selectedBrowserSessionID: String
     @State private var rightsAcknowledged: Bool
     @FocusState private var isYouTubeURLInputFocused: Bool
 
@@ -34,19 +64,17 @@ struct TranscriptionBatchInspectorView: View {
         self.batch = batch
         self.onOpenRecording = onOpenRecording
         self.onClose = onClose
-        let profiles = ChromeProfileStore.discover()
+        let sessions = BrowserSessionStore.discover()
         let settings = SettingsStorage.shared
-        let storedProfileID = settings.selectedChromeProfileID
-        self.chromeProfiles = profiles
-        self.showsYouTubeAuthorizationControls = !settings.remoteMediaRightsAcknowledged
-            || !profiles.contains(where: { $0.id == storedProfileID })
+        let selectedSession = BrowserSessionStore.selected(
+            from: sessions,
+            selectionID: settings.selectedBrowserSessionID,
+            legacyChromeProfileID: settings.selectedChromeProfileID
+        )
+        self.browserSessions = sessions
         _name = State(initialValue: batch.name)
         _description = State(initialValue: batch.description)
-        _selectedChromeProfileID = State(
-            initialValue: profiles.contains(where: { $0.id == storedProfileID })
-                ? storedProfileID ?? ""
-                : profiles.first?.id ?? ""
-        )
+        _selectedBrowserSessionID = State(initialValue: selectedSession?.selectionID ?? "")
         _rightsAcknowledged = State(initialValue: settings.remoteMediaRightsAcknowledged)
     }
 
@@ -59,8 +87,19 @@ struct TranscriptionBatchInspectorView: View {
         return currentBatch.recordingIDs.compactMap { byID[$0] }
     }
 
+    private var inspectorStatusItems: [BatchTranscriptionItem] {
+        let items = batchService.activeBatchID == currentBatch.id
+            ? batchService.items
+            : currentBatch.inspectableWorkItems
+        return items.filter(\.status.showsInBatchInspector)
+    }
+
     private var unattachedWorkItems: [BatchTranscriptionItem] {
-        (currentBatch.workItems ?? []).filter { $0.recordingID == nil }
+        inspectorStatusItems.filter { $0.recordingID == nil }
+    }
+
+    private func inspectorStatusItem(for recordingID: UUID) -> BatchTranscriptionItem? {
+        inspectorStatusItems.first { $0.recordingID == recordingID }
     }
 
     private var youtubeURLValidation: YouTubeRemoteMediaSource.BatchValidation {
@@ -84,7 +123,7 @@ struct TranscriptionBatchInspectorView: View {
 
     private var canAuthorizeYouTube: Bool {
         rightsAcknowledged
-            && chromeProfiles.contains(where: { $0.id == selectedChromeProfileID })
+            && browserSessions.contains(where: { $0.selectionID == selectedBrowserSessionID })
     }
 
     private var availableRecordings: [Recording] {
@@ -145,12 +184,27 @@ struct TranscriptionBatchInspectorView: View {
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
                             Spacer()
-                            if !currentBatch.retryableWorkItems.isEmpty {
-                                Button("Retry Failed (\(currentBatch.retryableWorkItems.count))") {
+                            if batchService.activeBatchID == currentBatch.id,
+                               batchService.isProcessing
+                            {
+                                Button(role: .destructive) {
+                                    batchService.cancelAll()
+                                } label: {
+                                    Image(systemName: "stop.fill")
+                                }
+                                .controlSize(.small)
+                                .help("Stop Batch")
+                                .accessibilityLabel("Stop Batch")
+                            } else if !currentBatch.retryableWorkItems.isEmpty {
+                                Button {
                                     batchService.resume(batch: currentBatch)
+                                } label: {
+                                    Image(systemName: "arrow.clockwise")
                                 }
                                 .controlSize(.small)
                                 .disabled(!batchService.canResume(batch: currentBatch))
+                                .help("Retry Failed Items")
+                                .accessibilityLabel("Retry Failed Items")
                             }
                             Button {
                                 ClipboardService.shared.copy(
@@ -180,67 +234,77 @@ struct TranscriptionBatchInspectorView: View {
                             }
                             .menuStyle(.borderlessButton)
                             .fixedSize()
-                            .disabled(batchService.isProcessing)
                         }
 
                         sourceEditorContent
 
-                        if members.isEmpty {
-                            Text(unattachedWorkItems.isEmpty ? "No attached recordings" : "No completed recordings yet")
+                        if members.isEmpty, unattachedWorkItems.isEmpty {
+                            Text("No attached recordings")
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .center)
                                 .padding(.vertical, 24)
-                        } else {
-                            ForEach(members) { recording in
-                                HStack(spacing: 10) {
-                                    Image(systemName: recording.libraryIconName)
-                                        .foregroundStyle(recording.libraryBrandColor)
-                                        .frame(width: 24)
+                        }
+
+                        ForEach(members) { recording in
+                            HStack(spacing: 10) {
+                                Image(systemName: recording.libraryIconName)
+                                    .foregroundStyle(recording.libraryBrandColor)
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 4) {
                                     Button {
                                         onOpenRecording(recording.id)
                                     } label: {
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(recording.displayTitle).lineLimit(1)
-                                            Text("\(recording.libraryDisplayName) · \(recording.status.displayName)")
+                                            Text(recording.libraryDisplayName)
                                                 .font(.caption)
                                                 .foregroundStyle(.secondary)
                                         }
-                                        .frame(maxWidth: .infinity, alignment: .leading)
                                     }
                                     .buttonStyle(.plain)
-                                    if let latest = recording.resolvedTranscriptHistory.last {
-                                        Button("Copy") {
-                                            ClipboardService.shared.copy(text: latest.text, behavior: .raw)
-                                        }
-                                        .controlSize(.small)
+
+                                    if let item = inspectorStatusItem(for: recording.id) {
+                                        BatchTranscriptionStatusView(
+                                            item: item,
+                                            service: batchService,
+                                            onRetry: retry
+                                        )
                                     }
-                                    Button {
-                                        onOpenRecording(recording.id)
-                                    } label: {
-                                        Image(systemName: "chevron.right")
-                                    }
-                                    .buttonStyle(.plain)
-                                    .accessibilityLabel("Open \(recording.displayTitle)")
                                 }
-                                .padding(10)
-                                .background(
-                                    Color(.quaternaryLabelColor).opacity(0.08),
-                                    in: RoundedRectangle(cornerRadius: 8)
-                                )
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                if let latest = recording.resolvedTranscriptHistory.last {
+                                    Button("Copy") {
+                                        ClipboardService.shared.copy(text: latest.text, behavior: .raw)
+                                    }
+                                    .controlSize(.small)
+                                }
+                                Button {
+                                    onOpenRecording(recording.id)
+                                } label: {
+                                    Image(systemName: "chevron.right")
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Open \(recording.displayTitle)")
                             }
+                            .padding(10)
+                            .background(
+                                Color(.quaternaryLabelColor).opacity(0.08),
+                                in: RoundedRectangle(cornerRadius: 8)
+                            )
                         }
 
                         ForEach(unattachedWorkItems) { item in
                             HStack(spacing: 10) {
-                                Image(systemName: "exclamationmark.circle")
-                                    .foregroundStyle(.red)
+                                Image(systemName: item.remoteSource == nil ? "waveform" : "play.rectangle")
+                                    .foregroundStyle(.secondary)
                                     .frame(width: 24)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.displayName).lineLimit(1)
-                                    Text(item.errorMessage ?? "Ready to retry")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(2)
+                                    BatchTranscriptionStatusView(
+                                        item: item,
+                                        service: batchService,
+                                        onRetry: retry
+                                    )
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             }
@@ -307,6 +371,18 @@ struct TranscriptionBatchInspectorView: View {
                 Text("Paste one video URL per line. Duplicates are ignored.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if browserSessions.isEmpty {
+                    Text("No supported browser sessions were found. Open a browser once, then try again.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else {
+                    Picker("Browser session", selection: $selectedBrowserSessionID) {
+                        ForEach(browserSessions, id: \.selectionID) { session in
+                            Text(session.displayName).tag(session.selectionID)
+                        }
+                    }
+                    .controlSize(.small)
+                }
                 TextEditor(text: $youtubeURLText)
                     .font(.body.monospaced())
                     .focused($isYouTubeURLInputFocused)
@@ -318,27 +394,13 @@ struct TranscriptionBatchInspectorView: View {
                         RoundedRectangle(cornerRadius: 6)
                             .strokeBorder(Color(.separatorColor), lineWidth: 0.5)
                     }
-                if showsYouTubeAuthorizationControls {
-                    if chromeProfiles.isEmpty {
-                        Text("No Google Chrome profiles were found. Open Chrome once, then try again.")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    } else {
-                        Picker("Chrome profile", selection: $selectedChromeProfileID) {
-                            ForEach(chromeProfiles) { profile in
-                                Text(profile.name).tag(profile.id)
-                            }
-                        }
-                        .controlSize(.small)
-                    }
-                    if !SettingsStorage.shared.remoteMediaRightsAcknowledged {
-                        Toggle(
-                            "I own this content or have permission to transcribe it.",
-                            isOn: $rightsAcknowledged
-                        )
-                        .toggleStyle(.checkbox)
-                        .font(.caption)
-                    }
+                if !SettingsStorage.shared.remoteMediaRightsAcknowledged {
+                    Toggle(
+                        "I own this content or have permission to transcribe it.",
+                        isOn: $rightsAcknowledged
+                    )
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
                 }
                 HStack(spacing: 10) {
                     Text("\(youtubeURLValidation.sources.count) valid")
@@ -424,10 +486,18 @@ struct TranscriptionBatchInspectorView: View {
         append(urls: files, remoteSources: [], existingRecordingIDs: [])
     }
 
+    private func retry(_ itemID: UUID) {
+        if batchService.activeBatchID == currentBatch.id {
+            batchService.retry(ids: [itemID])
+        } else {
+            batchService.resume(batch: currentBatch, retrying: [itemID])
+        }
+    }
+
     private func addYouTubeURLs() {
         let validation = youtubeURLValidation
         guard !validation.sources.isEmpty, canAuthorizeYouTube else { return }
-        SettingsStorage.shared.selectedChromeProfileID = selectedChromeProfileID
+        SettingsStorage.shared.selectedBrowserSessionID = selectedBrowserSessionID
         SettingsStorage.shared.remoteMediaRightsAcknowledged = true
         guard append(urls: [], remoteSources: validation.sources, existingRecordingIDs: []) else {
             return
@@ -467,16 +537,16 @@ struct TranscriptionBatchInspectorView: View {
                 ?? "Another transcription batch is active. Finish it before updating this batch."
             return false
         }
-        if !urls.isEmpty || !remoteSources.isEmpty {
-            BatchTranscriptionWindowController.shared.showWindow()
-        }
         return true
     }
+
 }
 
-struct NewTranscriptionBatchSheet: View {
-    @Environment(\.dismiss) private var dismiss
+struct NewTranscriptionBatchPanel: View {
     let recordings: [Recording]
+    let onCreated: (UUID) -> Void
+    let onClose: () -> Void
+    private let browserSessions: [BrowserSession]
     @State private var name = ""
     @State private var description = ""
     @State private var files: [URL] = []
@@ -484,16 +554,52 @@ struct NewTranscriptionBatchSheet: View {
     @State private var selectedRecordingIDs = Set<UUID>()
     @State private var validationError: String?
     @State private var showRecordingPicker = false
-    @FocusState private var isYouTubeURLInputFocused: Bool
+    @State private var selectedBrowserSessionID: String
+    @State private var rightsAcknowledged: Bool
+
+    init(
+        recordings: [Recording],
+        onCreated: @escaping (UUID) -> Void,
+        onClose: @escaping () -> Void
+    ) {
+        self.recordings = recordings
+        self.onCreated = onCreated
+        self.onClose = onClose
+        let sessions = BrowserSessionStore.discover()
+        let settings = SettingsStorage.shared
+        self.browserSessions = sessions
+        _selectedBrowserSessionID = State(
+            initialValue: BrowserSessionStore.selected(
+                from: sessions,
+                selectionID: settings.selectedBrowserSessionID,
+                legacyChromeProfileID: settings.selectedChromeProfileID
+            )?.selectionID ?? ""
+        )
+        _rightsAcknowledged = State(initialValue: settings.remoteMediaRightsAcknowledged)
+    }
 
     private var canCreate: Bool {
-        !files.isEmpty || !urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !selectedRecordingIDs.isEmpty
+        let hasYouTubeURLs = !urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasSources = !files.isEmpty || hasYouTubeURLs || !selectedRecordingIDs.isEmpty
+        return hasSources && (!hasYouTubeURLs || canAuthorizeYouTube)
+    }
+
+    private var canAuthorizeYouTube: Bool {
+        rightsAcknowledged
+            && browserSessions.contains(where: { $0.selectionID == selectedBrowserSessionID })
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("New Transcription Batch").font(.title2.bold())
+            HStack {
+                Text("New Transcription Batch").font(.title2.bold())
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close batch composer")
+            }
             TextField("Batch name (optional)", text: $name)
             TextField("Description (optional)", text: $description, axis: .vertical)
                 .lineLimit(2 ... 4)
@@ -502,9 +608,6 @@ struct NewTranscriptionBatchSheet: View {
                 Button("Add Files…", systemImage: "plus") {
                     files.append(contentsOf: ImportedMediaPicker.selectFiles() ?? [])
                 }
-                Button("Add YouTube URLs", systemImage: "link") {
-                    isYouTubeURLInputFocused = true
-                }
                 Button("Add from Recordings", systemImage: "waveform") {
                     showRecordingPicker.toggle()
                 }
@@ -512,12 +615,41 @@ struct NewTranscriptionBatchSheet: View {
             .controlSize(.small)
 
             VStack(alignment: .leading, spacing: 6) {
+                Text("BROWSER SESSION")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if browserSessions.isEmpty {
+                    Text("No supported browser sessions were found. Open a browser once, then try again.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else {
+                    Picker("Browser session", selection: $selectedBrowserSessionID) {
+                        ForEach(browserSessions, id: \.selectionID) { session in
+                            Text(session.displayName).tag(session.selectionID)
+                        }
+                    }
+                    .labelsHidden()
+                    .accessibilityLabel("Browser session for YouTube")
+                }
+                Text("Diduny uses this browser's YouTube session and does not store your credentials.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if !SettingsStorage.shared.remoteMediaRightsAcknowledged {
+                    Toggle(
+                        "I own this content or have permission to transcribe it.",
+                        isOn: $rightsAcknowledged
+                    )
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
                 Text("YOUTUBE URLS")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 TextEditor(text: $urlText)
                     .font(.body.monospaced())
-                    .focused($isYouTubeURLInputFocused)
                     .accessibilityLabel("YouTube URLs")
                     .frame(height: 64)
                     .padding(6)
@@ -592,15 +724,14 @@ struct NewTranscriptionBatchSheet: View {
 
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button("Cancel", action: onClose)
                 Button("Create and Transcribe") { createBatch() }
                     .buttonStyle(.borderedProminent)
                     .disabled(!canCreate)
             }
         }
-        .padding(24)
-        .frame(width: 560)
-        .frame(minHeight: 460)
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var urlLines: [String] {
@@ -628,6 +759,10 @@ struct NewTranscriptionBatchSheet: View {
     private func createBatch() {
         do {
             let remoteSources = try YouTubeRemoteMediaSource.normalizeBatch(urlText)
+            if !remoteSources.isEmpty {
+                SettingsStorage.shared.selectedBrowserSessionID = selectedBrowserSessionID
+                SettingsStorage.shared.remoteMediaRightsAcknowledged = true
+            }
             let batchService = FileTranscriptionBatchService.shared
             let accepted = batchService.beginBatch(
                 urls: files,
@@ -643,10 +778,11 @@ struct NewTranscriptionBatchSheet: View {
                     ?? "Another transcription batch is active. Finish or retry it before creating a new batch."
                 return
             }
-            if !files.isEmpty || !remoteSources.isEmpty {
-                BatchTranscriptionWindowController.shared.showWindow()
+            guard let batchID = batchService.lastCreatedBatchID else {
+                validationError = "The transcription batch was created but could not be opened."
+                return
             }
-            dismiss()
+            onCreated(batchID)
         } catch {
             validationError = error.localizedDescription
         }

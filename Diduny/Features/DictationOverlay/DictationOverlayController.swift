@@ -1,12 +1,10 @@
-import AppKit
-import SwiftUI
+import Foundation
 
 @MainActor
 final class DictationOverlayController {
     static let shared = DictationOverlayController()
 
-    private let store = LiveDictationOverlayStore()
-    private var panel: NSPanel?
+    let store = LiveDictationOverlayStore()
     private var autoHideTask: Task<Void, Never>?
     private var onStopRequested: (@MainActor () async -> Void)?
 
@@ -61,7 +59,9 @@ final class DictationOverlayController {
         store.phase = .pasted
         store.audioLevel = 0
         showPanel()
-        scheduleAutoHide(delay: 2.0)
+        if SettingsStorage.shared.autoPaste {
+            scheduleAutoHide(delay: 0.8)
+        }
     }
 
     func showError(message: String) {
@@ -100,11 +100,15 @@ final class DictationOverlayController {
     }
 
     func hide() {
+        guard store.phase != .pasted || SettingsStorage.shared.autoPaste else { return }
+        dismiss()
+    }
+
+    func dismiss() {
         autoHideTask?.cancel()
         autoHideTask = nil
         store.audioLevel = 0
-        panel?.orderOut(nil)
-        panel = nil
+        EdgeCommandPanelController.shared.dismissLiveFeedback()
     }
 
     func updateAudioLevel(_ level: Float) {
@@ -116,12 +120,16 @@ final class DictationOverlayController {
         store.processTokens(tokens)
     }
 
+    func markSegmentBoundary() {
+        store.markSegmentBoundary()
+    }
+
     func updateConnectionStatus(_ status: RealtimeConnectionStatus) {
         store.connectionStatus = status
     }
 
     func copyCurrentTranscript() {
-        let text = store.bestText(includeProvisional: true)
+        let text = store.displayText
         guard !text.isEmpty else { return }
         ClipboardService.shared.copy(text: text, behavior: .raw)
         store.markCopied()
@@ -135,53 +143,7 @@ final class DictationOverlayController {
     }
 
     private func showPanel() {
-        let panel = panel ?? makePanel()
-        self.panel = panel
-        position(panel)
-        panel.orderFrontRegardless()
-    }
-
-    private func makePanel() -> NSPanel {
-        let panel = DictationOverlayPanel(
-            contentRect: NSRect(origin: .zero, size: NSSize(width: 560, height: 96)),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.isFloatingPanel = true
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
-        panel.backgroundColor = .clear
-        panel.isOpaque = false
-        panel.hasShadow = false
-        panel.hidesOnDeactivate = false
-        panel.isMovableByWindowBackground = true
-
-        let view = LiveDictationOverlayView(
-            store: store,
-            onCopy: { [weak self] in self?.copyCurrentTranscript() },
-            onStop: { [weak self] in self?.requestStop() }
-        )
-        let hostingView = NSHostingView(rootView: view)
-        hostingView.frame = NSRect(origin: .zero, size: NSSize(width: 560, height: 96))
-        panel.contentView = hostingView
-        return panel
-    }
-
-    private func position(_ panel: NSPanel) {
-        let size = NSSize(width: 560, height: 96)
-        let screen = activeScreen() ?? NSScreen.main
-        let frame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let origin = NSPoint(
-            x: frame.midX - size.width / 2,
-            y: frame.maxY - size.height - 18
-        )
-        panel.setFrame(NSRect(origin: origin, size: size), display: true)
-    }
-
-    private func activeScreen() -> NSScreen? {
-        let mouseLocation = NSEvent.mouseLocation
-        return NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) }
+        EdgeCommandPanelController.shared.showLiveFeedback(mode: store.mode)
     }
 
     private func scheduleAutoHide(delay: TimeInterval) {
@@ -193,9 +155,4 @@ final class DictationOverlayController {
             }
         }
     }
-}
-
-private final class DictationOverlayPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
 }

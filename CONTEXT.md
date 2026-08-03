@@ -73,15 +73,15 @@ Retrieval of a remote source's audio stream without downloading its video bytes.
 _Avoid_: Video download, full-media fallback
 
 **Browser Session**:
-Authentication state owned and persisted by the user's selected Google Chrome profile. Diduny may use it to access a remote media source but does not copy or retain its credentials.
-_Avoid_: Diduny Google session, stored Google authorization, Safari session
+Authentication state owned and persisted by the user's selected supported browser profile. Diduny may use it to access a remote media source but does not copy or retain its credentials.
+_Avoid_: Diduny Google session, stored Google authorization, copied browser credentials
 
-**Selected Chrome Profile**:
-The Chrome profile chosen once for authenticated remote-media access and remembered by identifier until the user changes it. Its authentication state remains owned by Chrome.
-_Avoid_: Default profile assumption, per-video profile choice
+**Selected Browser Session**:
+The browser profile chosen for authenticated remote-media access and remembered by identifier until the user changes it. Its authentication state remains owned by that browser.
+_Avoid_: Default browser assumption, per-video credential copy
 
 **Authorization Pause**:
-A recoverable batch state entered before remote media is downloaded when the selected Chrome profile cannot authorize access. Queued items remain unchanged until the user restores the browser session and explicitly retries authorization.
+A recoverable batch state entered before remote media is downloaded when the selected browser session cannot authorize access. Queued items remain unchanged until the user restores the browser session and explicitly retries authorization.
 _Avoid_: Authentication failure, cancelled batch
 
 **Source Captions**:

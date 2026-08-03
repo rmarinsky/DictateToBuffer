@@ -1,4 +1,5 @@
 import Foundation
+import KeyboardShortcuts
 import Observation
 
 enum LiveDictationOverlayPhase: Equatable {
@@ -25,17 +26,18 @@ final class LiveDictationOverlayStore {
 
     private var fallbackFinalText = ""
     private var fallbackProvisionalText = ""
+    private let meetingTranscript = LiveTranscriptStore()
 
     var title: String {
         switch mode {
         case .voice:
-            "Dictation"
+            "Transcribing"
         case .translation:
-            "Translation"
+            "Translating"
         case .meeting:
-            "Meeting"
+            "Recording meeting"
         case .meetingTranslation:
-            "Meeting Translation"
+            "Translating meeting"
         case .fileTranscription:
             "File Transcription"
         }
@@ -63,7 +65,7 @@ final class LiveDictationOverlayStore {
         case .processing:
             "Formatting"
         case .pasted:
-            "Pasted"
+            "Complete"
         case let .error(message):
             message
         case let .info(message):
@@ -75,12 +77,97 @@ final class LiveDictationOverlayStore {
         bestText(includeProvisional: true)
     }
 
+    var displayText: String {
+        guard mode == .meeting else { return visibleText }
+        let structuredText = meetingTranscript.finalTranscriptText
+        guard !structuredText.isEmpty else { return visibleText }
+
+        let provisional = meetingTranscript.provisionalText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !provisional.isEmpty else { return structuredText }
+
+        let speaker = meetingTranscript.provisionalSpeaker.map { "Speaker \($0): " } ?? ""
+        return "\(structuredText)\n\n\(speaker)\(provisional)"
+    }
+
     var hasText: Bool {
-        !visibleText.isEmpty
+        !displayText.isEmpty
     }
 
     var canStop: Bool {
         phase == .recording || phase == .starting
+    }
+
+    var stopShortcutHint: String? {
+        guard canStop else { return nil }
+
+        switch mode {
+        case .voice:
+            if let modifierHint = modifierToggleHint(
+                key: SettingsStorage.shared.pushToTalkKey,
+                isEnabled: SettingsStorage.shared.pushToTalkToggleEnabled,
+                tapCount: SettingsStorage.shared.pushToTalkToggleTapCount
+            ) {
+                return modifierHint
+            }
+            return actionShortcutHint(.toggleRecording, pressCount: SettingsStorage.shared.recordingHotkeyPressCount)
+        case .translation:
+            if let modifierHint = modifierToggleHint(
+                key: SettingsStorage.shared.translationPushToTalkKey,
+                isEnabled: SettingsStorage.shared.translationPushToTalkToggleEnabled,
+                tapCount: SettingsStorage.shared.translationPushToTalkToggleTapCount
+            ) {
+                return modifierHint
+            }
+            return actionShortcutHint(
+                .toggleTranslation,
+                pressCount: SettingsStorage.shared.translationHotkeyPressCount
+            )
+        case .meeting:
+            return actionShortcutHint(
+                .toggleMeetingRecording,
+                pressCount: SettingsStorage.shared.meetingHotkeyPressCount
+            )
+        case .meetingTranslation:
+            return actionShortcutHint(
+                .toggleMeetingTranslation,
+                pressCount: SettingsStorage.shared.meetingTranslationHotkeyPressCount
+            )
+        case .fileTranscription:
+            return nil
+        }
+    }
+
+    var cancelShortcutHint: String? {
+        guard canStop, SettingsStorage.shared.escapeCancelEnabled else { return nil }
+        return repeatedShortcutHint(
+            "Esc",
+            pressCount: SettingsStorage.shared.escapeCancelPressCount
+        )
+    }
+
+    var providerLabel: String {
+        let provider: TranscriptionProvider = switch mode {
+        case .translation, .meetingTranslation:
+            SettingsStorage.shared.effectiveTranslationProvider
+        case .voice, .meeting, .fileTranscription:
+            SettingsStorage.shared.effectiveTranscriptionProvider
+        }
+        return provider == .cloud ? "Cloud" : "Local"
+    }
+
+    var sourceLabel: String {
+        mode.isMeeting ? "System + microphone" : "Microphone"
+    }
+
+    var targetLabel: String? {
+        switch mode {
+        case let .translation(targetLanguage):
+            targetLanguage
+        case .meetingTranslation:
+            SettingsStorage.shared.resolveTranslationLanguagePair().displayLabel
+        case .voice, .meeting, .fileTranscription:
+            nil
+        }
     }
 
     func reset(mode: RecordingMode) {
@@ -93,13 +180,22 @@ final class LiveDictationOverlayStore {
         provisionalText = ""
         fallbackFinalText = ""
         fallbackProvisionalText = ""
+        meetingTranscript.reset()
         copiedAt = nil
     }
 
     func processTokens(_ tokens: [RealtimeToken]) {
+        if mode == .meeting {
+            meetingTranscript.processTokens(tokens)
+        }
+
         let isTranslationMode: Bool = {
-            if case .translation = mode { return true }
-            return false
+            switch mode {
+            case .translation, .meetingTranslation:
+                true
+            case .voice, .meeting, .fileTranscription:
+                false
+            }
         }()
 
         var provisionalPrimary = ""
@@ -139,6 +235,11 @@ final class LiveDictationOverlayStore {
         }
     }
 
+    func markSegmentBoundary() {
+        guard mode == .meeting else { return }
+        meetingTranscript.markSegmentBoundary()
+    }
+
     func bestText(includeProvisional: Bool) -> String {
         let primary = composedText(final: finalText, provisional: includeProvisional ? provisionalText : "")
         if !primary.isEmpty {
@@ -157,6 +258,20 @@ final class LiveDictationOverlayStore {
 
     private func composedText(final: String, provisional: String) -> String {
         (final + provisional).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func modifierToggleHint(key: PushToTalkKey, isEnabled: Bool, tapCount: Int) -> String? {
+        guard isEnabled, key != .none else { return nil }
+        return repeatedShortcutHint(key.symbol, pressCount: tapCount)
+    }
+
+    private func actionShortcutHint(_ name: KeyboardShortcuts.Name, pressCount: Int) -> String? {
+        guard let shortcut = KeyboardShortcuts.getShortcut(for: name) else { return nil }
+        return repeatedShortcutHint(String(describing: shortcut), pressCount: pressCount)
+    }
+
+    private func repeatedShortcutHint(_ shortcut: String, pressCount: Int) -> String {
+        pressCount > 1 ? "\(shortcut) ×\(pressCount)" : shortcut
     }
 }
 
