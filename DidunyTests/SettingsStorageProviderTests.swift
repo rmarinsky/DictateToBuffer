@@ -43,6 +43,24 @@ final class SettingsStorageProviderTests: XCTestCase {
         XCTAssertEqual(Bundle.main.bundleIdentifier, "ua.com.rmarinsky.diduny.test")
     }
 
+    func test_persistedFirstUseDetectionUsesProviderShortcutOrAutoPaste() {
+        let defaults = UserDefaults.standard
+        let keys = ["transcriptionProvider", "pushToTalkKey", "autoPaste"]
+        let storedValues = keys.map { defaults.object(forKey: $0) }
+        defer {
+            zip(keys, storedValues).forEach { restore($0.1, key: $0.0) }
+        }
+
+        keys.forEach { defaults.removeObject(forKey: $0) }
+        XCTAssertFalse(SettingsStorage.hasPersistedFirstUseState)
+
+        for key in keys {
+            defaults.set("persisted", forKey: key)
+            XCTAssertTrue(SettingsStorage.hasPersistedFirstUseState)
+            defaults.removeObject(forKey: key)
+        }
+    }
+
     func test_newUserDefaults_doNotOverwritePersistedSettings() {
         let defaults = UserDefaults.standard
         let onboardingKey = "onboarding.completed"
