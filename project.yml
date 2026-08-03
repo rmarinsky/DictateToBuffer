@@ -15,9 +15,6 @@ packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     exactVersion: 2.9.0
-  Supabase:
-    url: https://github.com/supabase/supabase-swift
-    exactVersion: 2.45.0
 
 configs:
   Debug: debug
@@ -79,7 +76,6 @@ targets:
       - package: KeyboardShortcuts
       - package: LaunchAtLogin
       - package: Sparkle
-      - package: Supabase
       - framework: Frameworks/whisper.xcframework
         embed: false
       - sdk: Accelerate.framework

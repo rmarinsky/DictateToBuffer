@@ -1,7 +1,7 @@
 import Foundation
 import Security
 
-final class KeychainManager {
+final class KeychainManager: AuthTokenStore, @unchecked Sendable {
     static let shared = KeychainManager()
 
     private let serviceName = Bundle.main.bundleIdentifier ?? "ua.com.rmarinsky.diduny"
@@ -22,6 +22,7 @@ final class KeychainManager {
 
         let attributes: [String: Any] = [
             kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
 
         let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
@@ -30,6 +31,7 @@ final class KeychainManager {
             // Item doesn't exist yet — add it
             var addQuery = query
             addQuery[kSecValueData as String] = data
+            addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
             guard addStatus == errSecSuccess else {
                 throw KeychainError.saveFailed
@@ -55,6 +57,10 @@ final class KeychainManager {
     }
 
     func delete(key: String) {
+        delete(serviceName: serviceName, key: key)
+    }
+
+    func delete(serviceName: String, key: String) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
@@ -63,4 +69,3 @@ final class KeychainManager {
         SecItemDelete(query as CFDictionary)
     }
 }
-

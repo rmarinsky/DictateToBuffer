@@ -161,9 +161,9 @@ final class CloudTranscriptionService: TranscriptionServiceProtocol {
 
         Log.transcription.info("proxyTranscribe: HTTP status = \(httpResponse.statusCode)")
 
-        // 401 retry: refresh Supabase session and retry once (ADR-0004).
+        // 401 retry: refresh the session and retry once (ADR-0004).
         if httpResponse.statusCode == 401 {
-            Log.transcription.info("proxyTranscribe: 401 — refreshing Supabase session and retrying")
+            Log.transcription.info("proxyTranscribe: 401 — refreshing session and retrying")
             try await AuthService.shared.refreshTokens()
             await AuthService.shared.authenticatedRequest(&request)
             (data, httpResponse) = try await performRequest(request, label: "proxyTranscribe(retry)")

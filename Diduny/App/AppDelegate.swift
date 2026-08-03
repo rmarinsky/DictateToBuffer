@@ -190,12 +190,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Start Sparkle updater (access lazy var to trigger init)
         _ = updaterManager
 
-        // NOTE: SupabaseService + AuthService warm-up is deferred to
-        // setupAfterOnboarding() so the macOS Keychain prompt (asking for
-        // "supabase.gotrue.swift" access) does not appear behind the
-        // onboarding window on the very first launch of a new code signature.
-        // Permission gate uses AuthService.hasStoredSession (cheap UserDefaults
-        // flag) which does not trigger the keychain read.
+        // AuthService warm-up is deferred until a cloud feature needs it.
+        // Permission gates use its cheap UserDefaults session-presence flag.
 
         setupRecordingFeedbackStopHandler()
 
@@ -292,11 +288,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Setup that runs after onboarding completes (or if already completed)
     private func setupAfterOnboarding() {
-        // SupabaseService + AuthService warm-up is fully lazy now: they
-        // initialise only when first used (transcribe, Settings → Account,
-        // menu bar login). This avoids the macOS Keychain prompt for
-        // "supabase.gotrue.swift" appearing without context after onboarding.
-        // The SDK still auto-refreshes tokens on demand via getAccessToken().
+        // AuthService remains lazy until first cloud use; getAccessToken()
+        // refreshes an expiring session on demand.
 
         // Setup hotkeys and push-to-talk
         setupHotkeys()
@@ -319,8 +312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Use hasStoredSession (UserDefaults flag) instead of AuthService.shared.isLoggedIn
-        // so this log line does not trigger the singleton init (and its Keychain prompt).
+        // Avoid initializing AuthService just for this log line.
         if !AuthService.hasStoredSession {
             Log.app.info("[Auth] No stored session — cloud preferences remain stored, runtime uses local fallback")
         }

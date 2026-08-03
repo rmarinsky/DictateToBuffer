@@ -34,9 +34,17 @@ struct AccountSettingsView: View {
 
                 switch authService.authState {
                 case .loggedOut:
+                    if authService.showsMigrationNotice {
+                        Label("Diduny's account system changed. Sign in again to continue using Cloud features.", systemImage: "person.crop.circle.badge.exclamationmark")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
                     HStack {
-                        TextField("Email", text: $authEmail)
+                        TextField("Your email address", text: $authEmail)
                             .textFieldStyle(.roundedBorder)
+                            .textContentType(.emailAddress)
+                            .accessibilityLabel("Email address")
 
                         Button("Send Code") {
                             sendOtp()
@@ -51,6 +59,7 @@ struct AccountSettingsView: View {
                             .textFieldStyle(.roundedBorder)
                             .textContentType(.oneTimeCode)
                             .autocorrectionDisabled()
+                            .accessibilityLabel("One-time code")
 
                         Button("Verify") {
                             verifyOtp()
@@ -78,13 +87,13 @@ struct AccountSettingsView: View {
 
                         Spacer()
 
-                        Button("Logout") {
+                        Button("Sign Out") {
                             Task { await authService.logout() }
                         }
                         .buttonStyle(.bordered)
                     }
 
-                    Label("Your credentials are stored securely in the macOS Keychain and never leave your device.", systemImage: "lock.shield")
+                    Label("Credentials are stored in the macOS Keychain.", systemImage: "lock.shield")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -100,7 +109,7 @@ struct AccountSettingsView: View {
                             .font(.caption)
                             .foregroundColor(.red)
 
-                        if authService.authState == .otpSent && isTokenExpiredError(error) {
+                        if authService.authState == .otpSent {
                             Button("Send new code") {
                                 resendOtp()
                             }
@@ -372,7 +381,7 @@ struct AccountSettingsView: View {
             do {
                 try await authService.sendOtp(email: authEmail)
             } catch {
-                authError = error.localizedDescription
+                authError = "Couldn't send a code. Try again."
             }
             isAuthLoading = false
         }
@@ -388,26 +397,16 @@ struct AccountSettingsView: View {
                 otpCode = ""
                 authEmail = ""
             } catch {
-                authError = error.localizedDescription
+                authError = "That code couldn't be verified. Send a new one and try again."
             }
             isAuthLoading = false
         }
     }
 
-    private func isTokenExpiredError(_ message: String) -> Bool {
-        let lower = message.lowercased()
-        return lower.contains("expired") || lower.contains("invalid")
-    }
-
     private func resendOtp() {
         otpCode = ""
         authError = nil
-        authService.cancelOtpFlow()
-        // Small delay so the state transition renders before we trigger sendOtp.
-        Task {
-            try? await Task.sleep(for: .milliseconds(50))
-            sendOtp()
-        }
+        sendOtp()
     }
 
     private func refreshRemoteConfig() {
