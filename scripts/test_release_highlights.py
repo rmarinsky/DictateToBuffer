@@ -22,7 +22,11 @@ class ReleaseHighlightsPipelineTests(unittest.TestCase):
             appcast.write_text(
                 '<?xml version="1.0" encoding="utf-8"?>\n'
                 f'<rss version="2.0" xmlns:sparkle="{SPARKLE}"><channel>'
-                "<title>Diduny Updates</title></channel></rss>\n",
+                "<title>Diduny Updates</title>"
+                "<item><title>Version 2.1.0</title>"
+                f"<sparkle:shortVersionString>2.1.0</sparkle:shortVersionString>"
+                '<enclosure url="https://github.com/example/Diduny/releases/download/v2.1.0/Diduny-2.1.0.dmg" />'
+                "</item></channel></rss>\n",
                 encoding="utf-8",
             )
 
@@ -51,12 +55,25 @@ class ReleaseHighlightsPipelineTests(unittest.TestCase):
             self.run_script(*arguments)
             self.assertEqual(appcast.read_bytes(), first_upsert)
 
-            item = ET.parse(appcast).getroot().find("channel/item")
+            items = ET.parse(appcast).getroot().findall("channel/item")
+            self.assertEqual(len(items), 2)
+            item = next(
+                item for item in items
+                if item.findtext(f"{{{SPARKLE}}}shortVersionString") == "2.2.0"
+            )
             self.assertIsNotNone(item)
             self.assertEqual(item.findtext(f"{{{SPARKLE}}}shortVersionString"), "2.2.0")
             self.assertEqual(
                 item.findtext(f"{{{SPARKLE}}}releaseNotesLink"),
                 "https://example.com/release-notes/2.2.0.md",
+            )
+            previous_item = next(
+                item for item in items
+                if item.findtext(f"{{{SPARKLE}}}shortVersionString") == "2.1.0"
+            )
+            self.assertEqual(
+                previous_item.findtext(f"{{{SPARKLE}}}releaseNotesLink"),
+                "https://github.com/example/Diduny/releases/tag/v2.1.0",
             )
 
     def test_validate_rejects_malformed_curated_payload(self):

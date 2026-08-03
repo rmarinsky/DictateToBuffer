@@ -43,6 +43,22 @@ def set_text(parent, tag, value):
     element.text = value
 
 
+def ensure_release_notes_links(channel):
+    release_notes_tag = f"{{{SPARKLE}}}releaseNotesLink"
+    for item in channel.findall("item"):
+        if item.find(release_notes_tag) is not None:
+            continue
+        enclosure = item.find("enclosure")
+        download_url = enclosure.get("url") if enclosure is not None else None
+        match = re.match(
+            r"^(https://github\.com/[^/]+/[^/]+)/releases/download/([^/]+)/",
+            download_url or "",
+        )
+        if match is None:
+            raise ValueError("every appcast item must have a release notes link")
+        set_text(item, release_notes_tag, f"{match.group(1)}/releases/tag/{match.group(2)}")
+
+
 def upsert_appcast(arguments):
     if not re.fullmatch(r"\d+\.\d+\.\d+", arguments.version):
         raise ValueError("version must use major.minor.patch")
@@ -83,6 +99,8 @@ def upsert_appcast(arguments):
         "length": arguments.length,
         "type": "application/octet-stream",
     }
+
+    ensure_release_notes_links(channel)
 
     ET.indent(tree, space="  ")
     tree.write(appcast, encoding="utf-8", xml_declaration=True)
