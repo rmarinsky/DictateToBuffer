@@ -27,16 +27,16 @@ final class UpdateArrivalState {
             return
         }
         guard let highestRaw = highestLaunchedVersion else {
-            defaults.set(current.description, forKey: Self.highestLaunchedVersionKey)
             if !isFreshInstall { setPendingReleaseLine(current.releaseLine) }
+            defaults.set(current.description, forKey: Self.highestLaunchedVersionKey)
             return
         }
         guard let highest = Version(highestRaw), highest < current else { return }
 
-        defaults.set(current.description, forKey: Self.highestLaunchedVersionKey)
         if highest.releaseLine != current.releaseLine {
             setPendingReleaseLine(current.releaseLine)
         }
+        defaults.set(current.description, forKey: Self.highestLaunchedVersionKey)
     }
 
     func dismissPendingRelease() {

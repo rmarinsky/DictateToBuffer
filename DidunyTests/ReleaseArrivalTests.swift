@@ -109,6 +109,24 @@ final class UpdateArrivalStateTests: XCTestCase {
         XCTAssertEqual(state.pendingReleaseLine, "2.1")
     }
 
+    func testInterruptedUpdatePersistsPendingNoticeForNextLaunch() throws {
+        let interruptedDefaults = try XCTUnwrap(
+            InterruptingUserDefaults(suiteName: suiteName)
+        )
+        interruptedDefaults.set(
+            "2.1.4",
+            forKey: UpdateArrivalState.highestLaunchedVersionKey
+        )
+        interruptedDefaults.writesRemaining = 1
+        let state = UpdateArrivalState(defaults: interruptedDefaults)
+
+        state.recordLaunch(version: "2.2.0", isFreshInstall: false)
+
+        let relaunchedState = UpdateArrivalState(defaults: interruptedDefaults)
+        XCTAssertEqual(relaunchedState.pendingReleaseLine, "2.2")
+        XCTAssertEqual(relaunchedState.highestLaunchedVersion, "2.1.4")
+    }
+
     func testPatchDowngradeIdempotencyAndDismissalDoNotResurfaceNotice() {
         defaults.set("2.2.0", forKey: UpdateArrivalState.highestLaunchedVersionKey)
         defaults.set("2.2", forKey: UpdateArrivalState.pendingReleaseLineKey)
@@ -134,5 +152,15 @@ final class UpdateArrivalStateTests: XCTestCase {
 
         XCTAssertNil(ReleaseHighlights.load(from: nil))
         XCTAssertEqual(state.pendingReleaseLine, "2.2")
+    }
+}
+
+private final class InterruptingUserDefaults: UserDefaults {
+    var writesRemaining = Int.max
+
+    override func set(_ value: Any?, forKey defaultName: String) {
+        guard writesRemaining > 0 else { return }
+        writesRemaining -= 1
+        super.set(value, forKey: defaultName)
     }
 }
