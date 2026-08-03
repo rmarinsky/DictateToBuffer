@@ -33,6 +33,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Prepare curated release notes
+        run: |
+          python3 scripts/release_highlights.py render \
+            Diduny/Resources/ReleaseHighlights.json \
+            build/release-notes.md
+
       - name: Select Xcode
         run: |
           sudo xcode-select -switch /Applications/Xcode.app/Contents/Developer
@@ -212,12 +218,15 @@ jobs:
               "build/${DISPLAY_NAME}-${VERSION}.dmg" \
               "build/${DISPLAY_NAME}-${VERSION}.sha256" \
               --clobber
+            gh release edit "${GITHUB_REF_NAME}" \
+              --title "${APP_NAME} ${VERSION}" \
+              --notes-file build/release-notes.md
           else
             gh release create "${GITHUB_REF_NAME}" \
               "build/${DISPLAY_NAME}-${VERSION}.dmg" \
               "build/${DISPLAY_NAME}-${VERSION}.sha256" \
               --title "${APP_NAME} ${VERSION}" \
-              --generate-notes
+              --notes-file build/release-notes.md
           fi
 
       - name: Publish appcast to gh-pages
@@ -229,6 +238,7 @@ jobs:
           DMG_PATH="build/${DISPLAY_NAME}-${VERSION}.dmg"
           DMG_SIZE=$(stat -f%z "$DMG_PATH")
           DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${DISPLAY_NAME}-${VERSION}.dmg"
+          RELEASE_NOTES_URL="https://rmarinsky.github.io/Diduny/release-notes/${VERSION}.md"
           ED_SIGNATURE=$(echo "$SPARKLE_SIGN_OUTPUT" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')
           ED_LENGTH=$(echo "$SPARKLE_SIGN_OUTPUT" | sed -n 's/.*length="\([^"]*\)".*/\1/p')
 
@@ -239,39 +249,24 @@ jobs:
           git fetch origin gh-pages:gh-pages
           git worktree add /tmp/ghpages gh-pages
 
-          python3 -c "
-          import datetime, pathlib, sys
-          appcast = pathlib.Path('/tmp/ghpages/appcast.xml')
-          content = appcast.read_text()
-          marker = '<sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>'
-          if marker in content:
-              print('Version ${VERSION} already in appcast, skipping')
-              sys.exit(0)
-          pub_date = datetime.datetime.now(datetime.timezone.utc).strftime('%a, %d %b %Y %H:%M:%S %z')
-          item = '''    <item>
-              <title>Version ${VERSION}</title>
-              <pubDate>{pub_date}</pubDate>
-              <sparkle:version>${BUILD_NUMBER}</sparkle:version>
-              <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
-              <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-              <enclosure
-                url=\"${DOWNLOAD_URL}\"
-                sparkle:edSignature=\"${ED_SIGNATURE}\"
-                length=\"${ED_LENGTH:-$DMG_SIZE}\"
-                type=\"application/octet-stream\" />
-            </item>'''.format(pub_date=pub_date)
-          content = content.replace('</channel>', item + '\n  </channel>')
-          appcast.write_text(content)
-          "
+          mkdir -p /tmp/ghpages/release-notes
+          cp build/release-notes.md "/tmp/ghpages/release-notes/${VERSION}.md"
+          python3 scripts/release_highlights.py upsert-appcast /tmp/ghpages/appcast.xml \
+            --version "$VERSION" \
+            --build-number "$BUILD_NUMBER" \
+            --download-url "$DOWNLOAD_URL" \
+            --signature "$ED_SIGNATURE" \
+            --length "${ED_LENGTH:-$DMG_SIZE}" \
+            --release-notes-url "$RELEASE_NOTES_URL"
 
           cd /tmp/ghpages
-          if git diff --quiet -- appcast.xml; then
-            echo "appcast.xml unchanged — nothing to publish"
+          if [ -z "$(git status --porcelain -- appcast.xml "release-notes/${VERSION}.md")" ]; then
+            echo "Release notes and appcast unchanged — nothing to publish"
           else
-            git add appcast.xml
-            git commit -m "Update appcast for ${GITHUB_REF_NAME}"
+            git add appcast.xml "release-notes/${VERSION}.md"
+            git commit -m "Publish release notes for ${GITHUB_REF_NAME}"
             git push origin gh-pages
-            echo "Published ${GITHUB_REF_NAME} to the Sparkle feed (gh-pages)"
+            echo "Published ${GITHUB_REF_NAME} notes and Sparkle feed (gh-pages)"
           fi
 
       - name: Cleanup signing artifacts
