@@ -184,6 +184,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_: Notification) {
+        let isFreshInstall = OnboardingManager.shared.prepareForLaunch()
+        if let currentVersion = Bundle.main.object(
+            forInfoDictionaryKey: "CFBundleShortVersionString"
+        ) as? String {
+            UpdateArrivalState.shared.recordLaunch(
+                version: currentVersion,
+                isFreshInstall: isFreshInstall
+            )
+        }
+
         MainWindowController.shared.configure(appDelegate: self)
         EdgeCommandPanelController.shared.configure(appDelegate: self)
 
@@ -258,35 +268,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
-        // Permission-gate: evaluate live permission state before deciding what to show.
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let action = await OnboardingManager.shared.computeStartupAction()
-            switch action {
-            case .skipOnboarding:
-                setupAfterOnboarding()
-
-            case let .showFullTour(jumpStep):
-                OnboardingManager.shared.setupDefaultsForNewUser()
-                if let jump = jumpStep {
-                    OnboardingManager.shared.currentStep = jump
-                }
-                try? await Task.sleep(for: .milliseconds(120))
-                OnboardingWindowController.shared.showOnboarding(miniFlow: nil) {
-                    self.setupAfterOnboarding()
-                }
-
-            case let .showMiniFlow(steps):
-                try? await Task.sleep(for: .milliseconds(120))
-                OnboardingManager.shared.currentStep = steps.first ?? .microphonePermission
-                OnboardingWindowController.shared.showOnboarding(miniFlow: steps) {
-                    self.setupAfterOnboarding()
-                }
-            }
-        }
+        setupAfterOnboarding()
     }
 
-    /// Setup that runs after onboarding completes (or if already completed)
+    /// Runtime setup is never gated by first-use guidance.
     private func setupAfterOnboarding() {
         // AuthService remains lazy until first cloud use; getAccessToken()
         // refreshes an expiring session on demand.

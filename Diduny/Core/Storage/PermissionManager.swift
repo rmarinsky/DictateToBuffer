@@ -266,7 +266,7 @@ final class PermissionManager {
         }
     }
 
-    private func openSystemSettingsForPermission(_ type: PermissionType) {
+    func openSystemSettingsForPermission(_ type: PermissionType) {
         var urlString: String?
 
         switch type {

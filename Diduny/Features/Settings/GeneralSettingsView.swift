@@ -6,13 +6,13 @@ struct GeneralSettingsView: View {
     @State private var playSound = SettingsStorage.shared.playSoundOnCompletion
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var typingSpeedWordsPerMinute = SettingsStorage.shared.typingSpeedWordsPerMinute
-    @State private var screenRecordingPromptEnabled = !SettingsStorage.shared.userDeclinedScreenRecording
     @State private var dictationRetention = SettingsStorage.shared.dictationTranslationHistoryRetentionPolicy
     @State private var meetingRetention = SettingsStorage.shared.meetingHistoryRetentionPolicy
 
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
     }
+
     private var buildNumber: String {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
     }
@@ -86,24 +86,15 @@ struct GeneralSettingsView: View {
             } header: {
                 Text("History & Storage")
             } footer: {
-                Text("Choose how long Diduny keeps recordings in the library. Meeting recordings remain available under Recordings while Meetings is in beta.")
+                Text(
+                    "Choose how long Diduny keeps recordings in the library. "
+                        + "Meeting recordings remain available under Recordings while Meetings is in beta."
+                )
             }
 
             Section {
-                // Toggling ON clears the declined flag so next launch can prompt again.
-                Toggle("Re-enable Screen Recording prompt", isOn: $screenRecordingPromptEnabled)
-                    .onChange(of: screenRecordingPromptEnabled) { _, newValue in
-                        SettingsStorage.shared.userDeclinedScreenRecording = !newValue
-                    }
-            } header: {
-                Text("Onboarding")
-            } footer: {
-                Text("When enabled, Diduny will prompt you to grant Screen Recording permission on next launch if it is not yet granted.")
-            }
-
-            Section {
-                Button("Show Welcome Tour") {
-                    showOnboarding()
+                Button("Open Setup Guide") {
+                    openSetupGuide()
                 }
                 .buttonStyle(.link)
             } header: {
@@ -147,7 +138,6 @@ struct GeneralSettingsView: View {
         .onAppear {
             launchAtLogin = LaunchAtLogin.isEnabled
             typingSpeedWordsPerMinute = SettingsStorage.shared.typingSpeedWordsPerMinute
-            screenRecordingPromptEnabled = !SettingsStorage.shared.userDeclinedScreenRecording
             dictationRetention = SettingsStorage.shared.dictationTranslationHistoryRetentionPolicy
             meetingRetention = SettingsStorage.shared.meetingHistoryRetentionPolicy
         }
@@ -158,11 +148,9 @@ struct GeneralSettingsView: View {
 
     // MARK: - Helpers
 
-    private func showOnboarding() {
+    private func openSetupGuide() {
         OnboardingManager.shared.showFromSettings()
-        OnboardingWindowController.shared.showOnboarding {
-            // Onboarding completed from settings
-        }
+        MainWindowController.shared.showWindow(section: .overview)
     }
 
     private func pruneExpiredHistoryIfNeeded() {

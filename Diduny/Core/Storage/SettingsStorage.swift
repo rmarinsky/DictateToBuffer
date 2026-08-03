@@ -161,7 +161,8 @@ final class SettingsStorage {
             .translationPushToTalkToggleTapCount: 3,
             .meetingHotkeyPressCount: 3,
             .meetingTranslationHotkeyPressCount: 3,
-            .autoPaste: true,
+            .autoPaste: false,
+            .transcriptionProvider: TranscriptionProvider.cloud.rawValue,
             .playSoundOnCompletion: true,
             .typingSpeedWordsPerMinute: 40.0
         ]

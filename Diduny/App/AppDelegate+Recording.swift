@@ -435,6 +435,31 @@ extension AppDelegate {
                     )
                 return
             }
+            // Save to recordings library (uses compressed data if available)
+            let duration = recordingStartTime.map { stopTime.timeIntervalSince($0) } ?? 0
+            let compressedData = await AudioCompressionService.compressToFLAC(audioData: audioData)
+            capturedAudioData = compressedData
+            let provider = SettingsStorage.shared.effectiveTranscriptionProvider
+            let shouldCompleteSetup = !OnboardingManager.shared.hasCompletedOnboarding
+                && provider == .cloud
+                && AuthService.shared.isLoggedIn
+            let savedRecordingID = RecordingsLibraryStorage.shared.saveRecording(
+                id: recordingId,
+                audioData: compressedData,
+                type: .voice,
+                duration: duration,
+                transcriptionText: text,
+                sourceDevice: sourceDevice,
+                transcriptSegments: transcriptSegments?.isEmpty == false ? transcriptSegments : nil,
+                forceSave: shouldCompleteSetup
+            )
+            OnboardingManager.shared.didSaveSuccessfulDictation(
+                recordingID: savedRecordingID,
+                text: text,
+                provider: provider,
+                isAuthenticated: AuthService.shared.isLoggedIn
+            )
+
             await MainActor.run {
                 appState.lastTranscription = text
                 appState.isEmptyTranscription = false
@@ -444,20 +469,6 @@ extension AppDelegate {
                 handleRecordingStateChange(.success)
             }
             Log.app.info("stopRecording: SUCCESS")
-
-            // Save to recordings library (uses compressed data if available)
-            let duration = recordingStartTime.map { stopTime.timeIntervalSince($0) } ?? 0
-            let compressedData = await AudioCompressionService.compressToFLAC(audioData: audioData)
-            capturedAudioData = compressedData
-            RecordingsLibraryStorage.shared.saveRecording(
-                id: recordingId,
-                audioData: compressedData,
-                type: .voice,
-                duration: duration,
-                transcriptionText: text,
-                sourceDevice: sourceDevice,
-                transcriptSegments: transcriptSegments?.isEmpty == false ? transcriptSegments : nil
-            )
 
             if SettingsStorage.shared.playSoundOnCompletion {
                 Log.app.info("stopRecording: Playing sound")

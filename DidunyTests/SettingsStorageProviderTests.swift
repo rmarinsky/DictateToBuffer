@@ -76,13 +76,38 @@ final class SettingsStorageProviderTests: XCTestCase {
         SettingsStorage.shared.autoPaste = false
         SettingsStorage.shared.typingSpeedWordsPerMinute = 85
 
-        OnboardingManager.shared.setupDefaultsForNewUser()
+        SettingsStorage.shared.applyNewUserDefaultsIfMissing()
 
         XCTAssertEqual(SettingsStorage.shared.pushToTalkKey, .rightOption)
         XCTAssertFalse(SettingsStorage.shared.pushToTalkHoldEnabled)
         XCTAssertFalse(SettingsStorage.shared.autoPaste)
         XCTAssertEqual(SettingsStorage.shared.typingSpeedWordsPerMinute, 85)
         XCTAssertEqual(SettingsStorage.shared.meetingHotkeyPressCount, 3)
+    }
+
+    func test_newUserDefaults_fillMissingCloudCopyOnlyDictationSettings() {
+        let defaults = UserDefaults.standard
+        let keys = [
+            "pushToTalkKey",
+            "pushToTalkHoldEnabled",
+            "pushToTalkToggleEnabled",
+            "autoPaste",
+            "transcriptionProvider"
+        ]
+        let storedValues = keys.map { defaults.object(forKey: $0) }
+        defer {
+            zip(keys, storedValues).forEach { restore($0.1, key: $0.0) }
+        }
+
+        keys.forEach { defaults.removeObject(forKey: $0) }
+
+        SettingsStorage.shared.applyNewUserDefaultsIfMissing()
+
+        XCTAssertEqual(SettingsStorage.shared.pushToTalkKey, .rightShift)
+        XCTAssertTrue(SettingsStorage.shared.pushToTalkHoldEnabled)
+        XCTAssertFalse(SettingsStorage.shared.pushToTalkToggleEnabled)
+        XCTAssertFalse(SettingsStorage.shared.autoPaste)
+        XCTAssertEqual(SettingsStorage.shared.transcriptionProvider, .cloud)
     }
 
     override func setUp() {
@@ -101,8 +126,12 @@ final class SettingsStorageProviderTests: XCTestCase {
         storedTranslationLanguageA = UserDefaults.standard.object(forKey: translationLanguageAKey)
         storedTranslationLanguageB = UserDefaults.standard.object(forKey: translationLanguageBKey)
         storedTranslationLanguagePairs = UserDefaults.standard.object(forKey: translationLanguagePairsKey)
-        storedDefaultTranslationLanguagePairID = UserDefaults.standard.object(forKey: defaultTranslationLanguagePairIDKey)
-        storedLastUsedTranslationLanguagePairID = UserDefaults.standard.object(forKey: lastUsedTranslationLanguagePairIDKey)
+        storedDefaultTranslationLanguagePairID = UserDefaults.standard.object(
+            forKey: defaultTranslationLanguagePairIDKey
+        )
+        storedLastUsedTranslationLanguagePairID = UserDefaults.standard.object(
+            forKey: lastUsedTranslationLanguagePairIDKey
+        )
         storedTranslationTargetLanguages = UserDefaults.standard.object(forKey: translationTargetLanguagesKey)
         storedVoiceTranslationTargetLanguage = UserDefaults.standard.object(forKey: voiceTranslationTargetLanguageKey)
         storedTextTranslationSourceLanguage = UserDefaults.standard.object(forKey: textTranslationSourceLanguageKey)
