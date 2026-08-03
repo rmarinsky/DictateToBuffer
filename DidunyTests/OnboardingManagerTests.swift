@@ -234,4 +234,30 @@ final class OnboardingManagerTests: XCTestCase {
             try requireSavedSetupRecording(UUID(), required: true, recoveryPreserved: false)
         )
     }
+
+    func test_failedRequiredSetupSaveKeepsRecoverableAudio() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let manager = RecoveryStateManager(
+            fileURL: directory.appendingPathComponent("recovery_state.json")
+        )
+        let audio = Data("setup audio".utf8)
+
+        XCTAssertTrue(
+            preserveVoiceRecovery(audioData: audio, startTime: Date(), manager: manager)
+        )
+        XCTAssertThrowsError(
+            try requireSavedSetupRecording(nil, required: true, recoveryPreserved: true)
+        )
+
+        let recovery = try XCTUnwrap(manager.hasOrphanedRecording())
+        XCTAssertTrue(recovery.fileExists)
+        XCTAssertEqual(
+            try Data(contentsOf: URL(fileURLWithPath: recovery.state.tempFilePath)),
+            audio
+        )
+    }
 }

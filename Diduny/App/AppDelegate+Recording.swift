@@ -34,6 +34,31 @@ func requireSavedSetupRecording(
     }
 }
 
+func preserveVoiceRecovery(
+    audioData: Data,
+    startTime: Date,
+    manager: RecoveryStateManager = .shared
+) -> Bool {
+    let url = manager.makeRecordingURL()
+    do {
+        try audioData.write(to: url, options: .atomic)
+        let saved = manager.saveState(
+            RecoveryState(
+                tempFilePath: url.path,
+                startTime: startTime,
+                recordingType: .voice
+            )
+        )
+        if !saved {
+            try? FileManager.default.removeItem(at: url)
+        }
+        return saved
+    } catch {
+        Log.app.error("Failed to preserve unsaved setup audio: \(error.localizedDescription)")
+        return false
+    }
+}
+
 actor RealtimeVoiceAccumulator {
     private var finalText: String = ""
     private var provisionalText: String = ""
@@ -688,28 +713,6 @@ extension AppDelegate {
         }
 
         Log.app.info("stopRecording: END")
-    }
-
-    private func preserveVoiceRecovery(audioData: Data, startTime: Date) -> Bool {
-        let manager = RecoveryStateManager.shared
-        let url = manager.makeRecordingURL()
-        do {
-            try audioData.write(to: url, options: .atomic)
-            let saved = manager.saveState(
-                RecoveryState(
-                    tempFilePath: url.path,
-                    startTime: startTime,
-                    recordingType: .voice
-                )
-            )
-            if !saved {
-                try? FileManager.default.removeItem(at: url)
-            }
-            return saved
-        } catch {
-            Log.app.error("Failed to preserve unsaved setup audio: \(error.localizedDescription)")
-            return false
-        }
     }
 
     // MARK: - Realtime Transcription (WebSocket)
