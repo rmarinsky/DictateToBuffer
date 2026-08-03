@@ -204,13 +204,16 @@ final class RecoveryStateManager {
 
     private init() {}
 
-    func saveState(_ state: RecoveryState) {
+    @discardableResult
+    func saveState(_ state: RecoveryState) -> Bool {
         do {
             let data = try JSONEncoder().encode(state)
             try data.write(to: fileURL)
             Log.app.debug("Recovery state saved: \(state.recordingType.rawValue)")
+            return true
         } catch {
             Log.app.error("Failed to save recovery state: \(error.localizedDescription)")
+            return false
         }
     }
 

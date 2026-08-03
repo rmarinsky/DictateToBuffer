@@ -213,4 +213,25 @@ final class OnboardingManagerTests: XCTestCase {
         XCTAssertFalse(manager.shouldShowSetupGuide)
         XCTAssertTrue(manager.canShowUpdateHighlights)
     }
+
+    func test_voicePipelineRejectsCleanedEmptyTextAndMissingRequiredSave() throws {
+        XCTAssertThrowsError(try requireNonemptyVoiceDictation(" \n ")) { error in
+            guard case .emptyTranscription = error as? TranscriptionError else {
+                return XCTFail("Expected empty transcription, got \(error)")
+            }
+        }
+        XCTAssertEqual(try requireNonemptyVoiceDictation("First dictation"), "First dictation")
+
+        XCTAssertThrowsError(
+            try requireSavedSetupRecording(nil, required: true, recoveryPreserved: true)
+        ) { error in
+            XCTAssertTrue(error is VoiceDictationPersistenceError)
+        }
+        XCTAssertNoThrow(
+            try requireSavedSetupRecording(nil, required: false, recoveryPreserved: false)
+        )
+        XCTAssertNoThrow(
+            try requireSavedSetupRecording(UUID(), required: true, recoveryPreserved: false)
+        )
+    }
 }

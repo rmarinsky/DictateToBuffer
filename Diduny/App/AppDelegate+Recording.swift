@@ -2,6 +2,38 @@ import AppKit
 import Combine
 import Foundation
 
+enum VoiceDictationPersistenceError: LocalizedError {
+    case recordingNotSaved(recoveryPreserved: Bool)
+
+    var errorDescription: String? {
+        switch self {
+        case let .recordingNotSaved(recoveryPreserved):
+            recoveryPreserved
+                ? "Couldn't save this dictation. Its audio was preserved for recovery."
+                : "Couldn't save this dictation."
+        }
+    }
+}
+
+func requireNonemptyVoiceDictation(_ text: String) throws -> String {
+    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        throw TranscriptionError.emptyTranscription
+    }
+    return text
+}
+
+func requireSavedSetupRecording(
+    _ recordingID: UUID?,
+    required: Bool,
+    recoveryPreserved: Bool
+) throws {
+    guard !required || recordingID != nil else {
+        throw VoiceDictationPersistenceError.recordingNotSaved(
+            recoveryPreserved: recoveryPreserved
+        )
+    }
+}
+
 actor RealtimeVoiceAccumulator {
     private var finalText: String = ""
     private var provisionalText: String = ""
@@ -416,7 +448,9 @@ extension AppDelegate {
                     fillerWords: SettingsStorage.shared.fillerWords
                 )
             }
-            let text = ClipboardService.preparedText(cleanedRawText, behavior: .cleaned)
+            let text = try requireNonemptyVoiceDictation(
+                ClipboardService.preparedText(cleanedRawText, behavior: .cleaned)
+            )
             Log.app.info("stopRecording: Transcription received (\(text.count) chars)")
 
             clipboardService.copy(text: text, behavior: .raw)
@@ -460,6 +494,19 @@ extension AppDelegate {
                 transcriptSegments: transcriptSegments?.isEmpty == false ? transcriptSegments : nil,
                 forceSave: shouldCompleteSetup
             )
+            let recoveryPreserved = if shouldCompleteSetup, savedRecordingID == nil {
+                preserveVoiceRecovery(
+                    audioData: originalWAVData ?? audioData,
+                    startTime: recordingStartTime ?? Date()
+                )
+            } else {
+                false
+            }
+            try requireSavedSetupRecording(
+                savedRecordingID,
+                required: shouldCompleteSetup,
+                recoveryPreserved: recoveryPreserved
+            )
             OnboardingManager.shared.didSaveSuccessfulDictation(
                 recordingID: savedRecordingID,
                 text: text,
@@ -484,6 +531,17 @@ extension AppDelegate {
 
             RecoveryStateManager.shared.clearState()
 
+        } catch let error as VoiceDictationPersistenceError {
+            _ = await realtimeStopTask.value
+            Log.app.error("stopRecording: \(error.localizedDescription)")
+            await MainActor.run {
+                appState.errorMessage = error.localizedDescription
+                appState.isEmptyTranscription = false
+                appState.deviceFallbackWarning = nil
+                appState.recordingState = .error
+                appState.recordingStartTime = nil
+                handleRecordingStateChange(.error)
+            }
         } catch is CancellationError {
             _ = await realtimeStopTask.value
             Log.app.info("stopRecording: Cancelled")
@@ -630,6 +688,28 @@ extension AppDelegate {
         }
 
         Log.app.info("stopRecording: END")
+    }
+
+    private func preserveVoiceRecovery(audioData: Data, startTime: Date) -> Bool {
+        let manager = RecoveryStateManager.shared
+        let url = manager.makeRecordingURL()
+        do {
+            try audioData.write(to: url, options: .atomic)
+            let saved = manager.saveState(
+                RecoveryState(
+                    tempFilePath: url.path,
+                    startTime: startTime,
+                    recordingType: .voice
+                )
+            )
+            if !saved {
+                try? FileManager.default.removeItem(at: url)
+            }
+            return saved
+        } catch {
+            Log.app.error("Failed to preserve unsaved setup audio: \(error.localizedDescription)")
+            return false
+        }
     }
 
     // MARK: - Realtime Transcription (WebSocket)
