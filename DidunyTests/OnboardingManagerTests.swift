@@ -109,6 +109,30 @@ final class OnboardingManagerTests: XCTestCase {
         XCTAssertTrue(manager.canStartPractice(isAuthenticated: true, microphoneGranted: true))
     }
 
+    func test_incompleteAuthenticatedSetupUsesCloudWithoutChangingConfiguredProvider() {
+        let manager = OnboardingManager(defaults: defaults) {}
+        let configuredProvider = TranscriptionProvider.local
+
+        XCTAssertEqual(
+            manager.dictationProvider(
+                configuredProvider: configuredProvider,
+                isAuthenticated: true
+            ),
+            .cloud
+        )
+        XCTAssertEqual(configuredProvider, .local)
+
+        manager.hasCompletedOnboarding = true
+
+        XCTAssertEqual(
+            manager.dictationProvider(
+                configuredProvider: configuredProvider,
+                isAuthenticated: true
+            ),
+            .local
+        )
+    }
+
     func test_onlySavedNonemptyAuthenticatedCloudDictationCompletesSetup() {
         let manager = OnboardingManager(defaults: defaults) {}
 

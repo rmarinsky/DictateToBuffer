@@ -138,6 +138,13 @@ final class OnboardingManager {
         isAuthenticated && microphoneGranted
     }
 
+    func dictationProvider(
+        configuredProvider: TranscriptionProvider,
+        isAuthenticated: Bool
+    ) -> TranscriptionProvider {
+        !hasCompletedOnboarding && isAuthenticated ? .cloud : configuredProvider
+    }
+
     /// Called only after RecordingsLibraryStorage confirms a saved recording.
     @discardableResult
     func didSaveSuccessfulDictation(

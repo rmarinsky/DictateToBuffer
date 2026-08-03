@@ -39,6 +39,13 @@ actor RealtimeVoiceAccumulator {
 // MARK: - Recording Actions
 
 extension AppDelegate {
+    private var voiceTranscriptionProvider: TranscriptionProvider {
+        OnboardingManager.shared.dictationProvider(
+            configuredProvider: SettingsStorage.shared.effectiveTranscriptionProvider,
+            isAuthenticated: AuthService.shared.isLoggedIn
+        )
+    }
+
     @objc func toggleRecording() {
         let recordingState = appState.recordingState
         Log.app.info("toggleRecording called, current state: \(recordingState)")
@@ -175,7 +182,7 @@ extension AppDelegate {
         }
 
         // Provider-specific validation
-        switch SettingsStorage.shared.effectiveTranscriptionProvider {
+        switch voiceTranscriptionProvider {
         case .cloud:
             Log.app.info("startRecording: Cloud provider selected")
         case .local:
@@ -386,7 +393,7 @@ extension AppDelegate {
             if !realtimeResult.text.isEmpty {
                 rawText = realtimeResult.text
                 Log.app.info("stopRecording: Using realtime transcription (\(rawText.count) chars)")
-            } else if SettingsStorage.shared.effectiveTranscriptionProvider == .local {
+            } else if voiceTranscriptionProvider == .local {
                 // Local Whisper — use original capture data, not the storage-compressed variant
                 let transcript = try await whisperTranscriptionService.transcribeDetailed(audioData: audioData)
                 rawText = transcript.text
@@ -439,7 +446,7 @@ extension AppDelegate {
             let duration = recordingStartTime.map { stopTime.timeIntervalSince($0) } ?? 0
             let compressedData = await AudioCompressionService.compressToFLAC(audioData: audioData)
             capturedAudioData = compressedData
-            let provider = SettingsStorage.shared.effectiveTranscriptionProvider
+            let provider = voiceTranscriptionProvider
             let shouldCompleteSetup = !OnboardingManager.shared.hasCompletedOnboarding
                 && provider == .cloud
                 && AuthService.shared.isLoggedIn
@@ -640,7 +647,7 @@ extension AppDelegate {
             }
         }
 
-        if SettingsStorage.shared.effectiveTranscriptionProvider == .local {
+        if voiceTranscriptionProvider == .local {
             let whisper = whisperTranscriptionService
             let stream = LocalWhisperStreamingService(
                 transcribe: { samples in
