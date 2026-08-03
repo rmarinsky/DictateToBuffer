@@ -88,6 +88,63 @@ final class AuthServiceTests: XCTestCase {
     }
 
     @MainActor
+    func test_cancelIgnoresLateResendResponse() async throws {
+        let service = makeService { request in
+            Self.response(for: request, body: #"{"message":"OTP sent"}"#)
+        }
+        try await service.sendOtp(email: "roman@example.com")
+
+        let requestStarted = expectation(description: "Resend request started")
+        let allowResponse = DispatchSemaphore(value: 0)
+        MockAuthURLProtocol.handler = { request in
+            requestStarted.fulfill()
+            _ = allowResponse.wait(timeout: .now() + 2)
+            return Self.response(for: request, body: #"{"message":"OTP sent"}"#)
+        }
+
+        let resend = Task { try await service.resendOtp() }
+        await fulfillment(of: [requestStarted], timeout: 2)
+        service.cancelOtpFlow()
+        allowResponse.signal()
+        try await resend.value
+
+        XCTAssertEqual(service.authState, .loggedOut)
+        XCTAssertNil(service.pendingOtpEmail)
+    }
+
+    @MainActor
+    func test_cancelIgnoresLateVerificationResponse() async throws {
+        let store = MemoryAuthTokenStore()
+        let service = makeService(store: store) { request in
+            Self.response(for: request, body: #"{"message":"OTP sent"}"#)
+        }
+        try await service.sendOtp(email: "roman@example.com")
+
+        let requestStarted = expectation(description: "Verification request started")
+        let allowResponse = DispatchSemaphore(value: 0)
+        MockAuthURLProtocol.handler = { request in
+            requestStarted.fulfill()
+            _ = allowResponse.wait(timeout: .now() + 2)
+            return Self.response(
+                for: request,
+                body: #"{"accessToken":"access","accessTokenExpiresAt":2000000,"refreshToken":"refresh"}"#
+            )
+        }
+
+        let verification = Task {
+            try await service.verifyOtp(email: "roman@example.com", code: "123456")
+        }
+        await fulfillment(of: [requestStarted], timeout: 2)
+        service.cancelOtpFlow()
+        allowResponse.signal()
+        try await verification.value
+
+        XCTAssertEqual(service.authState, .loggedOut)
+        XCTAssertNil(store.read(key: "auth_access_token"))
+        XCTAssertNil(store.read(key: "auth_refresh_token"))
+    }
+
+    @MainActor
     func test_verifyOtpStoresOwnedTokensAndUser() async throws {
         let store = MemoryAuthTokenStore()
         let service = makeService(store: store) { request in

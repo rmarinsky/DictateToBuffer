@@ -44,6 +44,7 @@ final class AuthService {
     nonisolated private let now: @Sendable () -> Date
     private let baseURLOverride: String?
     private var refreshTask: Task<Void, Error>?
+    private var otpFlowGeneration = 0
 
     private var proxyBaseURL: String {
         (baseURLOverride ?? SettingsStorage.shared.proxyBaseURL)
@@ -87,8 +88,10 @@ final class AuthService {
     }
 
     func sendOtp(email: String) async throws {
+        let generation = otpFlowGeneration
         let request = try jsonRequest(path: "/api/v1/auth/send-otp", body: ["email": email])
         _ = try await perform(request, errorPrefix: "Failed to send OTP")
+        guard generation == otpFlowGeneration else { return }
         pendingOtpEmail = email
         authState = .otpSent
     }
@@ -99,11 +102,13 @@ final class AuthService {
     }
 
     func verifyOtp(email: String, code: String) async throws {
+        let generation = otpFlowGeneration
         let request = try jsonRequest(
             path: "/api/v1/auth/verify-otp",
             body: ["email": email, "otp": code]
         )
         let data = try await perform(request, errorPrefix: "Verification failed")
+        guard generation == otpFlowGeneration else { return }
         let response = try JSONDecoder().decode(TokenResponse.self, from: data)
         try store(response, email: response.user?.email ?? email)
         UserDefaults.standard.removeObject(forKey: Keys.migrationNotice)
@@ -113,6 +118,7 @@ final class AuthService {
     }
 
     func cancelOtpFlow() {
+        otpFlowGeneration &+= 1
         pendingOtpEmail = nil
         authState = .loggedOut
     }
@@ -296,6 +302,7 @@ final class AuthService {
     }
 
     private func clearTokens() {
+        otpFlowGeneration &+= 1
         tokenStore.delete(key: Keys.accessToken)
         tokenStore.delete(key: Keys.refreshToken)
         tokenStore.delete(key: Keys.accessTokenExpiresAt)
