@@ -73,6 +73,23 @@ final class OnboardingManagerTests: XCTestCase {
         XCTAssertFalse(manager.hasCompletedOnboarding)
     }
 
+    func test_completedUserCanOpenAndHideSetupGuideFromSettingsForCurrentSession() {
+        let manager = OnboardingManager(defaults: defaults) {}
+        manager.hasCompletedOnboarding = true
+
+        XCTAssertFalse(manager.shouldShowSetupGuide)
+
+        manager.showFromSettings()
+
+        XCTAssertTrue(manager.shouldShowSetupGuide)
+        XCTAssertTrue(manager.hasCompletedOnboarding)
+
+        manager.hideSetupGuideForSession()
+
+        XCTAssertFalse(manager.shouldShowSetupGuide)
+        XCTAssertTrue(manager.hasCompletedOnboarding)
+    }
+
     func test_practiceRequiresSignInAndMicrophoneOnly() {
         let manager = OnboardingManager(defaults: defaults) {}
 

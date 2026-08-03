@@ -48,6 +48,7 @@ final class OnboardingManager {
     @ObservationIgnored private let applyNewUserDefaults: () -> Void
 
     private(set) var setupGuideHiddenForSession = false
+    private(set) var setupGuideRequestedForSession = false
 
     init(
         defaults: UserDefaults = .standard,
@@ -91,7 +92,8 @@ final class OnboardingManager {
     }
 
     var shouldShowSetupGuide: Bool {
-        !hasCompletedOnboarding && !setupGuideHiddenForSession
+        setupGuideRequestedForSession
+            || (!hasCompletedOnboarding && !setupGuideHiddenForSession)
     }
 
     /// Applies first-install defaults before runtime services snapshot them.
@@ -113,6 +115,7 @@ final class OnboardingManager {
 
     func hideSetupGuideForSession() {
         setupGuideHiddenForSession = true
+        setupGuideRequestedForSession = false
     }
 
     func showSetupGuide() {
@@ -121,6 +124,7 @@ final class OnboardingManager {
 
     func showFromSettings() {
         showSetupGuide()
+        setupGuideRequestedForSession = true
     }
 
     func canStartPractice(isAuthenticated: Bool, microphoneGranted: Bool) -> Bool {
@@ -178,5 +182,6 @@ final class OnboardingManager {
             defaults.removeObject(forKey: Self.stepCompletedPrefix + "\(step.rawValue)")
         }
         setupGuideHiddenForSession = false
+        setupGuideRequestedForSession = false
     }
 }
