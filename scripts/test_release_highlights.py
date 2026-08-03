@@ -25,6 +25,7 @@ class ReleaseHighlightsPipelineTests(unittest.TestCase):
                 "<title>Diduny Updates</title>"
                 "<item><title>Version 2.1.0</title>"
                 f"<sparkle:shortVersionString>2.1.0</sparkle:shortVersionString>"
+                "<sparkle:releaseNotesLink> </sparkle:releaseNotesLink>"
                 '<enclosure url="https://github.com/example/Diduny/releases/download/v2.1.0/Diduny-2.1.0.dmg" />'
                 "</item></channel></rss>\n",
                 encoding="utf-8",

@@ -46,7 +46,8 @@ def set_text(parent, tag, value):
 def ensure_release_notes_links(channel):
     release_notes_tag = f"{{{SPARKLE}}}releaseNotesLink"
     for item in channel.findall("item"):
-        if item.find(release_notes_tag) is not None:
+        existing_link = item.find(release_notes_tag)
+        if existing_link is not None and (existing_link.text or "").strip():
             continue
         enclosure = item.find("enclosure")
         download_url = enclosure.get("url") if enclosure is not None else None
