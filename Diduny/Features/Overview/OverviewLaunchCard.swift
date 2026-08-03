@@ -19,8 +19,7 @@ struct OverviewLaunchCard: View {
     var body: some View {
         if onboarding.shouldShowSetupGuide {
             setupGuideCard
-        } else if onboarding.canShowUpdateHighlights,
-                  let releaseLine = updateArrival.pendingReleaseLine {
+        } else if onboarding.canShowUpdateHighlights, let releaseLine = updateArrival.pendingReleaseLine {
             if let releaseHighlights {
                 whatsNewCard(releaseLine: releaseLine, highlights: releaseHighlights)
             }
@@ -166,16 +165,17 @@ struct OverviewLaunchCard: View {
         ) && !audioDeviceManager.availableDevices.isEmpty
         let isRecording = appState.recordingState == .recording
         let isProcessing = appState.recordingState == .processing
+        let status = practiceStatus
 
         return VStack(alignment: .leading, spacing: 8) {
             Text("Hold Right Shift, speak, then release.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Label(practiceStatusText, systemImage: practiceStatusSymbol)
+            Label(status.text, systemImage: status.symbol)
                 .font(.subheadline)
-                .foregroundStyle(practiceStatusColor)
-                .accessibilityLabel(practiceStatusText)
+                .foregroundStyle(status.color)
+                .accessibilityLabel(status.text)
 
             Button(isRecording ? "Stop and transcribe" : "Start practice") {
                 MainWindowController.shared.toggleRecording()
@@ -190,40 +190,42 @@ struct OverviewLaunchCard: View {
         }
     }
 
-    private var practiceStatusText: String {
+    private var practiceStatus: PracticeStatus {
         switch appState.recordingState {
         case .idle:
-            if !authService.isLoggedIn { return "Sign in to continue" }
-            if !microphoneGranted { return "Allow Microphone to continue" }
-            if audioDeviceManager.availableDevices.isEmpty { return "Connect a microphone to continue" }
-            return "Ready"
+            let text = if !authService.isLoggedIn {
+                "Sign in to continue"
+            } else if !microphoneGranted {
+                "Allow Microphone to continue"
+            } else if audioDeviceManager.availableDevices.isEmpty {
+                "Connect a microphone to continue"
+            } else {
+                "Ready"
+            }
+            return PracticeStatus(text: text, symbol: "circle", color: .secondary)
         case .recording:
-            return "Listening…"
+            return PracticeStatus(text: "Listening…", symbol: "waveform", color: .secondary)
         case .processing:
-            return "Transcribing…"
+            return PracticeStatus(text: "Transcribing…", symbol: "ellipsis.circle", color: .secondary)
         case .success:
-            return "Saved to Recordings and copied to the clipboard"
+            return PracticeStatus(
+                text: "Saved to Recordings and copied to the clipboard",
+                symbol: "checkmark.circle.fill",
+                color: .green
+            )
         case .error:
-            return appState.errorMessage ?? "Dictation failed. Try again."
+            return PracticeStatus(
+                text: appState.errorMessage ?? "Dictation failed. Try again.",
+                symbol: "exclamationmark.triangle.fill",
+                color: .red
+            )
         }
     }
 
-    private var practiceStatusSymbol: String {
-        switch appState.recordingState {
-        case .idle: "circle"
-        case .recording: "waveform"
-        case .processing: "ellipsis.circle"
-        case .success: "checkmark.circle.fill"
-        case .error: "exclamationmark.triangle.fill"
-        }
-    }
-
-    private var practiceStatusColor: Color {
-        switch appState.recordingState {
-        case .success: .green
-        case .error: .red
-        default: .secondary
-        }
+    private struct PracticeStatus {
+        let text: String
+        let symbol: String
+        let color: Color
     }
 
     private var accessibilitySetupRow: some View {

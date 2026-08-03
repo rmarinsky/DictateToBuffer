@@ -197,7 +197,7 @@ struct OverviewView: View {
 
             ScrollView {
                 VStack(spacing: 12) {
-                    launchCard
+                    OverviewLaunchCard()
                     heroCard
                     metricGrid
                     chartCard
@@ -215,12 +215,6 @@ struct OverviewView: View {
         .onReceive(NotificationCenter.default.publisher(for: .typingSpeedSettingsChanged)) { _ in
             typingSpeedWordsPerMinute = SettingsStorage.shared.typingSpeedWordsPerMinute
         }
-    }
-
-    // MARK: - Launch Card
-
-    private var launchCard: some View {
-        OverviewLaunchCard()
     }
 
     // MARK: - Hero Card
