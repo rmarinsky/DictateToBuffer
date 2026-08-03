@@ -10,8 +10,8 @@ permissions:
   contents: write
 
 concurrency:
-  # Prevent duplicate/overlapping release runs for the same ref.
-  group: release-${{ github.ref }}
+  # Every release writes the shared gh-pages appcast, so serialize all tags.
+  group: release
   cancel-in-progress: false
 
 env:

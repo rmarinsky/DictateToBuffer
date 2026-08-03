@@ -77,6 +77,14 @@ class ReleaseHighlightsPipelineTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("schemaVersion must be 1", result.stderr)
 
+    def test_release_workflow_serializes_gh_pages_writers(self):
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("  group: release\n", workflow)
+        self.assertNotIn("group: release-${{ github.ref }}", workflow)
+
     def run_script(self, *arguments):
         subprocess.run(
             [sys.executable, str(SCRIPT), *arguments],
