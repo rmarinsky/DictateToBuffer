@@ -62,6 +62,29 @@ final class AuthServiceTests: XCTestCase {
         try await service.sendOtp(email: "roman@example.com")
 
         XCTAssertEqual(service.authState, .otpSent)
+        XCTAssertEqual(service.pendingOtpEmail, "roman@example.com")
+    }
+
+    @MainActor
+    func test_resendUsesSharedOtpDestinationAndCancellationClearsIt() async throws {
+        let service = makeService { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/auth/send-otp")
+            XCTAssertEqual(
+                try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: String],
+                ["email": "roman@example.com"]
+            )
+            return Self.response(for: request, body: #"{"message":"OTP sent"}"#)
+        }
+
+        try await service.sendOtp(email: "roman@example.com")
+        try await service.resendOtp()
+
+        XCTAssertEqual(service.pendingOtpEmail, "roman@example.com")
+
+        service.cancelOtpFlow()
+
+        XCTAssertEqual(service.authState, .loggedOut)
+        XCTAssertNil(service.pendingOtpEmail)
     }
 
     @MainActor

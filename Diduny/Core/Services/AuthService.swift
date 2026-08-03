@@ -25,6 +25,7 @@ final class AuthService {
 
     private(set) var authState: AuthState
     private(set) var showsMigrationNotice = false
+    private(set) var pendingOtpEmail: String?
 
     var isLoggedIn: Bool { authState == .loggedIn }
     var userEmail: String? { tokenStore.read(key: Keys.userEmail) }
@@ -88,7 +89,13 @@ final class AuthService {
     func sendOtp(email: String) async throws {
         let request = try jsonRequest(path: "/api/v1/auth/send-otp", body: ["email": email])
         _ = try await perform(request, errorPrefix: "Failed to send OTP")
+        pendingOtpEmail = email
         authState = .otpSent
+    }
+
+    func resendOtp() async throws {
+        guard let pendingOtpEmail else { throw AuthError.notAuthenticated }
+        try await sendOtp(email: pendingOtpEmail)
     }
 
     func verifyOtp(email: String, code: String) async throws {
@@ -101,10 +108,12 @@ final class AuthService {
         try store(response, email: response.user?.email ?? email)
         UserDefaults.standard.removeObject(forKey: Keys.migrationNotice)
         showsMigrationNotice = false
+        pendingOtpEmail = nil
         authState = .loggedIn
     }
 
     func cancelOtpFlow() {
+        pendingOtpEmail = nil
         authState = .loggedOut
     }
 
@@ -292,6 +301,7 @@ final class AuthService {
         tokenStore.delete(key: Keys.accessTokenExpiresAt)
         tokenStore.delete(key: Keys.userEmail)
         UserDefaults.standard.set(false, forKey: Keys.sessionPresent)
+        pendingOtpEmail = nil
         authState = .loggedOut
     }
 }

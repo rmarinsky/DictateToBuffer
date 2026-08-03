@@ -13,11 +13,6 @@ struct AccountSignInView: View {
         authService = .shared
     }
 
-    @MainActor
-    init(authService: AuthService) {
-        self.authService = authService
-    }
-
     var body: some View {
         switch authService.authState {
         case .loggedOut:
@@ -53,6 +48,10 @@ struct AccountSignInView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(otpCode.isEmpty || isLoading)
 
+                Button("Resend Code", action: resendOtp)
+                    .buttonStyle(.bordered)
+                    .disabled(isLoading)
+
                 Button("Cancel", action: cancelOtp)
                     .buttonStyle(.bordered)
             }
@@ -82,18 +81,9 @@ struct AccountSignInView: View {
         }
 
         if let errorMessage {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(errorMessage)
-                    .font(.caption)
-                    .foregroundColor(.red)
-
-                if authService.authState == .otpSent {
-                    Button("Send new code", action: resendOtp)
-                        .font(.caption)
-                        .buttonStyle(.borderless)
-                        .foregroundColor(.accentColor)
-                }
-            }
+            Text(errorMessage)
+                .font(.caption)
+                .foregroundColor(.red)
         }
     }
 
@@ -117,7 +107,10 @@ struct AccountSignInView: View {
 
         Task {
             do {
-                try await authService.verifyOtp(email: email, code: otpCode)
+                guard let destination = authService.pendingOtpEmail else {
+                    throw AuthError.notAuthenticated
+                }
+                try await authService.verifyOtp(email: destination, code: otpCode)
                 otpCode = ""
                 email = ""
             } catch {
@@ -135,7 +128,16 @@ struct AccountSignInView: View {
 
     private func resendOtp() {
         otpCode = ""
+        isLoading = true
         errorMessage = nil
-        sendOtp()
+
+        Task {
+            do {
+                try await authService.resendOtp()
+            } catch {
+                errorMessage = "Couldn't send a new code. Try again."
+            }
+            isLoading = false
+        }
     }
 }
