@@ -12,20 +12,20 @@ struct OverviewLaunchCard: View {
     @State private var accessibilityGranted = false
     @State private var microphoneRequestInFlight = false
     @State private var accessibilityRequestInFlight = false
-    @State private var enableAutoPasteWhenAccessibilityIsGranted = false
+    @State private var shouldEnableAutoPasteAfterGrant = false
 
     private let releaseHighlights = ReleaseHighlights.bundled()
 
     var body: some View {
         if onboarding.shouldShowSetupGuide {
             setupGuideCard
-        } else if let releaseLine = updateArrival.pendingReleaseLine,
-                  let releaseHighlights {
-            whatsNewCard(releaseLine: releaseLine, highlights: releaseHighlights)
+        } else if let releaseLine = updateArrival.pendingReleaseLine {
+            if let releaseHighlights {
+                whatsNewCard(releaseLine: releaseLine, highlights: releaseHighlights)
+            }
         }
     }
 
-    @ViewBuilder
     private var setupGuideCard: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
@@ -97,11 +97,11 @@ struct OverviewLaunchCard: View {
         }
     }
 
-    private func setupStep<Content: View>(
+    private func setupStep(
         number: Int,
         title: String,
         isComplete: Bool,
-        @ViewBuilder content: () -> Content
+        @ViewBuilder content: () -> some View
     ) -> some View {
         HStack(alignment: .top, spacing: 12) {
             ZStack {
@@ -242,8 +242,8 @@ struct OverviewLaunchCard: View {
                             ? "Auto-paste is enabled."
                             : "Accessibility access is allowed."
                     )
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 } else {
                     Button("Enable Auto-paste") {
                         requestAccessibilityPermission()
@@ -310,7 +310,7 @@ struct OverviewLaunchCard: View {
 
     private func requestAccessibilityPermission() {
         accessibilityRequestInFlight = true
-        enableAutoPasteWhenAccessibilityIsGranted = true
+        shouldEnableAutoPasteAfterGrant = true
         PermissionManager.shared.requestAccessibilityPermission()
         Task {
             try? await Task.sleep(for: .seconds(1))
@@ -325,9 +325,9 @@ struct OverviewLaunchCard: View {
         accessibilityGranted = PermissionManager.shared.status.accessibility
         audioDeviceManager.refreshDevices()
 
-        if enableAutoPasteWhenAccessibilityIsGranted, accessibilityGranted {
+        if shouldEnableAutoPasteAfterGrant, accessibilityGranted {
             SettingsStorage.shared.autoPaste = true
-            enableAutoPasteWhenAccessibilityIsGranted = false
+            shouldEnableAutoPasteAfterGrant = false
         }
     }
 }

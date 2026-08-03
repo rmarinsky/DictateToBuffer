@@ -117,6 +117,7 @@
 		CF97708F72740E5C035B3479 /* SleepFlushCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C84CF4471CC20033174713CB /* SleepFlushCoordinatorTests.swift */; };
 		D08BBB9F8D641C3D4ADAD992 /* TranslationPairPickerControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 650D5A1F7778A1C35AD2F515 /* TranslationPairPickerControllerTests.swift */; };
 		D0BDBD33AD9969711AEF33E1 /* TypingTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 803A2E19B668337A8516CC31 /* TypingTestView.swift */; };
+		D0C4DBCDAA2A4336ED6EA9FF /* OverviewLaunchCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F2CB2F0906F158F8EFC4097 /* OverviewLaunchCard.swift */; };
 		D52AFEB3B25B529860D14116 /* AudioDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 118CE8BCA0160E31FD916B10 /* AudioDevice.swift */; };
 		D6203B3BADF3AA7E40186F11 /* HotkeyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0491E26240E167BDB5DCACEE /* HotkeyService.swift */; };
 		D6937717EE280CA3B8339D53 /* BatchTranscriptionProgressViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 808FCBFBB94E4D0B49112534 /* BatchTranscriptionProgressViews.swift */; };
@@ -194,6 +195,7 @@
 		2A8D2B8A37BF978AE7F1A12A /* FileTranscriptionBatchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTranscriptionBatchService.swift; sourceTree = "<group>"; };
 		2ABF3F1FBD81398469047BB4 /* DidunyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DidunyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		2C88AE153FCAA14A227A7E16 /* AudioPlaybackControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlaybackControlView.swift; sourceTree = "<group>"; };
+		2F2CB2F0906F158F8EFC4097 /* OverviewLaunchCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewLaunchCard.swift; sourceTree = "<group>"; };
 		30A4F862A41E4EC48E5CAEFB /* RecordingRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingRowView.swift; sourceTree = "<group>"; };
 		312D39F00F29463EB9AD6DE4 /* TextTranslationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextTranslationView.swift; sourceTree = "<group>"; };
 		3193B0160E38FA4135969F79 /* MeetingAudioSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingAudioSource.swift; sourceTree = "<group>"; };
@@ -419,6 +421,7 @@
 		4B8A68CAD04C9047027A278E /* Overview */ = {
 			isa = PBXGroup;
 			children = (
+				2F2CB2F0906F158F8EFC4097 /* OverviewLaunchCard.swift */,
 				9D10CEDBC544B56C03986007 /* OverviewView.swift */,
 			);
 			path = Overview;
@@ -932,6 +935,7 @@
 				BF3538E2F19CF3EB9D232E7A /* ObjCExceptionCatcher.m in Sources */,
 				951FD5A8D4F78E536BAB7740 /* OfflineModelsSettingsView.swift in Sources */,
 				03EBBAC2178925692C5B0F28 /* OnboardingManager.swift in Sources */,
+				D0C4DBCDAA2A4336ED6EA9FF /* OverviewLaunchCard.swift in Sources */,
 				1D8F54C7E34D0BF458CDE89A /* OverviewView.swift in Sources */,
 				3857104F9A2310C3DA6E8290 /* PermissionManager.swift in Sources */,
 				CAA3AF319715F9DD611CCC8B /* PermissionsSettingsView.swift in Sources */,
