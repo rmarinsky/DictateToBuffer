@@ -41,4 +41,18 @@ final class ReleaseHighlightsTests: XCTestCase {
 
         XCTAssertNil(ReleaseHighlights.load(from: malformedURL))
     }
+
+    func testBundledPayloadMatchesCuratedReleaseCopy() throws {
+        let highlights = try XCTUnwrap(ReleaseHighlights.bundled())
+
+        XCTAssertEqual(highlights.headline, "A clearer update and a faster first run")
+        XCTAssertEqual(
+            highlights.highlights,
+            [
+                "See what changed before an update installs and after Diduny relaunches.",
+                "Set up cloud dictation from Overview and try your first phrase immediately.",
+                "Grant auto-paste and meeting permissions only when you need them.",
+            ]
+        )
+    }
 }
