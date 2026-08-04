@@ -163,7 +163,11 @@ private struct OnboardingFlowView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Onboarding progress")
-        .accessibilityValue("Step \(screen.rawValue + 1) of \(OnboardingScreen.allCases.count)")
+        .accessibilityValue(String(
+            format: String(localized: "Step %d of %d"),
+            screen.rawValue + 1,
+            OnboardingScreen.allCases.count
+        ))
     }
 
     @ViewBuilder
@@ -296,7 +300,7 @@ private struct OnboardingFlowView: View {
             OnboardingCapturePanel(
                 isSignedIn: true,
                 recordingState: appDelegate.appState.recordingState,
-                onTranscribe: { appDelegate.toggleRecording() },
+                onTranscribe: startPractice,
                 onMeeting: { appDelegate.toggleMeetingRecording() }
             )
 
@@ -333,7 +337,7 @@ private struct OnboardingFlowView: View {
                 Button("Set up later", action: onDismiss)
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .accessibilityHint("Closes setup for this launch without marking it complete")
+                    .accessibilityHint(String(localized: "Closes setup for this launch without marking it complete"))
             }
 
             Spacer()
@@ -366,7 +370,13 @@ private struct OnboardingFlowView: View {
         switch screen {
         case .permissions: allPermissionsGranted
         case .signIn: auth.isLoggedIn
-        case .practice: appDelegate.appState.recordingState == .idle || appDelegate.appState.recordingState == .error
+        case .practice:
+            onboarding.canStartPractice(
+                isAuthenticated: auth.isLoggedIn,
+                microphoneGranted: microphoneGranted,
+                accessibilityGranted: accessibilityGranted,
+                screenRecordingGranted: screenRecordingGranted
+            ) && (appDelegate.appState.recordingState == .idle || appDelegate.appState.recordingState == .error)
         case .welcome, .capturePanel, .ready: true
         }
     }
@@ -387,7 +397,7 @@ private struct OnboardingFlowView: View {
         case .capturePanel: move(to: .permissions)
         case .permissions: move(to: .signIn)
         case .signIn: move(to: .practice)
-        case .practice: appDelegate.toggleRecording()
+        case .practice: startPractice()
         case .ready: onDismiss()
         }
     }
@@ -400,6 +410,19 @@ private struct OnboardingFlowView: View {
                 screen = destination
             }
         }
+    }
+
+    private func startPractice() {
+        guard onboarding.canStartPractice(
+            isAuthenticated: auth.isLoggedIn,
+            microphoneGranted: microphoneGranted,
+            accessibilityGranted: accessibilityGranted,
+            screenRecordingGranted: screenRecordingGranted
+        ) else {
+            move(to: .permissions)
+            return
+        }
+        appDelegate.toggleRecording()
     }
 
     private func feature(_ title: LocalizedStringKey, icon: String) -> some View {
@@ -580,7 +603,7 @@ private struct OnboardingPanelReveal: View {
                 .opacity(expanded ? 0 : 1)
                 .accessibilityHidden(true)
         }
-        .frame(height: 222)
+        .frame(height: 250)
         .task {
             if reduceMotion {
                 expanded = true

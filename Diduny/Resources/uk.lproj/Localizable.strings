@@ -1,5 +1,6 @@
 "Welcome to Diduny" = "Вітаємо в Diduny";
 "Onboarding progress" = "Прогрес налаштування";
+"Step %d of %d" = "Крок %d із %d";
 "Meet Diduny" = "Знайомтеся — Diduny";
 "The voice-first assistant that turns speech into finished work." = "Голосовий помічник, що перетворює мовлення на готову роботу.";
 "Dictate" = "Диктуйте";
@@ -34,6 +35,7 @@
 "Your first dictation is saved in Recordings. Use Double Shift to dictate and Double Option to translate from anywhere." = "Перше диктування збережено в «Записах». Двічі натисніть Shift для диктування або Option для перекладу будь-де.";
 "Start dictation" = "Почати диктування";
 "Set up later" = "Налаштувати пізніше";
+"Closes setup for this launch without marking it complete" = "Закриває налаштування до наступного запуску, не позначаючи його завершеним";
 "Back" = "Назад";
 "Get started" = "Почати";
 "Continue" = "Продовжити";
