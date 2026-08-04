@@ -68,6 +68,7 @@ final class SettingsStorageProviderTests: XCTestCase {
             "pushToTalkKey",
             "pushToTalkHoldEnabled",
             "pushToTalkToggleEnabled",
+            "translationPushToTalkKey",
             "translationPushToTalkHoldEnabled",
             "translationPushToTalkToggleEnabled",
             "pushToTalkHoldStartDelaySeconds",
@@ -92,6 +93,7 @@ final class SettingsStorageProviderTests: XCTestCase {
         defaults.removeObject(forKey: onboardingKey)
         SettingsStorage.shared.pushToTalkKey = .rightOption
         SettingsStorage.shared.pushToTalkHoldEnabled = false
+        SettingsStorage.shared.translationPushToTalkKey = .leftOption
         SettingsStorage.shared.autoPaste = true
         SettingsStorage.shared.transcriptionProvider = .local
         SettingsStorage.shared.typingSpeedWordsPerMinute = 85
@@ -100,6 +102,7 @@ final class SettingsStorageProviderTests: XCTestCase {
 
         XCTAssertEqual(SettingsStorage.shared.pushToTalkKey, .rightOption)
         XCTAssertFalse(SettingsStorage.shared.pushToTalkHoldEnabled)
+        XCTAssertEqual(SettingsStorage.shared.translationPushToTalkKey, .leftOption)
         XCTAssertTrue(SettingsStorage.shared.autoPaste)
         XCTAssertEqual(SettingsStorage.shared.transcriptionProvider, .local)
         XCTAssertEqual(SettingsStorage.shared.typingSpeedWordsPerMinute, 85)
@@ -112,6 +115,11 @@ final class SettingsStorageProviderTests: XCTestCase {
             "pushToTalkKey",
             "pushToTalkHoldEnabled",
             "pushToTalkToggleEnabled",
+            "pushToTalkToggleTapCount",
+            "translationPushToTalkKey",
+            "translationPushToTalkHoldEnabled",
+            "translationPushToTalkToggleEnabled",
+            "translationPushToTalkToggleTapCount",
             "autoPaste",
             "transcriptionProvider"
         ]
@@ -125,8 +133,13 @@ final class SettingsStorageProviderTests: XCTestCase {
         SettingsStorage.shared.applyNewUserDefaultsIfMissing()
 
         XCTAssertEqual(SettingsStorage.shared.pushToTalkKey, .rightShift)
-        XCTAssertTrue(SettingsStorage.shared.pushToTalkHoldEnabled)
-        XCTAssertFalse(SettingsStorage.shared.pushToTalkToggleEnabled)
+        XCTAssertFalse(SettingsStorage.shared.pushToTalkHoldEnabled)
+        XCTAssertTrue(SettingsStorage.shared.pushToTalkToggleEnabled)
+        XCTAssertEqual(SettingsStorage.shared.pushToTalkToggleTapCount, 2)
+        XCTAssertEqual(SettingsStorage.shared.translationPushToTalkKey, .rightOption)
+        XCTAssertFalse(SettingsStorage.shared.translationPushToTalkHoldEnabled)
+        XCTAssertTrue(SettingsStorage.shared.translationPushToTalkToggleEnabled)
+        XCTAssertEqual(SettingsStorage.shared.translationPushToTalkToggleTapCount, 2)
         XCTAssertFalse(SettingsStorage.shared.autoPaste)
         XCTAssertEqual(SettingsStorage.shared.transcriptionProvider, .cloud)
     }
