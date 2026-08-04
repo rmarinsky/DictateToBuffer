@@ -536,7 +536,8 @@ extension AppDelegate {
                 recordingID: savedRecordingID,
                 text: text,
                 provider: provider,
-                isAuthenticated: AuthService.shared.isLoggedIn
+                isAuthenticated: AuthService.shared.isLoggedIn,
+                requiredPermissionsGranted: PermissionManager.shared.status.allGranted
             )
 
             await MainActor.run {

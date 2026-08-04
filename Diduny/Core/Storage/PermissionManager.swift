@@ -17,7 +17,7 @@ final class PermissionManager {
         var accessibility: Bool = false
 
         var allGranted: Bool {
-            microphone && accessibility
+            microphone && accessibility && screenRecording
         }
 
         var allCriticalGranted: Bool {
@@ -222,8 +222,7 @@ final class PermissionManager {
         // Check accessibility passively (this is always passive)
         status.accessibility = checkAccessibilityPermission()
 
-        // Screen recording: cannot check passively without triggering dialog
-        // Keep the last known state - don't update status.screenRecording here
+        status.screenRecording = checkScreenRecordingPermissionPassive()
     }
 
     /// Show individual permission alert

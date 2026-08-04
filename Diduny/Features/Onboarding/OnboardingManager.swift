@@ -77,6 +77,10 @@ final class OnboardingManager {
             || (!hasCompletedOnboarding && !setupGuideHiddenForSession)
     }
 
+    var shouldPresentOnboardingWindow: Bool {
+        shouldShowSetupGuide
+    }
+
     var canShowUpdateHighlights: Bool {
         hasCompletedOnboarding && !shouldShowSetupGuide
     }
@@ -113,8 +117,13 @@ final class OnboardingManager {
         setupGuideRequestedForSession = true
     }
 
-    func canStartPractice(isAuthenticated: Bool, microphoneGranted: Bool) -> Bool {
-        isAuthenticated && microphoneGranted
+    func canStartPractice(
+        isAuthenticated: Bool,
+        microphoneGranted: Bool,
+        accessibilityGranted: Bool,
+        screenRecordingGranted: Bool
+    ) -> Bool {
+        isAuthenticated && microphoneGranted && accessibilityGranted && screenRecordingGranted
     }
 
     func dictationProvider(
@@ -130,12 +139,14 @@ final class OnboardingManager {
         recordingID: UUID?,
         text: String,
         provider: TranscriptionProvider,
-        isAuthenticated: Bool
+        isAuthenticated: Bool,
+        requiredPermissionsGranted: Bool
     ) -> Bool {
         guard recordingID != nil,
               !hasCompletedOnboarding,
               provider == .cloud,
               isAuthenticated,
+              requiredPermissionsGranted,
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
             return false

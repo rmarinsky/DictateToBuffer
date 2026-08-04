@@ -161,7 +161,9 @@ struct OverviewLaunchCard: View {
     private var practiceContent: some View {
         let canPractice = onboarding.canStartPractice(
             isAuthenticated: authService.isLoggedIn,
-            microphoneGranted: microphoneGranted
+            microphoneGranted: microphoneGranted,
+            accessibilityGranted: accessibilityGranted,
+            screenRecordingGranted: PermissionManager.shared.checkScreenRecordingPermissionPassive()
         ) && !audioDeviceManager.availableDevices.isEmpty
         let isRecording = appState.recordingState == .recording
         let isProcessing = appState.recordingState == .processing

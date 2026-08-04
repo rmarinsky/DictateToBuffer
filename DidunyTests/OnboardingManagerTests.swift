@@ -83,6 +83,22 @@ final class OnboardingManagerTests: XCTestCase {
         XCTAssertFalse(manager.hasCompletedOnboarding)
     }
 
+    func test_incompleteSetupPresentsStandaloneWindowUntilDeferredOrCompleted() {
+        let manager = OnboardingManager(defaults: defaults) {}
+
+        XCTAssertTrue(manager.shouldPresentOnboardingWindow)
+
+        manager.hideSetupGuideForSession()
+        XCTAssertFalse(manager.shouldPresentOnboardingWindow)
+
+        manager.showFromSettings()
+        XCTAssertTrue(manager.shouldPresentOnboardingWindow)
+
+        manager.hasCompletedOnboarding = true
+        manager.hideSetupGuideForSession()
+        XCTAssertFalse(manager.shouldPresentOnboardingWindow)
+    }
+
     func test_hidingIncompleteSetupDoesNotRevealUpdateHighlights() {
         let manager = OnboardingManager(defaults: defaults) {}
         _ = manager.prepareForLaunch()
@@ -111,12 +127,39 @@ final class OnboardingManagerTests: XCTestCase {
         XCTAssertTrue(manager.hasCompletedOnboarding)
     }
 
-    func test_practiceRequiresSignInAndMicrophoneOnly() {
+    func test_practiceRequiresSignInAndAllOnboardingPermissions() {
         let manager = OnboardingManager(defaults: defaults) {}
 
-        XCTAssertFalse(manager.canStartPractice(isAuthenticated: false, microphoneGranted: true))
-        XCTAssertFalse(manager.canStartPractice(isAuthenticated: true, microphoneGranted: false))
-        XCTAssertTrue(manager.canStartPractice(isAuthenticated: true, microphoneGranted: true))
+        XCTAssertFalse(manager.canStartPractice(
+            isAuthenticated: false,
+            microphoneGranted: true,
+            accessibilityGranted: true,
+            screenRecordingGranted: true
+        ))
+        XCTAssertFalse(manager.canStartPractice(
+            isAuthenticated: true,
+            microphoneGranted: false,
+            accessibilityGranted: true,
+            screenRecordingGranted: true
+        ))
+        XCTAssertFalse(manager.canStartPractice(
+            isAuthenticated: true,
+            microphoneGranted: true,
+            accessibilityGranted: false,
+            screenRecordingGranted: true
+        ))
+        XCTAssertFalse(manager.canStartPractice(
+            isAuthenticated: true,
+            microphoneGranted: true,
+            accessibilityGranted: true,
+            screenRecordingGranted: false
+        ))
+        XCTAssertTrue(manager.canStartPractice(
+            isAuthenticated: true,
+            microphoneGranted: true,
+            accessibilityGranted: true,
+            screenRecordingGranted: true
+        ))
     }
 
     func test_incompleteAuthenticatedSetupUsesCloudWithoutChangingConfiguredProvider() {
@@ -151,7 +194,8 @@ final class OnboardingManagerTests: XCTestCase {
                 recordingID: nil,
                 text: "Unsaved result",
                 provider: .cloud,
-                isAuthenticated: true
+                isAuthenticated: true,
+                requiredPermissionsGranted: true
             )
         )
         XCTAssertFalse(
@@ -159,7 +203,8 @@ final class OnboardingManagerTests: XCTestCase {
                 recordingID: UUID(),
                 text: "",
                 provider: .cloud,
-                isAuthenticated: true
+                isAuthenticated: true,
+                requiredPermissionsGranted: true
             )
         )
         XCTAssertFalse(
@@ -167,7 +212,8 @@ final class OnboardingManagerTests: XCTestCase {
                 recordingID: UUID(),
                 text: "Local result",
                 provider: .local,
-                isAuthenticated: true
+                isAuthenticated: true,
+                requiredPermissionsGranted: true
             )
         )
         XCTAssertFalse(
@@ -175,7 +221,17 @@ final class OnboardingManagerTests: XCTestCase {
                 recordingID: UUID(),
                 text: "Unsigned result",
                 provider: .cloud,
-                isAuthenticated: false
+                isAuthenticated: false,
+                requiredPermissionsGranted: true
+            )
+        )
+        XCTAssertFalse(
+            manager.didSaveSuccessfulDictation(
+                recordingID: UUID(),
+                text: "Missing permissions",
+                provider: .cloud,
+                isAuthenticated: true,
+                requiredPermissionsGranted: false
             )
         )
         XCTAssertTrue(
@@ -183,7 +239,8 @@ final class OnboardingManagerTests: XCTestCase {
                 recordingID: UUID(),
                 text: "First cloud dictation",
                 provider: .cloud,
-                isAuthenticated: true
+                isAuthenticated: true,
+                requiredPermissionsGranted: true
             )
         )
         XCTAssertTrue(manager.hasCompletedOnboarding)
@@ -200,7 +257,8 @@ final class OnboardingManagerTests: XCTestCase {
                 recordingID: UUID(),
                 text: "First cloud dictation",
                 provider: .cloud,
-                isAuthenticated: true
+                isAuthenticated: true,
+                requiredPermissionsGranted: true
             )
         )
 
