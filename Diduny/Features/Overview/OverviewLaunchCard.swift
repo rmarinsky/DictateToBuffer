@@ -11,13 +11,14 @@ struct OverviewLaunchCard: View {
     private let releaseHighlights = ReleaseHighlights.bundled()
 
     var body: some View {
-        if !onboarding.hasCompletedOnboarding {
+        VStack(spacing: 12) {
             permissionStatusCard
-        } else if onboarding.canShowUpdateHighlights,
-                  let releaseLine = updateArrival.pendingReleaseLine,
-                  let releaseHighlights
-        {
-            whatsNewCard(releaseLine: releaseLine, highlights: releaseHighlights)
+            if onboarding.canShowUpdateHighlights,
+               let releaseLine = updateArrival.pendingReleaseLine,
+               let releaseHighlights
+            {
+                whatsNewCard(releaseLine: releaseLine, highlights: releaseHighlights)
+            }
         }
     }
 
@@ -25,7 +26,7 @@ struct OverviewLaunchCard: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Finish setting up Diduny")
+                    Text(onboarding.hasCompletedOnboarding ? "Diduny permissions" : "Finish setting up Diduny")
                         .font(.headline)
                     Text("Permissions are used only when their feature needs them.")
                         .font(.subheadline)

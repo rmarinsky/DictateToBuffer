@@ -85,6 +85,25 @@ final class AuthServiceTests: XCTestCase {
     }
 
     @MainActor
+    func test_verifyOtpRejectsMalformedCodeBeforeNetworkRequest() async {
+        let service = makeService { request in
+            XCTFail("Unexpected request to \(request.url?.absoluteString ?? "unknown URL")")
+            return Self.response(for: request, body: #"{"message":"unused"}"#)
+        }
+
+        for code in ["", "12345", "1234567", "12A456"] {
+            do {
+                try await service.verifyOtp(email: "roman@example.com", code: code)
+                XCTFail("Expected invalid OTP: \(code)")
+            } catch {
+                guard let authError = error as? AuthError, case .invalidOtp = authError else {
+                    return XCTFail("Expected invalidOtp, got \(error)")
+                }
+            }
+        }
+    }
+
+    @MainActor
     func test_resendUsesSharedOtpDestinationAndCancellationClearsIt() async throws {
         let service = makeService { request in
             XCTAssertEqual(request.url?.path, "/api/v1/auth/send-otp")
@@ -291,6 +310,7 @@ final class AuthServiceTests: XCTestCase {
 
     func test_authErrorDescriptions() {
         XCTAssertEqual(AuthError.invalidURL.errorDescription, "Invalid auth URL")
+        XCTAssertEqual(AuthError.invalidOtp.errorDescription, "Enter the six-digit code")
         XCTAssertEqual(AuthError.invalidResponse.errorDescription, "Invalid server response")
         XCTAssertEqual(AuthError.notAuthenticated.errorDescription, "Not authenticated — please log in")
         XCTAssertEqual(AuthError.serverError("Rate limited").errorDescription, "Rate limited")

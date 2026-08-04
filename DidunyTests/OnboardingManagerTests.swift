@@ -248,6 +248,17 @@ final class OnboardingManagerTests: XCTestCase {
         XCTAssertEqual(defaults.integer(forKey: "onboarding.currentStep"), 6)
     }
 
+    func test_practiceShowsReadyOnlyAfterConfirmedSetupCompletion() {
+        let manager = OnboardingManager(defaults: defaults) {}
+
+        XCTAssertFalse(manager.shouldShowReadyAfterPractice(recordingState: .success))
+
+        manager.hasCompletedOnboarding = true
+
+        XCTAssertFalse(manager.shouldShowReadyAfterPractice(recordingState: .processing))
+        XCTAssertTrue(manager.shouldShowReadyAfterPractice(recordingState: .success))
+    }
+
     func test_successfulSavedDictationKeepsSuccessGuideVisibleUntilDone() {
         let manager = OnboardingManager(defaults: defaults) {}
         _ = manager.prepareForLaunch()

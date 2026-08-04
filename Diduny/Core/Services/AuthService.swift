@@ -112,6 +112,7 @@ final class AuthService {
     }
 
     func verifyOtp(email: String, code: String) async throws {
+        guard code.count == 6, code.allSatisfy(\.isNumber) else { throw AuthError.invalidOtp }
         let generation = otpFlowGeneration
         let request = try jsonRequest(
             path: "/api/v1/auth/verify-otp",
@@ -336,6 +337,7 @@ private struct AuthUser: Decodable {
 
 enum AuthError: LocalizedError {
     case invalidEmail
+    case invalidOtp
     case invalidURL
     case invalidResponse
     case notAuthenticated
@@ -344,6 +346,7 @@ enum AuthError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidEmail: "Enter a valid email address"
+        case .invalidOtp: "Enter the six-digit code"
         case .invalidURL: "Invalid auth URL"
         case .invalidResponse: "Invalid server response"
         case .notAuthenticated: "Not authenticated — please log in"

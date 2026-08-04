@@ -14,11 +14,11 @@ enum EdgeCommandAction: CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .transcribe: "Transcribe"
-        case .translate: "Translate"
-        case .meeting: "Record meeting"
-        case .translateMeeting: "Translate meeting"
-        case .batch: "Batch files"
+        case .transcribe: String(localized: "Transcribe")
+        case .translate: String(localized: "Translate")
+        case .meeting: String(localized: "Record meeting")
+        case .translateMeeting: String(localized: "Translate meeting")
+        case .batch: String(localized: "Batch files")
         }
     }
 
@@ -630,7 +630,7 @@ private struct EdgeCommandTabView: View {
     }
 }
 
-private struct EdgeCommandExpandedView: View {
+struct EdgeCommandExpandedView: View {
     let model: EdgeCommandPanelModel
     let liveStore: LiveDictationOverlayStore
     let onAction: (EdgeCommandAction) -> Void
@@ -826,9 +826,9 @@ private struct EdgeCommandExpandedView: View {
 
     private func actionMeta(_ action: EdgeCommandAction) -> String {
         switch action {
-        case .transcribe: "Voice → text"
+        case .transcribe: String(localized: "Voice → text")
         case .translate: "Voice → \(targetCode)"
-        case .meeting: "System + mic"
+        case .meeting: String(localized: "System + mic")
         case .translateMeeting: "Live → \(targetCode)"
         case .batch: ""
         }

@@ -126,6 +126,10 @@ final class OnboardingManager {
         isAuthenticated && microphoneGranted && accessibilityGranted && screenRecordingGranted
     }
 
+    func shouldShowReadyAfterPractice(recordingState: RecordingState) -> Bool {
+        recordingState == .success && hasCompletedOnboarding
+    }
+
     func dictationProvider(
         configuredProvider: TranscriptionProvider,
         isAuthenticated: Bool

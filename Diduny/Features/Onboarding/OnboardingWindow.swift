@@ -110,6 +110,7 @@ private struct OnboardingFlowView: View {
     let onDismiss: () -> Void
 
     @State private var screen: OnboardingScreen = .welcome
+    @State private var onboarding = OnboardingManager.shared
     @State private var auth = AuthService.shared
     @State private var microphoneGranted = false
     @State private var accessibilityGranted = false
@@ -145,7 +146,7 @@ private struct OnboardingFlowView: View {
             Task { await refreshPermissions() }
         }
         .onChange(of: appDelegate.appState.recordingState) { _, state in
-            if screen == .practice, state == .success {
+            if screen == .practice, onboarding.shouldShowReadyAfterPractice(recordingState: state) {
                 move(to: .ready)
             }
         }
@@ -560,14 +561,11 @@ private struct OnboardingPanelReveal: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            OnboardingCapturePanel(
-                isSignedIn: false,
-                recordingState: .idle,
-                onTranscribe: onAction,
-                onMeeting: onAction
-            )
+            OnboardingProductionPanelPreview(onAction: onAction)
             .opacity(expanded ? 1 : 0)
             .scaleEffect(expanded ? 1 : 0.96, anchor: .topTrailing)
+            .allowsHitTesting(expanded)
+            .accessibilityHidden(!expanded)
 
             if !expanded {
                 Capsule()
@@ -592,6 +590,40 @@ private struct OnboardingPanelReveal: View {
             try? await Task.sleep(for: .milliseconds(900))
             withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) { expanded = true }
         }
+    }
+}
+
+private struct OnboardingProductionPanelPreview: View {
+    let onAction: () -> Void
+    @State private var model: EdgeCommandPanelModel
+
+    @MainActor
+    init(onAction: @escaping () -> Void) {
+        self.onAction = onAction
+        let pair = SettingsStorage.shared.resolveTranslationLanguagePair()
+        _model = State(initialValue: EdgeCommandPanelModel(
+            pairs: [pair],
+            selectedPair: pair,
+            provider: .local,
+            isSignedIn: false
+        ))
+    }
+
+    var body: some View {
+        EdgeCommandExpandedView(
+            model: model,
+            liveStore: DictationOverlayController.shared.store,
+            onAction: { _ in onAction() },
+            onProvider: { _ in onAction() },
+            onSignIn: onAction,
+            onCopy: {},
+            onStop: {},
+            onDismissLive: {},
+            onCollapse: {},
+            onDrag: {},
+            onDragEnd: {}
+        )
+        .frame(width: 286, height: 250)
     }
 }
 

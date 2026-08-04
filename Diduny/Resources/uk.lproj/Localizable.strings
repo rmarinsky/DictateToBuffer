@@ -43,7 +43,10 @@
 "What do you want to capture?" = "Що ви хочете записати?";
 "Provider" = "Провайдер";
 "Cloud" = "Хмара";
+"Local" = "Локально";
 "Record meeting" = "Записати зустріч";
+"Translate meeting" = "Перекладати зустріч";
+"Batch files" = "Пакет файлів";
 "System + mic" = "Система + мікрофон";
 "Batch files & URLs" = "Пакет файлів і URL";
 "Stop and transcribe" = "Зупинити й транскрибувати";
@@ -53,6 +56,7 @@
 "Listening…" = "Слухаємо…";
 "Voice → text" = "Голос → текст";
 "Finish setting up Diduny" = "Завершіть налаштування Diduny";
+"Diduny permissions" = "Дозволи Diduny";
 "Permissions are used only when their feature needs them." = "Дозволи використовуються лише тоді, коли вони потрібні відповідній функції.";
 "Open Setup Guide" = "Відкрити налаштування";
 "Your email address" = "Ваша електронна адреса";
