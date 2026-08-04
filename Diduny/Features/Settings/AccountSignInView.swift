@@ -1,10 +1,16 @@
 import SwiftUI
 
 struct AccountSignInView: View {
+    private enum Field {
+        case email
+        case otp
+    }
+
     @State private var email = ""
     @State private var otpCode = ""
     @State private var errorMessage: String?
     @State private var isLoading = false
+    @FocusState private var focusedField: Field?
 
     private let authService: AuthService
 
@@ -14,7 +20,8 @@ struct AccountSignInView: View {
     }
 
     var body: some View {
-        switch authService.authState {
+        VStack(alignment: .leading, spacing: 8) {
+            switch authService.authState {
         case .loggedOut:
             if authService.showsMigrationNotice {
                 Label(
@@ -29,11 +36,13 @@ struct AccountSignInView: View {
                 TextField("Your email address", text: $email)
                     .textFieldStyle(.roundedBorder)
                     .textContentType(.emailAddress)
+                    .focused($focusedField, equals: .email)
+                    .onSubmit(sendOtp)
                     .accessibilityLabel("Email address")
 
                 Button("Send Code", action: sendOtp)
                     .buttonStyle(.bordered)
-                    .disabled(email.isEmpty || isLoading)
+                    .disabled(!AuthService.isValidEmail(email) || isLoading)
             }
 
         case .otpSent:
@@ -41,12 +50,14 @@ struct AccountSignInView: View {
                 TextField("Enter 6-digit code", text: $otpCode)
                     .textFieldStyle(.roundedBorder)
                     .textContentType(.oneTimeCode)
+                    .focused($focusedField, equals: .otp)
+                    .onSubmit(verifyOtp)
                     .autocorrectionDisabled()
                     .accessibilityLabel("One-time code")
 
                 Button("Verify", action: verifyOtp)
                     .buttonStyle(.borderedProminent)
-                    .disabled(otpCode.isEmpty || isLoading)
+                    .disabled(otpCode.count != 6 || isLoading)
 
                 Button("Resend Code", action: resendOtp)
                     .buttonStyle(.bordered)
@@ -74,16 +85,25 @@ struct AccountSignInView: View {
                 .foregroundColor(.secondary)
         }
 
-        if isLoading {
-            ProgressView()
-                .controlSize(.small)
-                .accessibilityLabel("Signing in")
-        }
+            if isLoading {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Signing in")
+            }
 
-        if let errorMessage {
-            Text(errorMessage)
-                .font(.caption)
-                .foregroundColor(.red)
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+        }
+        .onAppear(perform: focusCurrentField)
+        .onChange(of: authService.authState) { _, _ in
+            focusCurrentField()
+        }
+        .onChange(of: otpCode) { _, value in
+            let digits = String(value.filter(\.isNumber).prefix(6))
+            if digits != value { otpCode = digits }
         }
     }
 
@@ -94,6 +114,8 @@ struct AccountSignInView: View {
         Task {
             do {
                 try await authService.sendOtp(email: email)
+            } catch AuthError.invalidEmail {
+                errorMessage = "Enter a valid email address."
             } catch {
                 errorMessage = "Couldn't send a code. Try again."
             }
@@ -139,5 +161,9 @@ struct AccountSignInView: View {
             }
             isLoading = false
         }
+    }
+
+    private func focusCurrentField() {
+        focusedField = authService.authState == .otpSent ? .otp : .email
     }
 }

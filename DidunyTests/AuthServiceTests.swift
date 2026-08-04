@@ -66,6 +66,25 @@ final class AuthServiceTests: XCTestCase {
     }
 
     @MainActor
+    func test_sendOtpRejectsMalformedEmailBeforeNetworkRequest() async {
+        let service = makeService { request in
+            XCTFail("Unexpected request to \(request.url?.absoluteString ?? "unknown URL")")
+            return Self.response(for: request, body: #"{"message":"unused"}"#)
+        }
+
+        for email in ["", "roman", "@example.com", "roman@", "roman@example"] {
+            do {
+                try await service.sendOtp(email: email)
+                XCTFail("Expected invalid email: \(email)")
+            } catch {
+                guard let authError = error as? AuthError, case .invalidEmail = authError else {
+                    return XCTFail("Expected invalidEmail, got \(error)")
+                }
+            }
+        }
+    }
+
+    @MainActor
     func test_resendUsesSharedOtpDestinationAndCancellationClearsIt() async throws {
         let service = makeService { request in
             XCTAssertEqual(request.url?.path, "/api/v1/auth/send-otp")

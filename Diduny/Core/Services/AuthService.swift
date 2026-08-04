@@ -88,12 +88,22 @@ final class AuthService {
     }
 
     func sendOtp(email: String) async throws {
+        let email = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.isValidEmail(email) else { throw AuthError.invalidEmail }
         let generation = otpFlowGeneration
         let request = try jsonRequest(path: "/api/v1/auth/send-otp", body: ["email": email])
         _ = try await perform(request, errorPrefix: "Failed to send OTP")
         guard generation == otpFlowGeneration else { return }
         pendingOtpEmail = email
         authState = .otpSent
+    }
+
+    nonisolated static func isValidEmail(_ email: String) -> Bool {
+        guard !email.contains(where: \Character.isWhitespace) else { return false }
+        let parts = email.split(separator: "@", omittingEmptySubsequences: false)
+        guard parts.count == 2, !parts[0].isEmpty else { return false }
+        let domain = parts[1].split(separator: ".", omittingEmptySubsequences: false)
+        return domain.count >= 2 && domain.allSatisfy { !$0.isEmpty }
     }
 
     func resendOtp() async throws {
@@ -325,6 +335,7 @@ private struct AuthUser: Decodable {
 }
 
 enum AuthError: LocalizedError {
+    case invalidEmail
     case invalidURL
     case invalidResponse
     case notAuthenticated
@@ -332,6 +343,7 @@ enum AuthError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .invalidEmail: "Enter a valid email address"
         case .invalidURL: "Invalid auth URL"
         case .invalidResponse: "Invalid server response"
         case .notAuthenticated: "Not authenticated — please log in"
