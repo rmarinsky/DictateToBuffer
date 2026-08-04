@@ -285,7 +285,7 @@ final class PermissionManager {
 
 // MARK: - Permission Types
 
-enum PermissionType {
+enum PermissionType: Equatable {
     case microphone
     case accessibility
     case screenRecording

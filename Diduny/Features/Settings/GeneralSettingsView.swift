@@ -150,7 +150,7 @@ struct GeneralSettingsView: View {
 
     private func openSetupGuide() {
         OnboardingManager.shared.showFromSettings()
-        MainWindowController.shared.showWindow(section: .overview)
+        OnboardingWindowController.shared.showOnboarding()
     }
 
     private func pruneExpiredHistoryIfNeeded() {

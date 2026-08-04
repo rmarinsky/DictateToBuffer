@@ -201,6 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         MainWindowController.shared.configure(appDelegate: self)
         EdgeCommandPanelController.shared.configure(appDelegate: self)
+        OnboardingWindowController.shared.configure(appDelegate: self)
 
         // Start Sparkle updater (access lazy var to trigger init)
         _ = updaterManager
@@ -273,11 +274,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
-        setupAfterOnboarding()
+        setupApplicationServices()
+
+        if OnboardingManager.shared.shouldPresentOnboardingWindow {
+            OnboardingWindowController.shared.showOnboarding()
+        } else {
+            showMainWindowAfterLaunch()
+        }
     }
 
     /// Runtime setup is never gated by first-use guidance.
-    private func setupAfterOnboarding() {
+    private func setupApplicationServices() {
         // AuthService remains lazy until first cloud use; getAccessToken()
         // refreshes an expiring session on demand.
 
@@ -307,15 +314,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Log.app.info("[Auth] No stored session — cloud preferences remain stored, runtime uses local fallback")
         }
 
-        // Show main window so a Spotlight launch (fresh, app was not running)
-        // actually surfaces the UI. Deferred 200 ms to let the window system
-        // settle after all setup above finishes.
+    }
+
+    func showMainWindowAfterLaunch() {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(200))
-            NSLog("[Diduny] setupAfterOnboarding deferred: isVisible=%d policy=%d",
-                  MainWindowController.shared.isVisible ? 1 : 0, NSApp.activationPolicy().rawValue)
             if !MainWindowController.shared.isVisible {
-                MainWindowController.shared.showWindow()
+                MainWindowController.shared.showWindow(section: .overview)
             }
         }
     }
