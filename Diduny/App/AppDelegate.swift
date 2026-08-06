@@ -592,6 +592,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DictationOverlayController.shared.setStopHandler { [weak self] in
             await self?.stopActiveRecordingFromFeedback()
         }
+        NotchManager.shared.setStopHandler { [weak self] in
+            await self?.stopActiveRecordingFromFeedback()
+        }
     }
 
     func stopActiveRecordingFromFeedback() async {
