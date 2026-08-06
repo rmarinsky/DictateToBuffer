@@ -10,7 +10,9 @@ enum EdgeCommandAction: CaseIterable, Identifiable {
     case translateMeeting
     case batch
 
-    var id: Self { self }
+    var id: Self {
+        self
+    }
 
     var title: String {
         switch self {
@@ -37,7 +39,7 @@ enum EdgeCommandAction: CaseIterable, Identifiable {
     }
 }
 
-enum EdgeCommandPanelDockEdge: Equatable {
+enum EdgeCommandPanelDockEdge: String, Equatable {
     case left
     case right
     case top
@@ -47,6 +49,21 @@ enum EdgeCommandPanelDockEdge: Equatable {
 struct EdgeCommandPanelDock: Equatable {
     let edge: EdgeCommandPanelDockEdge
     let offset: CGFloat
+
+    init(edge: EdgeCommandPanelDockEdge, offset: CGFloat) {
+        self.edge = edge
+        self.offset = offset
+    }
+
+    /// Restores a dock persisted as raw values; nil when either value is
+    /// missing or the edge name is unknown. A stale offset from a
+    /// disconnected screen is safe — placement clamps it to the visible frame.
+    init?(rawEdge: String?, offset: Double?) {
+        guard let rawEdge, let edge = EdgeCommandPanelDockEdge(rawValue: rawEdge), let offset else {
+            return nil
+        }
+        self.init(edge: edge, offset: CGFloat(offset))
+    }
 }
 
 enum EdgeCommandPanelPresentation: Equatable {
@@ -77,27 +94,45 @@ enum EdgeCommandPanelPlacement {
         presentation: EdgeCommandPanelPresentation
     ) -> NSRect {
         let size = size(for: presentation, edge: dock.edge)
-        let origin: NSPoint
-
-        switch dock.edge {
+        let origin = switch dock.edge {
         case .left:
-            origin = NSPoint(
+            NSPoint(
                 x: visibleFrame.minX,
-                y: clampedOrigin(dock.offset, length: size.height, minimum: visibleFrame.minY, maximum: visibleFrame.maxY)
+                y: clampedOrigin(
+                    dock.offset,
+                    length: size.height,
+                    minimum: visibleFrame.minY,
+                    maximum: visibleFrame.maxY
+                )
             )
         case .right:
-            origin = NSPoint(
+            NSPoint(
                 x: visibleFrame.maxX - size.width,
-                y: clampedOrigin(dock.offset, length: size.height, minimum: visibleFrame.minY, maximum: visibleFrame.maxY)
+                y: clampedOrigin(
+                    dock.offset,
+                    length: size.height,
+                    minimum: visibleFrame.minY,
+                    maximum: visibleFrame.maxY
+                )
             )
         case .top:
-            origin = NSPoint(
-                x: clampedOrigin(dock.offset, length: size.width, minimum: visibleFrame.minX, maximum: visibleFrame.maxX),
+            NSPoint(
+                x: clampedOrigin(
+                    dock.offset,
+                    length: size.width,
+                    minimum: visibleFrame.minX,
+                    maximum: visibleFrame.maxX
+                ),
                 y: visibleFrame.maxY - size.height
             )
         case .bottom:
-            origin = NSPoint(
-                x: clampedOrigin(dock.offset, length: size.width, minimum: visibleFrame.minX, maximum: visibleFrame.maxX),
+            NSPoint(
+                x: clampedOrigin(
+                    dock.offset,
+                    length: size.width,
+                    minimum: visibleFrame.minX,
+                    maximum: visibleFrame.maxX
+                ),
                 y: visibleFrame.minY
             )
         }
@@ -136,7 +171,9 @@ enum EdgeCommandPanelPlacement {
         }
     }
 
-    private static func clampedOrigin(_ offset: CGFloat, length: CGFloat, minimum: CGFloat, maximum: CGFloat) -> CGFloat {
+    private static func clampedOrigin(_ offset: CGFloat, length: CGFloat, minimum: CGFloat,
+                                      maximum: CGFloat) -> CGFloat
+    {
         min(max(offset - length / 2, minimum), maximum - length)
     }
 }
@@ -230,7 +267,7 @@ final class EdgeCommandPanelController: NSObject {
     private var dock: EdgeCommandPanelDock?
     private var dragCursorOffset: NSPoint?
 
-    private override init() {
+    override private init() {
         super.init()
     }
 
@@ -308,13 +345,13 @@ final class EdgeCommandPanelController: NSObject {
             collapseTask?.cancel()
             collapseTask = Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(450))
-                guard !Task.isCancelled, let self, let panel = self.panel else { return }
+                guard !Task.isCancelled, let self, let panel else { return }
                 guard EdgeCommandPanelHoverPolicy.shouldCollapse(
                     pointer: NSEvent.mouseLocation,
                     panelFrame: panel.frame,
-                    isDragging: self.dragCursorOffset != nil
+                    isDragging: dragCursorOffset != nil
                 ) else { return }
-                self.showCollapsed()
+                showCollapsed()
             }
         }
     }
@@ -335,8 +372,11 @@ final class EdgeCommandPanelController: NSObject {
         dragCursorOffset = nil
         let screen = activeScreen() ?? panel.screen ?? NSScreen.main
         let visibleFrame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        dock = EdgeCommandPanelPlacement.nearestDock(to: panel.frame, in: visibleFrame)
-        model?.dockEdge = dock?.edge ?? .right
+        let newDock = EdgeCommandPanelPlacement.nearestDock(to: panel.frame, in: visibleFrame)
+        dock = newDock
+        model?.dockEdge = newDock.edge
+        SettingsStorage.shared.edgePanelDockEdge = newDock.edge.rawValue
+        SettingsStorage.shared.edgePanelDockOffset = Double(newDock.offset)
         position(panel, presentation: currentPresentation, on: visibleFrame)
     }
 
@@ -364,7 +404,8 @@ final class EdgeCommandPanelController: NSObject {
             appDelegate.toggleMeetingRecording()
         case .translateMeeting:
             if appDelegate.appState.meetingTranslationRecordingState == .idle {
-                guard appDelegate.canStartRecording(kind: .meetingTranslation), let pair else { showCollapsed(); return }
+                guard appDelegate.canStartRecording(kind: .meetingTranslation),
+                      let pair else { showCollapsed(); return }
                 Task { await appDelegate.startMeetingTranslationRecording(languagePair: pair) }
             } else {
                 appDelegate.toggleMeetingTranslationRecording()
@@ -443,11 +484,20 @@ final class EdgeCommandPanelController: NSObject {
         presentation: EdgeCommandPanelPresentation,
         on explicitVisibleFrame: NSRect? = nil
     ) {
+        // A live drag owns the frame; phase changes and toasts must not snap
+        // the panel back to its dock mid-drag. onDragEnd re-docks and calls
+        // position() again after clearing the drag offset.
+        guard dragCursorOffset == nil else { return }
         let screen = dock == nil ? activeScreen() : panel.screen ?? activeScreen()
         let visibleFrame = explicitVisibleFrame
             ?? screen?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let resolvedDock = dock ?? EdgeCommandPanelDock(edge: .right, offset: visibleFrame.midY)
+        let resolvedDock = dock
+            ?? EdgeCommandPanelDock(
+                rawEdge: SettingsStorage.shared.edgePanelDockEdge,
+                offset: SettingsStorage.shared.edgePanelDockOffset
+            )
+            ?? EdgeCommandPanelDock(edge: .right, offset: visibleFrame.midY)
         dock = resolvedDock
         model?.dockEdge = resolvedDock.edge
         let isExpanded = presentation != .collapsed
@@ -488,8 +538,33 @@ final class EdgeCommandPanelController: NSObject {
 }
 
 private final class EdgeCommandPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
+    override var canBecomeKey: Bool {
+        true
+    }
+
+    override var canBecomeMain: Bool {
+        false
+    }
+}
+
+/// The panel is a non-activating panel of a usually-inactive app (the user is
+/// dictating into another app). Without accepting first mouse, the initial
+/// click is consumed by window-key handling and never reaches the SwiftUI
+/// drag gesture or buttons — dragging during recording required a second
+/// attempt and Stop/Copy needed a double click.
+private final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for _: NSEvent?) -> Bool {
+        true
+    }
+
+    required init(rootView: Content) {
+        super.init(rootView: rootView)
+    }
+
+    @available(*, unavailable)
+    @MainActor @preconcurrency dynamic required init?(coder _: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 }
 
 private final class EdgeCommandPanelContentView: NSView {
@@ -503,8 +578,8 @@ private final class EdgeCommandPanelContentView: NSView {
         expandedView: EdgeCommandExpandedView,
         onHoverChange: @escaping (Bool) -> Void
     ) {
-        tabHostingView = NSHostingView(rootView: tabView)
-        expandedHostingView = NSHostingView(rootView: expandedView)
+        tabHostingView = FirstMouseHostingView(rootView: tabView)
+        expandedHostingView = FirstMouseHostingView(rootView: expandedView)
         self.onHoverChange = onHoverChange
         super.init(frame: .zero)
 
@@ -518,8 +593,12 @@ private final class EdgeCommandPanelContentView: NSView {
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) {
+    required init?(coder _: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func acceptsFirstMouse(for _: NSEvent?) -> Bool {
+        true
     }
 
     override func layout() {
@@ -742,7 +821,10 @@ private struct EdgeCommandExpandedView: View {
             .foregroundStyle(selected ? Color.primary : Color.secondary)
             .frame(maxWidth: .infinity, minHeight: 24)
             .padding(.horizontal, 6)
-            .background(selected ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .background(
+                selected ? Color.primary.opacity(0.08) : .clear,
+                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+            )
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])

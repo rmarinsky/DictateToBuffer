@@ -1,6 +1,6 @@
 import AppKit
-import Testing
 @testable import Diduny
+import Testing
 
 @MainActor
 struct EdgeCommandPanelModelTests {
@@ -100,11 +100,19 @@ struct EdgeCommandPanelModelTests {
 
         #expect(EdgeCommandPanelPlacement.frame(in: visibleFrame, dock: rightDock, presentation: .collapsed)
             == NSRect(x: 1426, y: 418, width: 14, height: 64))
-        #expect(EdgeCommandPanelPlacement.frame(in: visibleFrame, dock: rightDock, presentation: .commands(isCloud: true))
+        #expect(EdgeCommandPanelPlacement.frame(
+            in: visibleFrame,
+            dock: rightDock,
+            presentation: .commands(isCloud: true)
+        )
             == NSRect(x: 1154, y: 287, width: 286, height: 326))
         #expect(EdgeCommandPanelPlacement.frame(in: visibleFrame, dock: bottomDock, presentation: .collapsed)
             == NSRect(x: 688, y: 0, width: 64, height: 14))
-        #expect(EdgeCommandPanelPlacement.frame(in: visibleFrame, dock: bottomDock, presentation: .commands(isCloud: true))
+        #expect(EdgeCommandPanelPlacement.frame(
+            in: visibleFrame,
+            dock: bottomDock,
+            presentation: .commands(isCloud: true)
+        )
             == NSRect(x: 577, y: 0, width: 286, height: 326))
     }
 
@@ -157,6 +165,16 @@ struct EdgeCommandPanelModelTests {
             isDragging: false
         ))
     }
+
+    @Test("A persisted dock position restores across app restarts")
+    func dockRestoresFromPersistedRawValues() {
+        let saved = EdgeCommandPanelDock(edge: .left, offset: 321)
+
+        #expect(EdgeCommandPanelDock(rawEdge: saved.edge.rawValue, offset: Double(saved.offset)) == saved)
+        #expect(EdgeCommandPanelDock(rawEdge: "diagonal", offset: 100) == nil)
+        #expect(EdgeCommandPanelDock(rawEdge: nil, offset: 100) == nil)
+        #expect(EdgeCommandPanelDock(rawEdge: "top", offset: nil) == nil)
+    }
 }
 
 @MainActor
@@ -207,15 +225,15 @@ struct EdgeCommandPanelLiveTextTests {
         store.reset(mode: .meeting)
 
         store.processTokens([
-            RealtimeToken(text: "Hello", isFinal: true, speaker: "1", startMs: 1_200),
-            RealtimeToken(text: "Hi", isFinal: true, speaker: "2", startMs: 65_000)
+            RealtimeToken(text: "Hello", isFinal: true, speaker: "1", startMs: 1200),
+            RealtimeToken(text: "Hi", isFinal: true, speaker: "2", startMs: 65000)
         ])
 
         #expect(store.displayText.contains("[00:01] Speaker 1: Hello"))
         #expect(store.displayText.contains("[01:05] Speaker 2: Hi"))
 
         store.processTokens([
-            RealtimeToken(text: "Still speaking", isFinal: false, speaker: "2", startMs: 66_000)
+            RealtimeToken(text: "Still speaking", isFinal: false, speaker: "2", startMs: 66000)
         ])
 
         #expect(store.displayText.contains("Still speaking"))
@@ -227,11 +245,11 @@ struct EdgeCommandPanelLiveTextTests {
         store.reset(mode: .meeting)
 
         store.processTokens([
-            RealtimeToken(text: "First phrase", isFinal: true, speaker: "1", startMs: 1_000)
+            RealtimeToken(text: "First phrase", isFinal: true, speaker: "1", startMs: 1000)
         ])
         store.markSegmentBoundary()
         store.processTokens([
-            RealtimeToken(text: "Second phrase", isFinal: true, speaker: "1", startMs: 8_000)
+            RealtimeToken(text: "Second phrase", isFinal: true, speaker: "1", startMs: 8000)
         ])
 
         #expect(store.displayText.contains("[00:01] Speaker 1: First phrase"))

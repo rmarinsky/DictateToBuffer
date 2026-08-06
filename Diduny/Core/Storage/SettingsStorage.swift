@@ -138,6 +138,8 @@ final class SettingsStorage {
         case userDeclinedScreenRecording
         case selectedBrowserSessionID
         case selectedChromeProfileID
+        case edgePanelDockEdge
+        case edgePanelDockOffset
         case remoteMediaRightsAcknowledged
     }
 
@@ -274,6 +276,30 @@ final class SettingsStorage {
                 defaults.set(newValue, forKey: Key.selectedChromeProfileID.rawValue)
             } else {
                 defaults.removeObject(forKey: Key.selectedChromeProfileID.rawValue)
+            }
+        }
+    }
+
+    /// Persisted edge-command-panel dock (raw edge name + offset along that
+    /// edge) so a dragged panel keeps its place across restarts.
+    var edgePanelDockEdge: String? {
+        get { defaults.string(forKey: Key.edgePanelDockEdge.rawValue) }
+        set {
+            if let newValue {
+                defaults.set(newValue, forKey: Key.edgePanelDockEdge.rawValue)
+            } else {
+                defaults.removeObject(forKey: Key.edgePanelDockEdge.rawValue)
+            }
+        }
+    }
+
+    var edgePanelDockOffset: Double? {
+        get { defaults.object(forKey: Key.edgePanelDockOffset.rawValue) as? Double }
+        set {
+            if let newValue {
+                defaults.set(newValue, forKey: Key.edgePanelDockOffset.rawValue)
+            } else {
+                defaults.removeObject(forKey: Key.edgePanelDockOffset.rawValue)
             }
         }
     }
