@@ -36,7 +36,7 @@ final class CloudTranscriptionService: TranscriptionServiceProtocol {
 
         try await ensureSpeechDetected(audioData, context: "transcribe")
 
-        let languageConfig = resolveLanguageConfig(explicitLanguage: language)
+        let languageConfig = Self.resolveLanguageConfig(explicitLanguage: language)
         let config = Self.makeTranscriptionConfig(languageConfig: languageConfig)
         let response = try await proxyTranscribe(audioData: audioData, config: config)
         let text = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -51,7 +51,7 @@ final class CloudTranscriptionService: TranscriptionServiceProtocol {
 
         try await ensureSpeechDetected(audioData, context: "transcribeMeeting")
 
-        let languageConfig = resolveLanguageConfig()
+        let languageConfig = Self.resolveLanguageConfig()
         let config = Self.makeTranscriptionConfig(
             languageConfig: languageConfig,
             enableSpeakerDiarization: true
@@ -83,7 +83,7 @@ final class CloudTranscriptionService: TranscriptionServiceProtocol {
 
         try await ensureSpeechDetected(audioData, context: "translateAndTranscribe")
 
-        let languageConfig = resolveLanguageConfig()
+        let languageConfig = Self.resolveLanguageConfig()
         let config = Self.makeOneWayTranslationConfig(
             targetLanguage: target,
             languageConfig: languageConfig
@@ -103,7 +103,7 @@ final class CloudTranscriptionService: TranscriptionServiceProtocol {
 
         try await ensureSpeechDetected(audioData, context: "translateAndTranscribe")
 
-        let languageConfig = resolveLanguageConfig(
+        let languageConfig = Self.resolveLanguageConfig(
             forcedLanguageHints: SettingsStorage.shared.translationLanguageHints(for: languagePair)
         )
         let config = Self.makeTwoWayTranslationConfig(
@@ -138,7 +138,10 @@ final class CloudTranscriptionService: TranscriptionServiceProtocol {
         let configString = String(data: configData, encoding: .utf8) ?? "{}"
 
         let (filename, contentType) = detectAudioFormat(optimizedData)
-        Log.transcription.info("proxyTranscribe: audio format=\(contentType), original=\(audioData.count) bytes, optimized=\(optimizedData.count) bytes, config=\(configString)")
+        Log.transcription
+            .info(
+                "proxyTranscribe: audio format=\(contentType), original=\(audioData.count) bytes, optimized=\(optimizedData.count) bytes, config=\(configString)"
+            )
 
         // Build multipart body: audio + config
         var body = Data()
@@ -230,10 +233,10 @@ final class CloudTranscriptionService: TranscriptionServiceProtocol {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/afconvert")
             process.arguments = [
-                "-f", "WAVE",           // output format: WAV
-                "-d", "LEI16",          // data format: little-endian 16-bit integer
-                "-c", "1",              // mono
-                "-r", "16000",          // 16kHz sample rate
+                "-f", "WAVE", // output format: WAV
+                "-d", "LEI16", // data format: little-endian 16-bit integer
+                "-c", "1", // mono
+                "-r", "16000", // 16kHz sample rate
                 inputURL.path,
                 outputURL.path
             ]
@@ -248,7 +251,11 @@ final class CloudTranscriptionService: TranscriptionServiceProtocol {
                     } else {
                         let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
                         let msg = String(data: errorData, encoding: .utf8) ?? "exit \(proc.terminationStatus)"
-                        continuation.resume(throwing: NSError(domain: "afconvert", code: Int(proc.terminationStatus), userInfo: [NSLocalizedDescriptionKey: msg]))
+                        continuation.resume(throwing: NSError(
+                            domain: "afconvert",
+                            code: Int(proc.terminationStatus),
+                            userInfo: [NSLocalizedDescriptionKey: msg]
+                        ))
                     }
                 }
                 do {
@@ -259,7 +266,8 @@ final class CloudTranscriptionService: TranscriptionServiceProtocol {
             }
 
             let downsampledData = try Data(contentsOf: outputURL)
-            Log.transcription.info("Downsampled: \(audioData.count) → \(downsampledData.count) bytes (16kHz mono s16le)")
+            Log.transcription
+                .info("Downsampled: \(audioData.count) → \(downsampledData.count) bytes (16kHz mono s16le)")
             return downsampledData
         } catch {
             Log.transcription.warning("Downsample failed, using original: \(error.localizedDescription)")
@@ -322,7 +330,7 @@ final class CloudTranscriptionService: TranscriptionServiceProtocol {
 
     // MARK: - Language Config
 
-    private func resolveLanguageConfig(
+    static func resolveLanguageConfig(
         explicitLanguage: String? = nil,
         forcedLanguageHints: [String]? = nil
     ) -> CloudLanguageConfig {
@@ -474,7 +482,7 @@ enum AudioSpeechDetector {
         samples.reserveCapacity(bytes.count / 2)
         for index in stride(from: 0, to: bytes.count - 1, by: 2) {
             let bits = UInt16(bytes[index]) | (UInt16(bytes[index + 1]) << 8)
-            samples.append(Float(Int16(bitPattern: bits)) / 32_768)
+            samples.append(Float(Int16(bitPattern: bits)) / 32768)
         }
         return detectSpeech(samples: samples)
     }

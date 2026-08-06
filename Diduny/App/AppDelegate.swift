@@ -613,6 +613,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if appState.meetingRecordingState == .processing,
            appState.meetingRecordingStartTime == nil
         {
+            meetingPipelineTask?.cancel()
             await cancelMeetingRecording()
             return
         }
