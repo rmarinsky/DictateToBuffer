@@ -59,7 +59,6 @@
 		572B04F3977C5BF9A6001B21 /* RecordingDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 741CC380B9BFEAA01C4EC5E4 /* RecordingDetailView.swift */; };
 		57FF194266BABFA6EA107750 /* HTTPLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 622D792451975A00E4A3FCBF /* HTTPLogger.swift */; };
 		5A0F8F3B8BA88EE0B38DCF98 /* ConnectMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 452F045E726DADF6E51D7778 /* ConnectMetrics.swift */; };
-		5A18DAA2CFAE9E95CCA51D24 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 1682C3BCEB8B3B3CE61588C9 /* Supabase */; };
 		5B89431A91667B55380925FB /* MainSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B15385C5553FC7E235C629D0 /* MainSection.swift */; };
 		5C38E65B15A426A3B51A9EEB /* whisper.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = FF35CE111AABBE5F2797242F /* whisper.xcframework */; };
 		62EBB796CFA5A63DB61BA0B6 /* WhisperContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F9F609481B3D9169BF4B1E8 /* WhisperContext.swift */; };

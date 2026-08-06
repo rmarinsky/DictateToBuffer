@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import LaunchAtLogin
 import os
 import SwiftUI
 
@@ -115,6 +116,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let appState = AppState()
 
+    /// Whether this process was started by the system as a login item. Captured
+    /// synchronously in `applicationDidFinishLaunching` — the Apple event that
+    /// carries the flag is only current during that call.
+    private var launchedAtLogin = false
+
     /// Audio level piping to the recording feedback panel
     var audioLevelCancellable: AnyCancellable?
 
@@ -184,6 +190,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_: Notification) {
+        launchedAtLogin = LaunchAtLogin.wasLaunchedAtLogin
+        NSLog("[Diduny] applicationDidFinishLaunching: launchedAtLogin=%d", launchedAtLogin ? 1 : 0)
+
         MainWindowController.shared.configure(appDelegate: self)
         EdgeCommandPanelController.shared.configure(appDelegate: self)
 
@@ -319,12 +328,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Show main window so a Spotlight launch (fresh, app was not running)
         // actually surfaces the UI. Deferred 200 ms to let the window system
-        // settle after all setup above finishes.
+        // settle after all setup above finishes. Login-item launches stay
+        // silent — the app should only appear in the menu bar.
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(200))
-            NSLog("[Diduny] setupAfterOnboarding deferred: isVisible=%d policy=%d",
-                  MainWindowController.shared.isVisible ? 1 : 0, NSApp.activationPolicy().rawValue)
-            if !MainWindowController.shared.isVisible {
+            NSLog("[Diduny] setupAfterOnboarding deferred: isVisible=%d policy=%d launchedAtLogin=%d",
+                  MainWindowController.shared.isVisible ? 1 : 0, NSApp.activationPolicy().rawValue,
+                  launchedAtLogin ? 1 : 0)
+            if !launchedAtLogin, !MainWindowController.shared.isVisible {
                 MainWindowController.shared.showWindow()
             }
         }
@@ -589,7 +600,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if appState.meetingTranslationRecordingState == .processing,
-           appState.meetingTranslationRecordingStartTime == nil {
+           appState.meetingTranslationRecordingStartTime == nil
+        {
             await cancelMeetingTranslationRecording()
             return
         }
@@ -599,7 +611,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if appState.meetingRecordingState == .processing,
-           appState.meetingRecordingStartTime == nil {
+           appState.meetingRecordingStartTime == nil
+        {
             await cancelMeetingRecording()
             return
         }
@@ -609,7 +622,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if appState.translationRecordingState == .processing,
-           appState.translationRecordingStartTime == nil {
+           appState.translationRecordingStartTime == nil
+        {
             await cancelTranslationRecording()
             return
         }
@@ -619,7 +633,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if appState.recordingState == .processing,
-           appState.recordingStartTime == nil {
+           appState.recordingStartTime == nil
+        {
             await cancelRecording()
             return
         }
@@ -835,7 +850,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showRecordingFeedbackInfo(
         message: String,
-        mode: RecordingMode,
+        mode _: RecordingMode,
         duration: TimeInterval = 1.5
     ) {
         DictationOverlayController.shared.showInfo(message: message, duration: duration)
