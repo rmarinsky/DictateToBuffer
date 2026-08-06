@@ -504,6 +504,10 @@ extension AppDelegate {
             }
         }
 
+        // Whether the early library save succeeded (nil when the retention
+        // policy skips saving) — read by the catch paths below.
+        var librarySavedId: UUID?
+
         do {
             guard let audioURL = try await meetingRecorderService.stopRecording() else {
                 throw MeetingRecorderError.recordingFailed
@@ -523,15 +527,20 @@ extension AppDelegate {
             // Save to the library immediately — transcription can take tens of
             // minutes and a cancelled/failed pipeline must never lose the
             // audio. The transcript is attached to this entry when it lands.
-            let librarySavedId = RecordingsLibraryStorage.shared.saveRecording(
+            // The in-progress directory is NOT cleaned up yet: compressedURL
+            // still lives inside it and is read by the jobs fallback below.
+            librarySavedId = RecordingsLibraryStorage.shared.saveRecording(
                 id: recordingId,
                 audioURL: compressedURL,
                 type: .meeting,
                 duration: duration
             )
             if librarySavedId != nil {
-                // Library has taken ownership — remove the in-progress directory (RLR-M1).
-                cleanupInProgressDirectory()
+                RecordingsLibraryStorage.shared.updateRecording(
+                    id: recordingId,
+                    status: .processing,
+                    error: nil
+                )
             }
 
             let realtimeText = await MainActor.run { store?.finalTranscriptText ?? "" }
@@ -554,13 +563,6 @@ extension AppDelegate {
                         )
                 }
                 Log.app.info("No real-time transcript, falling back to async jobs API...")
-                if librarySavedId != nil {
-                    RecordingsLibraryStorage.shared.updateRecording(
-                        id: recordingId,
-                        status: .processing,
-                        error: nil
-                    )
-                }
                 let audioData = try await loadAudioData(from: compressedURL)
                 Log.app.info("Meeting recording size = \(audioData.count) bytes")
 
@@ -687,11 +689,10 @@ extension AppDelegate {
                         error: nil
                     )
                 }
-            } else {
-                // Retention policy skipped the library save — still drop the
-                // in-progress directory now that the pipeline is done with it.
-                cleanupInProgressDirectory()
             }
+            // The pipeline is done reading compressedURL — the in-progress
+            // directory (which contains it) can go now (RLR-M1).
+            cleanupInProgressDirectory()
 
             if SettingsStorage.shared.playSoundOnCompletion {
                 NSSound(named: .init("Funk"))?.play()
@@ -725,13 +726,13 @@ extension AppDelegate {
         } catch {
             Log.app.error("Meeting transcription failed: \(error)")
 
-            let alreadySaved = RecordingsLibraryStorage.shared.recordings.contains { $0.id == recordingId }
-            if alreadySaved {
+            if librarySavedId != nil {
                 RecordingsLibraryStorage.shared.updateRecording(
                     id: recordingId,
                     status: .failed,
                     error: error.localizedDescription
                 )
+                cleanupInProgressDirectory()
                 cleanupTemporaryAudio()
                 RecoveryStateManager.shared.clearState()
             } else if let audioURL = capturedAudioURL {
