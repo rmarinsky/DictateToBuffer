@@ -341,7 +341,29 @@ final class EdgeCommandPanelController: NSObject {
         isTabHidden = false
         model?.isShowingLiveFeedback = false
         model?.isExpanded = false
-        panel?.orderOut(nil)
+        concealPanel()
+    }
+
+    /// Hides the panel by fading it out instead of ordering it out of the
+    /// window list — orderOut drops the visual-effect view's shape mask, and
+    /// the material comes back with square corners on the next show.
+    private func concealPanel() {
+        guard let panel else { return }
+        panel.ignoresMouseEvents = true
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.25
+            panel.animator().alphaValue = 0
+        }
+    }
+
+    private func revealPanelIfConcealed() {
+        guard let panel else { return }
+        panel.ignoresMouseEvents = false
+        guard panel.alphaValue < 1 else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            panel.animator().alphaValue = 1
+        }
     }
 
     private func refreshModel() {
@@ -380,6 +402,7 @@ final class EdgeCommandPanelController: NSObject {
         self.panel = panel
         model?.isShowingLiveFeedback = false
         position(panel, presentation: .collapsed)
+        revealPanelIfConcealed()
         panel.orderFrontRegardless()
         scheduleTabAutoHide()
     }
@@ -392,6 +415,7 @@ final class EdgeCommandPanelController: NSObject {
         self.panel = panel
         model?.isShowingLiveFeedback = false
         position(panel, presentation: commandPresentation)
+        revealPanelIfConcealed()
         panel.orderFrontRegardless()
     }
 
@@ -402,6 +426,7 @@ final class EdgeCommandPanelController: NSObject {
         self.panel = panel
         model?.isShowingLiveFeedback = true
         position(panel, presentation: .live(mode))
+        revealPanelIfConcealed()
         panel.orderFrontRegardless()
     }
 
@@ -437,7 +462,7 @@ final class EdgeCommandPanelController: NSObject {
         guard let panel else { return }
         isTabHidden = true
         hiddenTabScreenFrame = panel.screen?.frame
-        panel.orderOut(nil)
+        concealPanel()
         installEdgeRevealMonitors()
     }
 
@@ -658,6 +683,12 @@ final class EdgeCommandPanelController: NSObject {
         let isExpanded = presentation != .collapsed
         model?.isExpanded = isExpanded
         panelContentView?.setExpanded(isExpanded)
+        // Backstop clip: the SwiftUI material's shape mask can be lost by the
+        // window server; the layer clip keeps expanded corners rounded no
+        // matter what. The collapsed tab keeps its own edge-flush shape.
+        panelContentView?.applyCornerMask(
+            isExpanded ? EdgeCommandPanelPlacement.expandedCornerRadius : 0
+        )
 
         let frame = EdgeCommandPanelPlacement.frame(
             in: visibleFrame,
@@ -760,6 +791,13 @@ private final class EdgeCommandPanelContentView: NSView {
         super.layout()
         tabHostingView.frame = bounds
         expandedHostingView.frame = bounds
+    }
+
+    func applyCornerMask(_ radius: CGFloat) {
+        wantsLayer = true
+        layer?.cornerRadius = radius
+        layer?.cornerCurve = .continuous
+        layer?.masksToBounds = radius > 0
     }
 
     func setExpanded(_ expanded: Bool) {
