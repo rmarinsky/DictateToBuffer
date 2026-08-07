@@ -183,25 +183,53 @@ final class RecordingQueueService {
                 historyKind = provider == .local ? .local : .cloud
                 sourceLanguageCode = nil
             case .translate:
-                let audioData = try await loadAudioData(from: audioURL)
                 let pair = SettingsStorage.shared.resolveTranslationLanguagePair()
                 let targetLanguage: String
-                if let explicitTargetLanguage = item.targetLanguage {
-                    targetLanguage = explicitTargetLanguage
-                    transcript = try await GeneratedTranscript(
-                        text: service.translateAndTranscribe(
-                            audioData: audioData,
-                            targetLanguage: explicitTargetLanguage
+                if provider == .cloud {
+                    // The synchronous POST path rejects large uploads (413) and
+                    // times out on long meetings — cloud translation must go
+                    // through the async jobs API, same as cloud transcription.
+                    let config: [String: Any]
+                    if let explicitTargetLanguage = item.targetLanguage {
+                        targetLanguage = explicitTargetLanguage
+                        config = CloudTranscriptionService.makeOneWayTranslationConfig(
+                            targetLanguage: explicitTargetLanguage,
+                            languageConfig: CloudTranscriptionService.resolveLanguageConfig()
                         )
+                    } else {
+                        targetLanguage = pair.languageB
+                        config = CloudTranscriptionService.makeTwoWayTranslationConfig(
+                            languagePair: pair,
+                            languageConfig: CloudTranscriptionService.resolveLanguageConfig(
+                                forcedLanguageHints: SettingsStorage.shared.translationLanguageHints(for: pair)
+                            )
+                        )
+                    }
+                    transcript = try await transcribeViaJobs(
+                        audioFileURL: audioURL,
+                        config: config,
+                        source: recording.audioFileName,
+                        sourceDurationSeconds: recording.durationSeconds
                     )
                 } else {
-                    targetLanguage = provider == .local ? "en" : pair.languageB
-                    transcript = try await GeneratedTranscript(
-                        text: service.translateAndTranscribe(
-                            audioData: audioData,
-                            languagePair: pair
+                    let audioData = try await loadAudioData(from: audioURL)
+                    if let explicitTargetLanguage = item.targetLanguage {
+                        targetLanguage = explicitTargetLanguage
+                        transcript = try await GeneratedTranscript(
+                            text: service.translateAndTranscribe(
+                                audioData: audioData,
+                                targetLanguage: explicitTargetLanguage
+                            )
                         )
-                    )
+                    } else {
+                        targetLanguage = "en"
+                        transcript = try await GeneratedTranscript(
+                            text: service.translateAndTranscribe(
+                                audioData: audioData,
+                                languagePair: pair
+                            )
+                        )
+                    }
                 }
                 status = .translated
                 translationTargetLanguageCode = targetLanguage
@@ -329,8 +357,8 @@ final class RecordingQueueService {
     private func configuredProvider(for item: QueueItem) -> TranscriptionProvider {
         if item.action == .transcribe,
            RecordingsLibraryStorage.shared.recordings
-            .first(where: { $0.id == item.id })?
-            .requiresLocalTranscription == true
+           .first(where: { $0.id == item.id })?
+           .requiresLocalTranscription == true
         {
             return .local
         }

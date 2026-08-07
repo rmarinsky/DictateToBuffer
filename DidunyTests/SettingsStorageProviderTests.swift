@@ -101,8 +101,10 @@ final class SettingsStorageProviderTests: XCTestCase {
         storedTranslationLanguageA = UserDefaults.standard.object(forKey: translationLanguageAKey)
         storedTranslationLanguageB = UserDefaults.standard.object(forKey: translationLanguageBKey)
         storedTranslationLanguagePairs = UserDefaults.standard.object(forKey: translationLanguagePairsKey)
-        storedDefaultTranslationLanguagePairID = UserDefaults.standard.object(forKey: defaultTranslationLanguagePairIDKey)
-        storedLastUsedTranslationLanguagePairID = UserDefaults.standard.object(forKey: lastUsedTranslationLanguagePairIDKey)
+        storedDefaultTranslationLanguagePairID = UserDefaults.standard
+            .object(forKey: defaultTranslationLanguagePairIDKey)
+        storedLastUsedTranslationLanguagePairID = UserDefaults.standard
+            .object(forKey: lastUsedTranslationLanguagePairIDKey)
         storedTranslationTargetLanguages = UserDefaults.standard.object(forKey: translationTargetLanguagesKey)
         storedVoiceTranslationTargetLanguage = UserDefaults.standard.object(forKey: voiceTranslationTargetLanguageKey)
         storedTextTranslationSourceLanguage = UserDefaults.standard.object(forKey: textTranslationSourceLanguageKey)
@@ -352,6 +354,13 @@ final class SettingsStorageProviderTests: XCTestCase {
         XCTAssertEqual(translation?["type"] as? String, "two_way")
         XCTAssertEqual(translation?["language_a"] as? String, "en")
         XCTAssertEqual(translation?["language_b"] as? String, "uk")
+    }
+
+    func test_resolveLanguageConfig_trimsForcedHintsAndTreatsThemAsStrict() {
+        let config = CloudTranscriptionService.resolveLanguageConfig(forcedLanguageHints: [" pl ", "", "en"])
+
+        XCTAssertEqual(config.hints, ["pl", "en"])
+        XCTAssertTrue(config.strict)
     }
 
     func test_realtimeTranslationConfig_includesTwoWayPayloadAndStrictLanguageHints() {

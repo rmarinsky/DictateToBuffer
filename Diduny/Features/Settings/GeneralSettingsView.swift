@@ -5,6 +5,7 @@ struct GeneralSettingsView: View {
     @State private var autoPaste = SettingsStorage.shared.autoPaste
     @State private var playSound = SettingsStorage.shared.playSoundOnCompletion
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
+    @State private var recordingFeedbackSurface = SettingsStorage.shared.recordingFeedbackSurface
     @State private var typingSpeedWordsPerMinute = SettingsStorage.shared.typingSpeedWordsPerMinute
     @State private var screenRecordingPromptEnabled = !SettingsStorage.shared.userDeclinedScreenRecording
     @State private var dictationRetention = SettingsStorage.shared.dictationTranslationHistoryRetentionPolicy
@@ -13,6 +14,7 @@ struct GeneralSettingsView: View {
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
     }
+
     private var buildNumber: String {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
     }
@@ -35,8 +37,23 @@ struct GeneralSettingsView: View {
                         LaunchAtLogin.isEnabled = newValue
                     }
 
+                Picker("Recording feedback", selection: $recordingFeedbackSurface) {
+                    ForEach(RecordingFeedbackSurface.allCases) { surface in
+                        Text(surface.displayName).tag(surface)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: recordingFeedbackSurface) { _, newValue in
+                    SettingsStorage.shared.recordingFeedbackSurface = newValue
+                    EdgeCommandPanelController.shared.applySurfacePreference()
+                }
+
             } header: {
                 Text("Behavior")
+            } footer: {
+                Text(
+                    "Dynamic Notch shows a compact indicator without the live transcript; Floating modal shows the transcript as you speak."
+                )
             }
 
             Section {
@@ -86,7 +103,9 @@ struct GeneralSettingsView: View {
             } header: {
                 Text("History & Storage")
             } footer: {
-                Text("Choose how long Diduny keeps recordings in the library. Meeting recordings remain available under Recordings while Meetings is in beta.")
+                Text(
+                    "Choose how long Diduny keeps recordings in the library. Meeting recordings remain available under Recordings while Meetings is in beta."
+                )
             }
 
             Section {
@@ -98,7 +117,9 @@ struct GeneralSettingsView: View {
             } header: {
                 Text("Onboarding")
             } footer: {
-                Text("When enabled, Diduny will prompt you to grant Screen Recording permission on next launch if it is not yet granted.")
+                Text(
+                    "When enabled, Diduny will prompt you to grant Screen Recording permission on next launch if it is not yet granted."
+                )
             }
 
             Section {
@@ -146,6 +167,7 @@ struct GeneralSettingsView: View {
         .formStyle(.grouped)
         .onAppear {
             launchAtLogin = LaunchAtLogin.isEnabled
+            recordingFeedbackSurface = SettingsStorage.shared.recordingFeedbackSurface
             typingSpeedWordsPerMinute = SettingsStorage.shared.typingSpeedWordsPerMinute
             screenRecordingPromptEnabled = !SettingsStorage.shared.userDeclinedScreenRecording
             dictationRetention = SettingsStorage.shared.dictationTranslationHistoryRetentionPolicy
