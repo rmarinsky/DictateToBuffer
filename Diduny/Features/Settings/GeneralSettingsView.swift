@@ -45,6 +45,7 @@ struct GeneralSettingsView: View {
                 .pickerStyle(.segmented)
                 .onChange(of: recordingFeedbackSurface) { _, newValue in
                     SettingsStorage.shared.recordingFeedbackSurface = newValue
+                    EdgeCommandPanelController.shared.applySurfacePreference()
                 }
 
             } header: {

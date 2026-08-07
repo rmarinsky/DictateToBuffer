@@ -176,11 +176,45 @@ enum EdgeCommandPanelPlacement {
     {
         min(max(offset - length / 2, minimum), maximum - length)
     }
+
+    /// Whether a pointer location counts as touching the given screen edge —
+    /// the reveal gesture for an auto-hidden tab (same idea as the Dock).
+    static func edgeHotZoneContains(
+        _ location: NSPoint,
+        screenFrame: NSRect,
+        edge: EdgeCommandPanelDockEdge,
+        threshold: CGFloat = 2
+    ) -> Bool {
+        guard NSMouseInRect(location, screenFrame, false) else { return false }
+        return switch edge {
+        case .left: location.x <= screenFrame.minX + threshold
+        case .right: location.x >= screenFrame.maxX - threshold
+        case .top: location.y >= screenFrame.maxY - threshold
+        case .bottom: location.y <= screenFrame.minY + threshold
+        }
+    }
 }
 
 enum EdgeCommandPanelHoverPolicy {
     static func shouldCollapse(pointer: NSPoint, panelFrame: NSRect, isDragging: Bool) -> Bool {
         !isDragging && !panelFrame.contains(pointer)
+    }
+}
+
+/// The collapsed edge tab auto-hides after a few idle seconds (it annoys
+/// people when it sits on the screen edge permanently). It must never hide
+/// under the pointer, mid-drag, or while the panel is doing actual work.
+enum EdgeCommandPanelAutoHidePolicy {
+    static let delay: TimeInterval = 3
+
+    static func shouldHide(
+        pointer: NSPoint,
+        panelFrame: NSRect,
+        isDragging: Bool,
+        isExpanded: Bool,
+        isShowingLiveFeedback: Bool
+    ) -> Bool {
+        !isDragging && !isExpanded && !isShowingLiveFeedback && !panelFrame.contains(pointer)
     }
 }
 
@@ -267,6 +301,14 @@ final class EdgeCommandPanelController: NSObject {
     private var dock: EdgeCommandPanelDock?
     private var dragCursorOffset: NSPoint?
 
+    // Collapsed-tab auto-hide state (the tab annoys people when it sits on
+    // the screen edge permanently).
+    private var tabAutoHideTask: Task<Void, Never>?
+    private var edgeRevealGlobalMonitor: Any?
+    private var edgeRevealLocalMonitor: Any?
+    private var isTabHidden = false
+    private var hiddenTabScreenFrame: NSRect?
+
     override private init() {
         super.init()
     }
@@ -274,7 +316,32 @@ final class EdgeCommandPanelController: NSObject {
     func configure(appDelegate: AppDelegate) {
         self.appDelegate = appDelegate
         refreshModel()
-        showCollapsed()
+        applySurfacePreference()
+    }
+
+    /// The edge panel exists only for the Floating modal surface. In Dynamic
+    /// Notch mode nothing of it may be on screen — feedback lives in the
+    /// notch. Called at launch and whenever the Settings picker changes.
+    func applySurfacePreference() {
+        if SettingsStorage.shared.recordingFeedbackSurface == .notch {
+            // An active live-feedback session finishes on the panel (the
+            // router snapshots the surface per session) — hide right after,
+            // via dismissLiveFeedback → showCollapsed's notch guard.
+            guard model?.isShowingLiveFeedback != true else { return }
+            hidePanelForNotchMode()
+        } else {
+            showCollapsed()
+        }
+    }
+
+    private func hidePanelForNotchMode() {
+        collapseTask?.cancel()
+        tabAutoHideTask?.cancel()
+        removeEdgeRevealMonitors()
+        isTabHidden = false
+        model?.isShowingLiveFeedback = false
+        model?.isExpanded = false
+        panel?.orderOut(nil)
     }
 
     private func refreshModel() {
@@ -302,16 +369,24 @@ final class EdgeCommandPanelController: NSObject {
     }
 
     private func showCollapsed() {
+        // In notch mode the panel must never surface, whatever path led here.
+        guard SettingsStorage.shared.recordingFeedbackSurface != .notch else {
+            hidePanelForNotchMode()
+            return
+        }
         collapseTask?.cancel()
+        cancelTabAutoHide()
         let panel = panel ?? makePanel()
         self.panel = panel
         model?.isShowingLiveFeedback = false
         position(panel, presentation: .collapsed)
         panel.orderFrontRegardless()
+        scheduleTabAutoHide()
     }
 
     private func showExpanded() {
         collapseTask?.cancel()
+        cancelTabAutoHide()
         refreshModel()
         let panel = panel ?? makePanel()
         self.panel = panel
@@ -322,11 +397,87 @@ final class EdgeCommandPanelController: NSObject {
 
     func showLiveFeedback(mode: RecordingMode) {
         collapseTask?.cancel()
+        cancelTabAutoHide()
         let panel = panel ?? makePanel()
         self.panel = panel
         model?.isShowingLiveFeedback = true
         position(panel, presentation: .live(mode))
         panel.orderFrontRegardless()
+    }
+
+    // MARK: - Collapsed-tab auto-hide
+
+    private func cancelTabAutoHide() {
+        tabAutoHideTask?.cancel()
+        removeEdgeRevealMonitors()
+        isTabHidden = false
+    }
+
+    private func scheduleTabAutoHide() {
+        tabAutoHideTask?.cancel()
+        tabAutoHideTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(EdgeCommandPanelAutoHidePolicy.delay))
+            guard !Task.isCancelled, let self, let panel else { return }
+            guard EdgeCommandPanelAutoHidePolicy.shouldHide(
+                pointer: NSEvent.mouseLocation,
+                panelFrame: panel.frame,
+                isDragging: dragCursorOffset != nil,
+                isExpanded: model?.isExpanded == true,
+                isShowingLiveFeedback: model?.isShowingLiveFeedback == true
+            ) else {
+                // Busy or hovered — try again after another idle interval.
+                scheduleTabAutoHide()
+                return
+            }
+            hideTab()
+        }
+    }
+
+    private func hideTab() {
+        guard let panel else { return }
+        isTabHidden = true
+        hiddenTabScreenFrame = panel.screen?.frame
+        panel.orderOut(nil)
+        installEdgeRevealMonitors()
+    }
+
+    private func revealTabIfPointerAtEdge(_ location: NSPoint) {
+        guard isTabHidden else { return }
+        let screenFrame = hiddenTabScreenFrame
+            ?? NSScreen.screens.first(where: { NSMouseInRect(location, $0.frame, false) })?.frame
+        guard let screenFrame else { return }
+        guard EdgeCommandPanelPlacement.edgeHotZoneContains(
+            location,
+            screenFrame: screenFrame,
+            edge: dock?.edge ?? .right
+        ) else { return }
+        showCollapsed()
+    }
+
+    private func installEdgeRevealMonitors() {
+        guard edgeRevealGlobalMonitor == nil else { return }
+        edgeRevealGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.revealTabIfPointerAtEdge(NSEvent.mouseLocation)
+            }
+        }
+        edgeRevealLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
+            Task { @MainActor [weak self] in
+                self?.revealTabIfPointerAtEdge(NSEvent.mouseLocation)
+            }
+            return event
+        }
+    }
+
+    private func removeEdgeRevealMonitors() {
+        if let edgeRevealGlobalMonitor {
+            NSEvent.removeMonitor(edgeRevealGlobalMonitor)
+            self.edgeRevealGlobalMonitor = nil
+        }
+        if let edgeRevealLocalMonitor {
+            NSEvent.removeMonitor(edgeRevealLocalMonitor)
+            self.edgeRevealLocalMonitor = nil
+        }
     }
 
     func dismissLiveFeedback() {
@@ -338,6 +489,7 @@ final class EdgeCommandPanelController: NSObject {
         guard model?.isShowingLiveFeedback != true else { return }
         if hovering {
             collapseTask?.cancel()
+            tabAutoHideTask?.cancel()
             guard model?.isExpanded != true else { return }
             showExpanded()
         } else {
@@ -378,6 +530,9 @@ final class EdgeCommandPanelController: NSObject {
         SettingsStorage.shared.edgePanelDockEdge = newDock.edge.rawValue
         SettingsStorage.shared.edgePanelDockOffset = Double(newDock.offset)
         position(panel, presentation: currentPresentation, on: visibleFrame)
+        if currentPresentation == .collapsed {
+            scheduleTabAutoHide()
+        }
     }
 
     private func perform(_ action: EdgeCommandAction) {

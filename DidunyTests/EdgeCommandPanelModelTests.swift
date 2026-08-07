@@ -175,6 +175,59 @@ struct EdgeCommandPanelModelTests {
         #expect(EdgeCommandPanelDock(rawEdge: nil, offset: 100) == nil)
         #expect(EdgeCommandPanelDock(rawEdge: "top", offset: nil) == nil)
     }
+
+    @Test("The collapsed tab auto-hides only when idle and untouched")
+    func tabAutoHidesOnlyWhenIdleAndUntouched() {
+        let panelFrame = NSRect(x: 1426, y: 418, width: 14, height: 64)
+        let outside = NSPoint(x: 700, y: 400)
+        let inside = NSPoint(x: 1430, y: 440)
+
+        #expect(EdgeCommandPanelAutoHidePolicy.shouldHide(
+            pointer: outside, panelFrame: panelFrame,
+            isDragging: false, isExpanded: false, isShowingLiveFeedback: false
+        ))
+        #expect(!EdgeCommandPanelAutoHidePolicy.shouldHide(
+            pointer: inside, panelFrame: panelFrame,
+            isDragging: false, isExpanded: false, isShowingLiveFeedback: false
+        ))
+        #expect(!EdgeCommandPanelAutoHidePolicy.shouldHide(
+            pointer: outside, panelFrame: panelFrame,
+            isDragging: true, isExpanded: false, isShowingLiveFeedback: false
+        ))
+        #expect(!EdgeCommandPanelAutoHidePolicy.shouldHide(
+            pointer: outside, panelFrame: panelFrame,
+            isDragging: false, isExpanded: true, isShowingLiveFeedback: false
+        ))
+        #expect(!EdgeCommandPanelAutoHidePolicy.shouldHide(
+            pointer: outside, panelFrame: panelFrame,
+            isDragging: false, isExpanded: false, isShowingLiveFeedback: true
+        ))
+    }
+
+    @Test("A hidden tab reveals when the pointer touches the docked screen edge")
+    func hiddenTabRevealsAtDockedEdge() {
+        let screenFrame = NSRect(x: 0, y: 0, width: 1440, height: 900)
+
+        #expect(EdgeCommandPanelPlacement.edgeHotZoneContains(
+            NSPoint(x: 1439, y: 500), screenFrame: screenFrame, edge: .right
+        ))
+        #expect(!EdgeCommandPanelPlacement.edgeHotZoneContains(
+            NSPoint(x: 1400, y: 500), screenFrame: screenFrame, edge: .right
+        ))
+        #expect(EdgeCommandPanelPlacement.edgeHotZoneContains(
+            NSPoint(x: 1, y: 500), screenFrame: screenFrame, edge: .left
+        ))
+        #expect(EdgeCommandPanelPlacement.edgeHotZoneContains(
+            NSPoint(x: 700, y: 899), screenFrame: screenFrame, edge: .top
+        ))
+        #expect(EdgeCommandPanelPlacement.edgeHotZoneContains(
+            NSPoint(x: 700, y: 1), screenFrame: screenFrame, edge: .bottom
+        ))
+        // A point on another screen's edge line but outside this screen is ignored.
+        #expect(!EdgeCommandPanelPlacement.edgeHotZoneContains(
+            NSPoint(x: 1439, y: 1200), screenFrame: screenFrame, edge: .right
+        ))
+    }
 }
 
 @MainActor
