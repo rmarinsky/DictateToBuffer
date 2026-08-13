@@ -1,0 +1,184 @@
+import AppKit
+import DynamicNotchKit
+import Observation
+import SwiftUI
+
+enum NotchState: Equatable {
+    case idle
+    case recording(mode: RecordingMode)
+    case processing(mode: RecordingMode)
+    case success(text: String)
+    case error(message: String)
+    case info(message: String)
+}
+
+@Observable
+@MainActor
+final class NotchManager {
+    static let shared = NotchManager()
+
+    private(set) var state: NotchState = .idle
+    private(set) var recordingStartTime: Date?
+    var audioLevel: Float = 0
+
+    private var notch: DynamicNotch<NotchExpandedView, NotchCompactLeadingView, NotchCompactTrailingView>?
+    private var autoDismissTask: Task<Void, Never>?
+    private var notchTransitionTask: Task<Void, Never>?
+    private var onStopRequested: (@MainActor () async -> Void)?
+    private var operationSequence: UInt64 = 0
+
+    private init() {}
+
+    func startRecording(mode: RecordingMode = .voice) {
+        recordingStartTime = Date()
+        resumeRecording(mode: mode)
+    }
+
+    func resumeRecording(mode: RecordingMode = .voice) {
+        autoDismissTask?.cancel()
+        state = .recording(mode: mode)
+        showCompact()
+    }
+
+    func startProcessing(mode: RecordingMode = .voice) {
+        autoDismissTask?.cancel()
+        recordingStartTime = nil
+        audioLevel = 0
+        state = .processing(mode: mode)
+        showCompact()
+    }
+
+    func showSuccess(text: String) {
+        autoDismissTask?.cancel()
+        recordingStartTime = nil
+        audioLevel = 0
+        state = .success(text: text)
+        showExpanded()
+        scheduleAutoDismiss(delay: 2.0)
+    }
+
+    func showError(message: String) {
+        autoDismissTask?.cancel()
+        recordingStartTime = nil
+        audioLevel = 0
+        state = .error(message: message)
+        showExpanded()
+        scheduleAutoDismiss(delay: 3.0)
+    }
+
+    func showInfo(message: String, duration: TimeInterval = 1.5) {
+        autoDismissTask?.cancel()
+        state = .info(message: message)
+        showExpanded()
+        scheduleAutoDismiss(delay: duration)
+    }
+
+    /// Show info message during active recording, then auto-restore recording UI with preserved timer.
+    func showInfoDuringRecording(message: String, mode: RecordingMode, duration: TimeInterval = 1.5) {
+        autoDismissTask?.cancel()
+        let savedStartTime = recordingStartTime
+        state = .info(message: message)
+        showExpanded()
+        autoDismissTask = Task {
+            try? await Task.sleep(for: .seconds(duration))
+            guard !Task.isCancelled else { return }
+            recordingStartTime = savedStartTime
+            state = .recording(mode: mode)
+            showCompact()
+        }
+    }
+
+    func hide() {
+        autoDismissTask?.cancel()
+        recordingStartTime = nil
+        audioLevel = 0
+        state = .idle
+        operationSequence &+= 1
+        let seq = operationSequence
+        runNotchTransition(sequence: seq) {
+            await self.notch?.hide()
+        }
+    }
+
+    func setStopHandler(_ handler: (@MainActor () async -> Void)?) {
+        onStopRequested = handler
+    }
+
+    func requestStopActiveRecording() {
+        guard case .recording = state else { return }
+        guard let onStopRequested else { return }
+        Task { @MainActor in
+            await onStopRequested()
+        }
+    }
+
+    private func ensureNotch() {
+        if notch == nil {
+            notch = DynamicNotch {
+                NotchExpandedView(manager: self)
+            } compactLeading: {
+                NotchCompactLeadingView(manager: self)
+            } compactTrailing: {
+                NotchCompactTrailingView(manager: self)
+            }
+        }
+    }
+
+    private func activeScreen() -> NSScreen? {
+        let mouseLocation = NSEvent.mouseLocation
+        if let mouseScreen = NSScreen.screens.first(where: { NSMouseInRect(mouseLocation, $0.frame, false) }) {
+            return mouseScreen
+        }
+
+        return NSScreen.main ?? NSScreen.screens.first
+    }
+
+    private func screenHasNotch(_ screen: NSScreen) -> Bool {
+        screen.auxiliaryTopLeftArea != nil && screen.auxiliaryTopRightArea != nil
+    }
+
+    private func showCompact() {
+        ensureNotch()
+        guard let screen = activeScreen() else { return }
+
+        operationSequence &+= 1
+        let seq = operationSequence
+        runNotchTransition(sequence: seq) {
+            if self.screenHasNotch(screen) {
+                await self.notch?.compact(on: screen)
+            } else {
+                await self.notch?.expand(on: screen)
+            }
+        }
+    }
+
+    private func showExpanded() {
+        ensureNotch()
+        guard let screen = activeScreen() else { return }
+        operationSequence &+= 1
+        let seq = operationSequence
+        runNotchTransition(sequence: seq) {
+            await self.notch?.expand(on: screen)
+        }
+    }
+
+    private func runNotchTransition(
+        sequence: UInt64,
+        operation: @escaping @MainActor () async -> Void
+    ) {
+        let previousTask = notchTransitionTask
+        notchTransitionTask = Task { @MainActor in
+            await previousTask?.value
+            guard self.operationSequence == sequence else { return }
+            await operation()
+        }
+    }
+
+    private func scheduleAutoDismiss(delay: TimeInterval) {
+        autoDismissTask = Task {
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            hide()
+        }
+    }
+}

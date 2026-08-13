@@ -90,6 +90,7 @@ final class SettingsStorage {
         case autoPaste
         case playSoundOnCompletion
         case launchAtLogin
+        case recordingFeedbackSurface
         case typingSpeedWordsPerMinute
         case pushToTalkKey
         case pushToTalkHoldEnabled
@@ -144,6 +145,8 @@ final class SettingsStorage {
         case userDeclinedScreenRecording
         case selectedBrowserSessionID
         case selectedChromeProfileID
+        case edgePanelDockEdge
+        case edgePanelDockOffset
         case remoteMediaRightsAcknowledged
     }
 
@@ -286,6 +289,30 @@ final class SettingsStorage {
         }
     }
 
+    /// Persisted edge-command-panel dock (raw edge name + offset along that
+    /// edge) so a dragged panel keeps its place across restarts.
+    var edgePanelDockEdge: String? {
+        get { defaults.string(forKey: Key.edgePanelDockEdge.rawValue) }
+        set {
+            if let newValue {
+                defaults.set(newValue, forKey: Key.edgePanelDockEdge.rawValue)
+            } else {
+                defaults.removeObject(forKey: Key.edgePanelDockEdge.rawValue)
+            }
+        }
+    }
+
+    var edgePanelDockOffset: Double? {
+        get { defaults.object(forKey: Key.edgePanelDockOffset.rawValue) as? Double }
+        set {
+            if let newValue {
+                defaults.set(newValue, forKey: Key.edgePanelDockOffset.rawValue)
+            } else {
+                defaults.removeObject(forKey: Key.edgePanelDockOffset.rawValue)
+            }
+        }
+    }
+
     var selectedBrowserSessionID: String? {
         get { defaults.string(forKey: Key.selectedBrowserSessionID.rawValue) }
         set {
@@ -305,6 +332,18 @@ final class SettingsStorage {
     var launchAtLogin: Bool {
         get { LaunchAtLogin.isEnabled }
         set { LaunchAtLogin.isEnabled = newValue }
+    }
+
+    var recordingFeedbackSurface: RecordingFeedbackSurface {
+        get {
+            guard let rawValue = defaults.string(forKey: Key.recordingFeedbackSurface.rawValue),
+                  let surface = RecordingFeedbackSurface(rawValue: rawValue)
+            else {
+                return .compactPanel
+            }
+            return surface
+        }
+        set { defaults.set(newValue.rawValue, forKey: Key.recordingFeedbackSurface.rawValue) }
     }
 
     var typingSpeedWordsPerMinute: Double {

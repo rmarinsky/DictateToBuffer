@@ -1,6 +1,6 @@
 import AppKit
-import Testing
 @testable import Diduny
+import Testing
 
 @MainActor
 struct EdgeCommandPanelModelTests {
@@ -100,11 +100,19 @@ struct EdgeCommandPanelModelTests {
 
         #expect(EdgeCommandPanelPlacement.frame(in: visibleFrame, dock: rightDock, presentation: .collapsed)
             == NSRect(x: 1426, y: 418, width: 14, height: 64))
-        #expect(EdgeCommandPanelPlacement.frame(in: visibleFrame, dock: rightDock, presentation: .commands(isCloud: true))
+        #expect(EdgeCommandPanelPlacement.frame(
+            in: visibleFrame,
+            dock: rightDock,
+            presentation: .commands(isCloud: true)
+        )
             == NSRect(x: 1154, y: 287, width: 286, height: 326))
         #expect(EdgeCommandPanelPlacement.frame(in: visibleFrame, dock: bottomDock, presentation: .collapsed)
             == NSRect(x: 688, y: 0, width: 64, height: 14))
-        #expect(EdgeCommandPanelPlacement.frame(in: visibleFrame, dock: bottomDock, presentation: .commands(isCloud: true))
+        #expect(EdgeCommandPanelPlacement.frame(
+            in: visibleFrame,
+            dock: bottomDock,
+            presentation: .commands(isCloud: true)
+        )
             == NSRect(x: 577, y: 0, width: 286, height: 326))
     }
 
@@ -157,6 +165,69 @@ struct EdgeCommandPanelModelTests {
             isDragging: false
         ))
     }
+
+    @Test("A persisted dock position restores across app restarts")
+    func dockRestoresFromPersistedRawValues() {
+        let saved = EdgeCommandPanelDock(edge: .left, offset: 321)
+
+        #expect(EdgeCommandPanelDock(rawEdge: saved.edge.rawValue, offset: Double(saved.offset)) == saved)
+        #expect(EdgeCommandPanelDock(rawEdge: "diagonal", offset: 100) == nil)
+        #expect(EdgeCommandPanelDock(rawEdge: nil, offset: 100) == nil)
+        #expect(EdgeCommandPanelDock(rawEdge: "top", offset: nil) == nil)
+    }
+
+    @Test("The collapsed tab auto-hides only when idle and untouched")
+    func tabAutoHidesOnlyWhenIdleAndUntouched() {
+        let panelFrame = NSRect(x: 1426, y: 418, width: 14, height: 64)
+        let outside = NSPoint(x: 700, y: 400)
+        let inside = NSPoint(x: 1430, y: 440)
+
+        #expect(EdgeCommandPanelAutoHidePolicy.shouldHide(
+            pointer: outside, panelFrame: panelFrame,
+            isDragging: false, isExpanded: false, isShowingLiveFeedback: false
+        ))
+        #expect(!EdgeCommandPanelAutoHidePolicy.shouldHide(
+            pointer: inside, panelFrame: panelFrame,
+            isDragging: false, isExpanded: false, isShowingLiveFeedback: false
+        ))
+        #expect(!EdgeCommandPanelAutoHidePolicy.shouldHide(
+            pointer: outside, panelFrame: panelFrame,
+            isDragging: true, isExpanded: false, isShowingLiveFeedback: false
+        ))
+        #expect(!EdgeCommandPanelAutoHidePolicy.shouldHide(
+            pointer: outside, panelFrame: panelFrame,
+            isDragging: false, isExpanded: true, isShowingLiveFeedback: false
+        ))
+        #expect(!EdgeCommandPanelAutoHidePolicy.shouldHide(
+            pointer: outside, panelFrame: panelFrame,
+            isDragging: false, isExpanded: false, isShowingLiveFeedback: true
+        ))
+    }
+
+    @Test("A hidden tab reveals when the pointer touches the docked screen edge")
+    func hiddenTabRevealsAtDockedEdge() {
+        let screenFrame = NSRect(x: 0, y: 0, width: 1440, height: 900)
+
+        #expect(EdgeCommandPanelPlacement.edgeHotZoneContains(
+            NSPoint(x: 1439, y: 500), screenFrame: screenFrame, edge: .right
+        ))
+        #expect(!EdgeCommandPanelPlacement.edgeHotZoneContains(
+            NSPoint(x: 1400, y: 500), screenFrame: screenFrame, edge: .right
+        ))
+        #expect(EdgeCommandPanelPlacement.edgeHotZoneContains(
+            NSPoint(x: 1, y: 500), screenFrame: screenFrame, edge: .left
+        ))
+        #expect(EdgeCommandPanelPlacement.edgeHotZoneContains(
+            NSPoint(x: 700, y: 899), screenFrame: screenFrame, edge: .top
+        ))
+        #expect(EdgeCommandPanelPlacement.edgeHotZoneContains(
+            NSPoint(x: 700, y: 1), screenFrame: screenFrame, edge: .bottom
+        ))
+        // A point on another screen's edge line but outside this screen is ignored.
+        #expect(!EdgeCommandPanelPlacement.edgeHotZoneContains(
+            NSPoint(x: 1439, y: 1200), screenFrame: screenFrame, edge: .right
+        ))
+    }
 }
 
 @MainActor
@@ -207,15 +278,15 @@ struct EdgeCommandPanelLiveTextTests {
         store.reset(mode: .meeting)
 
         store.processTokens([
-            RealtimeToken(text: "Hello", isFinal: true, speaker: "1", startMs: 1_200),
-            RealtimeToken(text: "Hi", isFinal: true, speaker: "2", startMs: 65_000)
+            RealtimeToken(text: "Hello", isFinal: true, speaker: "1", startMs: 1200),
+            RealtimeToken(text: "Hi", isFinal: true, speaker: "2", startMs: 65000)
         ])
 
         #expect(store.displayText.contains("[00:01] Speaker 1: Hello"))
         #expect(store.displayText.contains("[01:05] Speaker 2: Hi"))
 
         store.processTokens([
-            RealtimeToken(text: "Still speaking", isFinal: false, speaker: "2", startMs: 66_000)
+            RealtimeToken(text: "Still speaking", isFinal: false, speaker: "2", startMs: 66000)
         ])
 
         #expect(store.displayText.contains("Still speaking"))
@@ -227,11 +298,11 @@ struct EdgeCommandPanelLiveTextTests {
         store.reset(mode: .meeting)
 
         store.processTokens([
-            RealtimeToken(text: "First phrase", isFinal: true, speaker: "1", startMs: 1_000)
+            RealtimeToken(text: "First phrase", isFinal: true, speaker: "1", startMs: 1000)
         ])
         store.markSegmentBoundary()
         store.processTokens([
-            RealtimeToken(text: "Second phrase", isFinal: true, speaker: "1", startMs: 8_000)
+            RealtimeToken(text: "Second phrase", isFinal: true, speaker: "1", startMs: 8000)
         ])
 
         #expect(store.displayText.contains("[00:01] Speaker 1: First phrase"))

@@ -8,6 +8,19 @@ final class DictationOverlayController {
     private var autoHideTask: Task<Void, Never>?
     private var onStopRequested: (@MainActor () async -> Void)?
 
+    /// Surface captured when a feedback session starts. A recording finishes
+    /// on the surface it started on even if the setting flips mid-recording;
+    /// the new choice applies from the next session.
+    private var activeSurface: RecordingFeedbackSurface?
+
+    private var currentSurface: RecordingFeedbackSurface {
+        activeSurface ?? SettingsStorage.shared.recordingFeedbackSurface
+    }
+
+    private var usesNotch: Bool {
+        currentSurface == .notch
+    }
+
     private init() {}
 
     func setStopHandler(_ handler: (@MainActor () async -> Void)?) {
@@ -16,18 +29,28 @@ final class DictationOverlayController {
 
     func begin(mode: RecordingMode) {
         autoHideTask?.cancel()
+        beginSurfaceSession()
         store.reset(mode: mode)
         store.phase = .starting
-        showPanel()
+        if usesNotch {
+            NotchManager.shared.resumeRecording(mode: mode)
+        } else {
+            showPanel()
+        }
     }
 
     func startRecording(mode: RecordingMode) {
         autoHideTask?.cancel()
+        beginSurfaceSession()
         if store.mode != mode {
             store.reset(mode: mode)
         }
         store.phase = .recording
-        showPanel()
+        if usesNotch {
+            NotchManager.shared.startRecording(mode: mode)
+        } else {
+            showPanel()
+        }
     }
 
     func startFinalizing(mode: RecordingMode) {
@@ -37,7 +60,11 @@ final class DictationOverlayController {
         }
         store.phase = .finalizing
         store.audioLevel = 0
-        showPanel()
+        if usesNotch {
+            NotchManager.shared.startProcessing(mode: mode)
+        } else {
+            showPanel()
+        }
     }
 
     func startProcessing(mode: RecordingMode) {
@@ -47,7 +74,11 @@ final class DictationOverlayController {
         }
         store.phase = .processing
         store.audioLevel = 0
-        showPanel()
+        if usesNotch {
+            NotchManager.shared.startProcessing(mode: mode)
+        } else {
+            showPanel()
+        }
     }
 
     func showSuccess(text: String) {
@@ -58,6 +89,12 @@ final class DictationOverlayController {
         }
         store.phase = .pasted
         store.audioLevel = 0
+        if usesNotch {
+            // The notch schedules its own dismissal and ends the session.
+            NotchManager.shared.showSuccess(text: text)
+            endSurfaceSession()
+            return
+        }
         showPanel()
         if SettingsStorage.shared.autoPaste {
             scheduleAutoHide(delay: 0.8)
@@ -68,6 +105,11 @@ final class DictationOverlayController {
         autoHideTask?.cancel()
         store.phase = .error(message)
         store.audioLevel = 0
+        if usesNotch {
+            NotchManager.shared.showError(message: message)
+            endSurfaceSession()
+            return
+        }
         showPanel()
         scheduleAutoHide(delay: 3.0)
     }
@@ -76,11 +118,20 @@ final class DictationOverlayController {
         autoHideTask?.cancel()
         store.phase = .info(message)
         store.audioLevel = 0
+        if usesNotch {
+            NotchManager.shared.showInfo(message: message, duration: duration)
+            endSurfaceSession()
+            return
+        }
         showPanel()
         scheduleAutoHide(delay: duration)
     }
 
     func showInfoDuringRecording(message: String, mode: RecordingMode, duration: TimeInterval = 1.5) {
+        if usesNotch {
+            NotchManager.shared.showInfoDuringRecording(message: message, mode: mode, duration: duration)
+            return
+        }
         autoHideTask?.cancel()
         let savedPhase = store.phase
         let savedStart = store.startedAt
@@ -100,7 +151,7 @@ final class DictationOverlayController {
     }
 
     func hide() {
-        guard store.phase != .pasted || SettingsStorage.shared.autoPaste else { return }
+        guard usesNotch || store.phase != .pasted || SettingsStorage.shared.autoPaste else { return }
         dismiss()
     }
 
@@ -108,24 +159,50 @@ final class DictationOverlayController {
         autoHideTask?.cancel()
         autoHideTask = nil
         store.audioLevel = 0
+        if usesNotch {
+            NotchManager.shared.hide()
+        }
+        // Always release the panel's live presentation too — it no-ops when
+        // not shown, and covers a surface flip that happened mid-recording.
         EdgeCommandPanelController.shared.dismissLiveFeedback()
+        endSurfaceSession()
     }
 
     func updateAudioLevel(_ level: Float) {
-        store.audioLevel = max(0, min(level, 1))
+        let clamped = max(0, min(level, 1))
+        if usesNotch {
+            NotchManager.shared.audioLevel = clamped
+        } else {
+            store.audioLevel = clamped
+        }
     }
 
     func processTokens(_ tokens: [RealtimeToken]) {
+        // The notch deliberately shows no live transcript — skip the token
+        // pipeline entirely so it doesn't burn CPU with no UI attached.
+        guard !usesNotch else { return }
         guard !tokens.isEmpty else { return }
         store.processTokens(tokens)
     }
 
     func markSegmentBoundary() {
+        guard !usesNotch else { return }
         store.markSegmentBoundary()
     }
 
     func updateConnectionStatus(_ status: RealtimeConnectionStatus) {
+        guard !usesNotch else { return }
         store.connectionStatus = status
+    }
+
+    private func beginSurfaceSession() {
+        if activeSurface == nil {
+            activeSurface = SettingsStorage.shared.recordingFeedbackSurface
+        }
+    }
+
+    private func endSurfaceSession() {
+        activeSurface = nil
     }
 
     func copyCurrentTranscript() {

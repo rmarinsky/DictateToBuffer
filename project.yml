@@ -9,6 +9,9 @@ packages:
   KeyboardShortcuts:
     url: https://github.com/sindresorhus/KeyboardShortcuts
     exactVersion: 2.4.0
+  DynamicNotchKit:
+    url: https://github.com/MrKai77/DynamicNotchKit
+    revision: cd0b3e52d537db115ad3a9d89601f20e0bee8d27
   LaunchAtLogin:
     url: https://github.com/sindresorhus/LaunchAtLogin-Modern
     exactVersion: 1.1.0
@@ -74,6 +77,7 @@ targets:
           - "**/.claude"
     dependencies:
       - package: KeyboardShortcuts
+      - package: DynamicNotchKit
       - package: LaunchAtLogin
       - package: Sparkle
       - framework: Frameworks/whisper.xcframework

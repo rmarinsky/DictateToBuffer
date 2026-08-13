@@ -417,6 +417,13 @@ final class SettingsStorageProviderTests: XCTestCase {
         XCTAssertEqual(translation?["language_b"] as? String, "uk")
     }
 
+    func test_resolveLanguageConfig_trimsForcedHintsAndTreatsThemAsStrict() {
+        let config = CloudTranscriptionService.resolveLanguageConfig(forcedLanguageHints: [" pl ", "", "en"])
+
+        XCTAssertEqual(config.hints, ["pl", "en"])
+        XCTAssertTrue(config.strict)
+    }
+
     func test_realtimeTranslationConfig_includesTwoWayPayloadAndStrictLanguageHints() {
         let config = CloudRealtimeService.makeConnectionConfig(
             languageHints: ["en", "uk"],

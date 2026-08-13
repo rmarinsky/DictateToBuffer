@@ -460,15 +460,14 @@ extension AppDelegate {
                 rawText = try await transcriptionService.transcribe(audioData: audioData)
                 Log.app.info("stopRecording: HTTP cloud transcription (\(rawText.count) chars)")
             }
-            let cleanedRawText: String
-            if !realtimeResult.text.isEmpty {
-                cleanedRawText = await cleanRealtimeResultText(
+            let cleanedRawText: String = if !realtimeResult.text.isEmpty {
+                await cleanRealtimeResultText(
                     rawText,
                     realtimeResult: realtimeResult,
                     logPrefix: "Dictation"
                 )
             } else {
-                cleanedRawText = await TranscriptCleanupService.shared.clean(
+                await TranscriptCleanupService.shared.clean(
                     rawText,
                     fillerWords: SettingsStorage.shared.fillerWords
                 )
@@ -601,7 +600,8 @@ extension AppDelegate {
                             Log.app.warning("stopRecording: Accessibility permission needed during Whisper fallback")
                             PermissionManager.shared.showPermissionAlert(for: .accessibility)
                         } catch {
-                            Log.app.error("stopRecording: Whisper fallback paste failed - \(error.localizedDescription)")
+                            Log.app
+                                .error("stopRecording: Whisper fallback paste failed - \(error.localizedDescription)")
                         }
                     }
                     guard appState.recordingState == .processing else { return }
@@ -721,9 +721,9 @@ extension AppDelegate {
     private func setupVoiceRealtimeTranscriptionIfNeeded() {
         let onNoSpeech: () -> Void = { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self, self.appState.recordingState == .recording else { return }
-                await self.cancelRecording(forceDiscardAudio: true)
-                self.showRecordingFeedbackInfo(
+                guard let self, appState.recordingState == .recording else { return }
+                await cancelRecording(forceDiscardAudio: true)
+                showRecordingFeedbackInfo(
                     message: "No speech detected. Recording cancelled.",
                     mode: .voice,
                     duration: 2.5
@@ -732,6 +732,19 @@ extension AppDelegate {
         }
 
         if voiceTranscriptionProvider == .local {
+            // The notch shows no live transcript — skip the local streaming
+            // preview entirely so Whisper doesn't transcribe for a UI that
+            // never renders it. Speech gating still runs for no-speech cancel.
+            guard SettingsStorage.shared.recordingFeedbackSurface == .compactPanel else {
+                audioRecorder.onRealtimeAudioData = speechGatedAudioDelivery(
+                    deliver: { _ in },
+                    onNoSpeech: onNoSpeech
+                )
+                localVoiceStreamingService = nil
+                voiceRealtimeSessionEnabled = false
+                voiceRealtimeAccumulator = nil
+                return
+            }
             let whisper = whisperTranscriptionService
             let stream = LocalWhisperStreamingService(
                 transcribe: { samples in
@@ -889,11 +902,10 @@ extension AppDelegate {
             return .empty
         }
 
-        let preFinalizeText: String
-        if finalize {
-            preFinalizeText = await accumulator?.bestText(includeProvisional: true) ?? ""
+        let preFinalizeText: String = if finalize {
+            await accumulator?.bestText(includeProvisional: true) ?? ""
         } else {
-            preFinalizeText = ""
+            ""
         }
         let optimisticCleanupTask = finalize
             ? startOptimisticRealtimeCleanup(for: preFinalizeText)
@@ -904,7 +916,7 @@ extension AppDelegate {
         }
         await realtimeTranscriptionService.disconnect()
 
-        let text = (await accumulator?.bestText(includeProvisional: true) ?? "")
+        let text = await (accumulator?.bestText(includeProvisional: true) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let preFinalizeTrimmed = preFinalizeText.trimmingCharacters(in: .whitespacesAndNewlines)
         let textChangedAfterFinalize = text != preFinalizeTrimmed
@@ -953,7 +965,8 @@ extension AppDelegate {
         timeoutInterval: TimeInterval = 1.0
     ) async -> String {
         if let optimisticCleanedText = realtimeResult.optimisticCleanedText,
-           !realtimeResult.textChangedAfterFinalize {
+           !realtimeResult.textChangedAfterFinalize
+        {
             Log.app.info("[\(logPrefix)] Reusing optimistic cleanup result")
             return optimisticCleanedText
         }

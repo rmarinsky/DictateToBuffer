@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import LaunchAtLogin
 import os
 import SwiftUI
 
@@ -115,6 +116,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let appState = AppState()
 
+    /// Whether this process was started by the system as a login item. Captured
+    /// synchronously in `applicationDidFinishLaunching` — the Apple event that
+    /// carries the flag is only current during that call.
+    private var launchedAtLogin = false
+
     /// Audio level piping to the recording feedback panel
     var audioLevelCancellable: AnyCancellable?
 
@@ -184,6 +190,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_: Notification) {
+        launchedAtLogin = LaunchAtLogin.wasLaunchedAtLogin
+        NSLog("[Diduny] applicationDidFinishLaunching: launchedAtLogin=%d", launchedAtLogin ? 1 : 0)
+
         let hasExistingInstallState = AuthService.hasStoredSession
             || SettingsStorage.hasPersistedFirstUseState
             || RecordingsLibraryStorage.hasPersistedLibrary
@@ -317,9 +326,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func showMainWindowAfterLaunch() {
+        // Spotlight launches should surface the overview after setup, while
+        // login-item launches stay menu-bar only.
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(200))
-            if !MainWindowController.shared.isVisible {
+            NSLog("[Diduny] setupAfterOnboarding deferred: isVisible=%d policy=%d launchedAtLogin=%d",
+                  MainWindowController.shared.isVisible ? 1 : 0, NSApp.activationPolicy().rawValue,
+                  launchedAtLogin ? 1 : 0)
+            if !launchedAtLogin, !MainWindowController.shared.isVisible {
                 MainWindowController.shared.showWindow(section: .overview)
             }
         }
@@ -576,6 +590,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DictationOverlayController.shared.setStopHandler { [weak self] in
             await self?.stopActiveRecordingFromFeedback()
         }
+        NotchManager.shared.setStopHandler { [weak self] in
+            await self?.stopActiveRecordingFromFeedback()
+        }
     }
 
     func stopActiveRecordingFromFeedback() async {
@@ -584,7 +601,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if appState.meetingTranslationRecordingState == .processing,
-           appState.meetingTranslationRecordingStartTime == nil {
+           appState.meetingTranslationRecordingStartTime == nil
+        {
             await cancelMeetingTranslationRecording()
             return
         }
@@ -594,7 +612,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if appState.meetingRecordingState == .processing,
-           appState.meetingRecordingStartTime == nil {
+           appState.meetingRecordingStartTime == nil
+        {
+            meetingPipelineTask?.cancel()
             await cancelMeetingRecording()
             return
         }
@@ -604,7 +624,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if appState.translationRecordingState == .processing,
-           appState.translationRecordingStartTime == nil {
+           appState.translationRecordingStartTime == nil
+        {
             await cancelTranslationRecording()
             return
         }
@@ -614,7 +635,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if appState.recordingState == .processing,
-           appState.recordingStartTime == nil {
+           appState.recordingStartTime == nil
+        {
             await cancelRecording()
             return
         }
@@ -830,7 +852,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showRecordingFeedbackInfo(
         message: String,
-        mode: RecordingMode,
+        mode _: RecordingMode,
         duration: TimeInterval = 1.5
     ) {
         DictationOverlayController.shared.showInfo(message: message, duration: duration)
