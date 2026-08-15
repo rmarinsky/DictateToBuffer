@@ -1,272 +1,215 @@
-<?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<?xml version='1.0' encoding='utf-8'?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
   <channel>
     <title>Diduny Updates</title>
     <description>Most recent changes with links to updates.</description>
     <language>en</language>
-      <item>
-    <title>Version 1.12.3</title>
-    <pubDate>Tue, 07 Apr 2026 10:31:33 +0000</pubDate>
-    <sparkle:version>69</sparkle:version>
-    <sparkle:shortVersionString>1.12.3</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v1.12.3/Diduny-1.12.3.dmg"
-      sparkle:edSignature="suR+7U9s//SpRH22tDoSBUGdzVz9ZHmcFiO9tOcOdwq6knTIs3hhNQ+S/RAjt2rWRimbSwejT0KHH54PJTjdCQ=="
-      length="5588753"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 1.12.5</title>
-    <pubDate>Sat, 11 Apr 2026 11:11:43 +0000</pubDate>
-    <sparkle:version>72</sparkle:version>
-    <sparkle:shortVersionString>1.12.5</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v1.12.5/Diduny-1.12.5.dmg"
-      sparkle:edSignature="p3JtbcXEgAPLfCaWiByHM47UDKCbl5eAen3fs9C1MvT+L7FMRAbk/1bLaza95aHFKtTEg1urO4PIT8deoQT5Cg=="
-      length="5769202"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 1.12.6</title>
-    <pubDate>Fri, 24 Apr 2026 11:54:11 +0000</pubDate>
-    <sparkle:version>74</sparkle:version>
-    <sparkle:shortVersionString>1.12.6</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v1.12.6/Diduny-1.12.6.dmg"
-      sparkle:edSignature="QBQcj+l4LRKPb/ZGPcViMPks5Sfv8etMqTtC4hsA99ASA+4cXc9ORWBgh67D0fCHtCEBLYnI1n0UnUfWlcH6AQ=="
-      length="5761393"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 1.13.0</title>
-    <pubDate>Mon, 27 Apr 2026 16:25:09 +0000</pubDate>
-    <sparkle:version>77</sparkle:version>
-    <sparkle:shortVersionString>1.13.0</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v1.13.0/Diduny-1.13.0.dmg"
-      sparkle:edSignature="lZP+ai6W3okLKtuHXppq5RcMthBJVYdbKjhc1SVRMAGy3+nvdZ/ljOwdnYTf7E6ZWhzhSlxQa3CxVSCn5W9/Bw=="
-      length="5770303"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 1.14.0</title>
-    <pubDate>Wed, 13 May 2026 17:07:56 +0000</pubDate>
-    <sparkle:version>79</sparkle:version>
-    <sparkle:shortVersionString>1.14.0</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v1.14.0/Diduny-1.14.0.dmg"
-      sparkle:edSignature="qHeGZ0uB1c5Zs8xwd7Pv4i3JBa0XfWXQXvBbg7OtkQcJ78czlnlVvHUg2+34HoSfzoxvbiVfYd8MR27wpHupAA=="
-      length="7807047"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 1.14.1</title>
-    <pubDate>Thu, 14 May 2026 15:04:15 +0000</pubDate>
-    <sparkle:version>85</sparkle:version>
-    <sparkle:shortVersionString>1.14.1</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v1.14.1/Diduny-1.14.1.dmg"
-      sparkle:edSignature="JcY3mCoCmYQ8kuwbRPT8/+KANWtxHj2poGeIkHhbfdkfFe4W9i9UhXg3X1+sfpCyyrU2AQrHSZCrjXW+WDowDw=="
-      length="7831552"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 1.14.2</title>
-    <pubDate>Fri, 15 May 2026 08:24:18 +0000</pubDate>
-    <sparkle:version>86</sparkle:version>
-    <sparkle:shortVersionString>1.14.2</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v1.14.2/Diduny-1.14.2.dmg"
-      sparkle:edSignature="J8YErSHWanokHvy6yy4MHfcJwaq4C8ugJD5e5CnXUxz3EmTwon8B53WutKMcTMPyviWaBLXQS5yqub8dTfQvDw=="
-      length="7840999"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 1.14.3</title>
-    <pubDate>Fri, 15 May 2026 14:10:00 +0000</pubDate>
-    <sparkle:version>87</sparkle:version>
-    <sparkle:shortVersionString>1.14.3</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v1.14.3/Diduny-1.14.3.dmg"
-      sparkle:edSignature="+IRd15ahLU1xBKz3ZyMZPY9wQMdpPG+daUlWPuI6Kl1Sh1paSMZOBXP0UuBCw+GSUH+CUncaIr1ugcw87QZfDQ=="
-      length="7843565"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 1.14.4</title>
-    <pubDate>Mon, 01 Jun 2026 20:38:24 +0000</pubDate>
-    <sparkle:version>88</sparkle:version>
-    <sparkle:shortVersionString>1.14.4</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v1.14.4/Diduny-1.14.4.dmg"
-      sparkle:edSignature="ZfmZ3IJ9Q5X1rZf3vk8klRoKRmR/RJbTvXbmm08aHCP+TAdTBG6sQ60YOeE3yjkur3DYXxtDpsmZmOJgpGBiBQ=="
-      length="7937452"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 1.15.1</title>
-    <pubDate>Thu, 18 Jun 2026 16:09:24 +0000</pubDate>
-    <sparkle:version>90</sparkle:version>
-    <sparkle:shortVersionString>1.15.1</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v1.15.1/Diduny-1.15.1.dmg"
-      sparkle:edSignature="38DHWYqYxVeXb1UqTQZAB6E2O60n6wtSOQKB/bgdn91Oj7foEV7177dHG4ppega3RXSmh1SSNC8OkDq6Y7zZBQ=="
-      length="8485943"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 1.15.2</title>
-    <pubDate>Fri, 19 Jun 2026 07:43:57 +0000</pubDate>
-    <sparkle:version>91</sparkle:version>
-    <sparkle:shortVersionString>1.15.2</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v1.15.2/Diduny-1.15.2.dmg"
-      sparkle:edSignature="ZXOXebypPuDuwJb9HrrPb0O5nLHQDnSxDzXkktIL6tD6fVdmsUVAumBhurYKxDTQVSjMfAZViSX6HqFnmTdSAg=="
-      length="8488584"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 1.15.3</title>
-    <pubDate>Fri, 19 Jun 2026 08:56:44 +0000</pubDate>
-    <sparkle:version>92</sparkle:version>
-    <sparkle:shortVersionString>1.15.3</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v1.15.3/Diduny-1.15.3.dmg"
-      sparkle:edSignature="20iZtwSGOgLZsnfugyr55/hqN4WetghXq6AnWmSNoaEHMHrGGFlgM2nENvUqExHdrWehUlMfa6KddwEC8tXyAA=="
-      length="8488674"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 1.15.4</title>
-    <pubDate>Fri, 19 Jun 2026 09:28:01 +0000</pubDate>
-    <sparkle:version>93</sparkle:version>
-    <sparkle:shortVersionString>1.15.4</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v1.15.4/Diduny-1.15.4.dmg"
-      sparkle:edSignature="isi02nhLEShKNq2xPtrhoBBiUSgJ/1C9/77aKL8np/yvcJb2gTBywLnJPi69VsAMZyK6IP2NyunzcQdX6tmeCQ=="
-      length="8580665"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 1.16.0</title>
-    <pubDate>Fri, 19 Jun 2026 12:15:42 +0000</pubDate>
-    <sparkle:version>94</sparkle:version>
-    <sparkle:shortVersionString>1.16.0</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v1.16.0/Diduny-1.16.0.dmg"
-      sparkle:edSignature="vuPONix2W1atD8cGebs72QvipncSX0wpoT4eYRma46qSmuaCNHYIRbkEQqiDdqc7VApRMcF2C83sQf6TZE6ECA=="
-      length="8584333"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 1.16.1</title>
-    <pubDate>Thu, 25 Jun 2026 15:36:15 +0000</pubDate>
-    <sparkle:version>95</sparkle:version>
-    <sparkle:shortVersionString>1.16.1</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v1.16.1/Diduny-1.16.1.dmg"
-      sparkle:edSignature="TxpvUZrN8oSAxXuCDLio5bYQ7/2A/Y9OiKRFCpb10DBp/xD7ll0lMy/0Vlcj6AkjyU4FD1WMud5BQBPKQF4qDw=="
-      length="8584647"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 1.17.0</title>
-    <pubDate>Fri, 03 Jul 2026 17:36:25 +0000</pubDate>
-    <sparkle:version>96</sparkle:version>
-    <sparkle:shortVersionString>1.17.0</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v1.17.0/Diduny-1.17.0.dmg"
-      sparkle:edSignature="wkg8hd6TLc79Ehj0p5XS3FP6DhFY/my5ttx94Rf9NrNYA9OnwgANRaO3lnTyBTN/g7Zsdvt6686+I248PMmIDg=="
-      length="8629066"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 1.18.0</title>
-    <pubDate>Mon, 27 Jul 2026 10:58:46 +0000</pubDate>
-    <sparkle:version>97</sparkle:version>
-    <sparkle:shortVersionString>1.18.0</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v1.18.0/Diduny-1.18.0.dmg"
-      sparkle:edSignature="Fz0qrBjSrHrj7wfJfFLm7Ik1prw8ZqlZEHQCafuyTbY+zX3HXEgtm2foxZg2PM1v+Kx9X1URuluB75HeN/wZBg=="
-      length="9161355"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 1.18.1</title>
-    <pubDate>Mon, 27 Jul 2026 14:48:26 +0000</pubDate>
-    <sparkle:version>98</sparkle:version>
-    <sparkle:shortVersionString>1.18.1</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v1.18.1/Diduny-1.18.1.dmg"
-      sparkle:edSignature="5cOHjKzDpk1QrdvLQg8jYyyUS5mHxi8bWoFKWjBqtWriW8elbugqdsdYFxtDYuKqHUMRkpItcD5M2fNVc33iCw=="
-      length="9196010"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 2.0.0</title>
-    <pubDate>Wed, 29 Jul 2026 07:02:29 +0000</pubDate>
-    <sparkle:version>99</sparkle:version>
-    <sparkle:shortVersionString>2.0.0</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v2.0.0/Diduny-2.0.0.dmg"
-      sparkle:edSignature="Z9p9Xlgd0x5fmUYmR8+LrXA0VYaF8cejz4Muz9tEoKPIVI0vFOfD0CObfEMntK13KE3SfCyCT8avRwSnQa4VCg=="
-      length="9576221"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 2.0.1</title>
-    <pubDate>Mon, 03 Aug 2026 08:41:57 +0000</pubDate>
-    <sparkle:version>100</sparkle:version>
-    <sparkle:shortVersionString>2.0.1</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v2.0.1/Diduny-2.0.1.dmg"
-      sparkle:edSignature="bGQjFCT91Vj4tKr/4DBLJ07mwrEDP3djJjZk9srp5kcvIXsFjtNvBvYxGhsJ0vBrUdJK1SG19nY+lZxVOwuSBw=="
-      length="127800855"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 2.1.0</title>
-    <pubDate>Mon, 03 Aug 2026 10:39:24 +0000</pubDate>
-    <sparkle:version>101</sparkle:version>
-    <sparkle:shortVersionString>2.1.0</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v2.1.0/Diduny-2.1.0.dmg"
-      sparkle:edSignature="am1RtOEbEaZdA26h8SeUJu1649Vg7/e87S3OYm/o7pOxuY+fyO1HvaVxtjqBAzCzq4YvIv679XGIeIqkumwpCg=="
-      length="125815590"
-      type="application/octet-stream" />
-  </item>
-      <item>
-    <title>Version 2.1.1</title>
-    <pubDate>Fri, 07 Aug 2026 09:53:10 +0000</pubDate>
-    <sparkle:version>102</sparkle:version>
-    <sparkle:shortVersionString>2.1.1</sparkle:shortVersionString>
-    <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/rmarinsky/Diduny/releases/download/v2.1.1/Diduny-2.1.1.dmg"
-      sparkle:edSignature="4KKEE2JywwFOvOWP4oE0CDsaeFVQ4VrXha9jyIDeiCWuG5aQA83v+qaZjW9+Jay8ysY/WxFD8yCSPHRtzW+5Cw=="
-      length="126046870"
-      type="application/octet-stream" />
-  </item>
+    <item>
+      <title>Version 1.12.3</title>
+      <pubDate>Tue, 07 Apr 2026 10:31:33 +0000</pubDate>
+      <sparkle:version>69</sparkle:version>
+      <sparkle:shortVersionString>1.12.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v1.12.3/Diduny-1.12.3.dmg" sparkle:edSignature="suR+7U9s//SpRH22tDoSBUGdzVz9ZHmcFiO9tOcOdwq6knTIs3hhNQ+S/RAjt2rWRimbSwejT0KHH54PJTjdCQ==" length="5588753" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v1.12.3</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 1.12.5</title>
+      <pubDate>Sat, 11 Apr 2026 11:11:43 +0000</pubDate>
+      <sparkle:version>72</sparkle:version>
+      <sparkle:shortVersionString>1.12.5</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v1.12.5/Diduny-1.12.5.dmg" sparkle:edSignature="p3JtbcXEgAPLfCaWiByHM47UDKCbl5eAen3fs9C1MvT+L7FMRAbk/1bLaza95aHFKtTEg1urO4PIT8deoQT5Cg==" length="5769202" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v1.12.5</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 1.12.6</title>
+      <pubDate>Fri, 24 Apr 2026 11:54:11 +0000</pubDate>
+      <sparkle:version>74</sparkle:version>
+      <sparkle:shortVersionString>1.12.6</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v1.12.6/Diduny-1.12.6.dmg" sparkle:edSignature="QBQcj+l4LRKPb/ZGPcViMPks5Sfv8etMqTtC4hsA99ASA+4cXc9ORWBgh67D0fCHtCEBLYnI1n0UnUfWlcH6AQ==" length="5761393" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v1.12.6</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 1.13.0</title>
+      <pubDate>Mon, 27 Apr 2026 16:25:09 +0000</pubDate>
+      <sparkle:version>77</sparkle:version>
+      <sparkle:shortVersionString>1.13.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v1.13.0/Diduny-1.13.0.dmg" sparkle:edSignature="lZP+ai6W3okLKtuHXppq5RcMthBJVYdbKjhc1SVRMAGy3+nvdZ/ljOwdnYTf7E6ZWhzhSlxQa3CxVSCn5W9/Bw==" length="5770303" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v1.13.0</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 1.14.0</title>
+      <pubDate>Wed, 13 May 2026 17:07:56 +0000</pubDate>
+      <sparkle:version>79</sparkle:version>
+      <sparkle:shortVersionString>1.14.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v1.14.0/Diduny-1.14.0.dmg" sparkle:edSignature="qHeGZ0uB1c5Zs8xwd7Pv4i3JBa0XfWXQXvBbg7OtkQcJ78czlnlVvHUg2+34HoSfzoxvbiVfYd8MR27wpHupAA==" length="7807047" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v1.14.0</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 1.14.1</title>
+      <pubDate>Thu, 14 May 2026 15:04:15 +0000</pubDate>
+      <sparkle:version>85</sparkle:version>
+      <sparkle:shortVersionString>1.14.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v1.14.1/Diduny-1.14.1.dmg" sparkle:edSignature="JcY3mCoCmYQ8kuwbRPT8/+KANWtxHj2poGeIkHhbfdkfFe4W9i9UhXg3X1+sfpCyyrU2AQrHSZCrjXW+WDowDw==" length="7831552" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v1.14.1</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 1.14.2</title>
+      <pubDate>Fri, 15 May 2026 08:24:18 +0000</pubDate>
+      <sparkle:version>86</sparkle:version>
+      <sparkle:shortVersionString>1.14.2</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v1.14.2/Diduny-1.14.2.dmg" sparkle:edSignature="J8YErSHWanokHvy6yy4MHfcJwaq4C8ugJD5e5CnXUxz3EmTwon8B53WutKMcTMPyviWaBLXQS5yqub8dTfQvDw==" length="7840999" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v1.14.2</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 1.14.3</title>
+      <pubDate>Fri, 15 May 2026 14:10:00 +0000</pubDate>
+      <sparkle:version>87</sparkle:version>
+      <sparkle:shortVersionString>1.14.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v1.14.3/Diduny-1.14.3.dmg" sparkle:edSignature="+IRd15ahLU1xBKz3ZyMZPY9wQMdpPG+daUlWPuI6Kl1Sh1paSMZOBXP0UuBCw+GSUH+CUncaIr1ugcw87QZfDQ==" length="7843565" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v1.14.3</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 1.14.4</title>
+      <pubDate>Mon, 01 Jun 2026 20:38:24 +0000</pubDate>
+      <sparkle:version>88</sparkle:version>
+      <sparkle:shortVersionString>1.14.4</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v1.14.4/Diduny-1.14.4.dmg" sparkle:edSignature="ZfmZ3IJ9Q5X1rZf3vk8klRoKRmR/RJbTvXbmm08aHCP+TAdTBG6sQ60YOeE3yjkur3DYXxtDpsmZmOJgpGBiBQ==" length="7937452" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v1.14.4</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 1.15.1</title>
+      <pubDate>Thu, 18 Jun 2026 16:09:24 +0000</pubDate>
+      <sparkle:version>90</sparkle:version>
+      <sparkle:shortVersionString>1.15.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v1.15.1/Diduny-1.15.1.dmg" sparkle:edSignature="38DHWYqYxVeXb1UqTQZAB6E2O60n6wtSOQKB/bgdn91Oj7foEV7177dHG4ppega3RXSmh1SSNC8OkDq6Y7zZBQ==" length="8485943" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v1.15.1</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 1.15.2</title>
+      <pubDate>Fri, 19 Jun 2026 07:43:57 +0000</pubDate>
+      <sparkle:version>91</sparkle:version>
+      <sparkle:shortVersionString>1.15.2</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v1.15.2/Diduny-1.15.2.dmg" sparkle:edSignature="ZXOXebypPuDuwJb9HrrPb0O5nLHQDnSxDzXkktIL6tD6fVdmsUVAumBhurYKxDTQVSjMfAZViSX6HqFnmTdSAg==" length="8488584" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v1.15.2</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 1.15.3</title>
+      <pubDate>Fri, 19 Jun 2026 08:56:44 +0000</pubDate>
+      <sparkle:version>92</sparkle:version>
+      <sparkle:shortVersionString>1.15.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v1.15.3/Diduny-1.15.3.dmg" sparkle:edSignature="20iZtwSGOgLZsnfugyr55/hqN4WetghXq6AnWmSNoaEHMHrGGFlgM2nENvUqExHdrWehUlMfa6KddwEC8tXyAA==" length="8488674" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v1.15.3</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 1.15.4</title>
+      <pubDate>Fri, 19 Jun 2026 09:28:01 +0000</pubDate>
+      <sparkle:version>93</sparkle:version>
+      <sparkle:shortVersionString>1.15.4</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v1.15.4/Diduny-1.15.4.dmg" sparkle:edSignature="isi02nhLEShKNq2xPtrhoBBiUSgJ/1C9/77aKL8np/yvcJb2gTBywLnJPi69VsAMZyK6IP2NyunzcQdX6tmeCQ==" length="8580665" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v1.15.4</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 1.16.0</title>
+      <pubDate>Fri, 19 Jun 2026 12:15:42 +0000</pubDate>
+      <sparkle:version>94</sparkle:version>
+      <sparkle:shortVersionString>1.16.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v1.16.0/Diduny-1.16.0.dmg" sparkle:edSignature="vuPONix2W1atD8cGebs72QvipncSX0wpoT4eYRma46qSmuaCNHYIRbkEQqiDdqc7VApRMcF2C83sQf6TZE6ECA==" length="8584333" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v1.16.0</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 1.16.1</title>
+      <pubDate>Thu, 25 Jun 2026 15:36:15 +0000</pubDate>
+      <sparkle:version>95</sparkle:version>
+      <sparkle:shortVersionString>1.16.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v1.16.1/Diduny-1.16.1.dmg" sparkle:edSignature="TxpvUZrN8oSAxXuCDLio5bYQ7/2A/Y9OiKRFCpb10DBp/xD7ll0lMy/0Vlcj6AkjyU4FD1WMud5BQBPKQF4qDw==" length="8584647" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v1.16.1</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 1.17.0</title>
+      <pubDate>Fri, 03 Jul 2026 17:36:25 +0000</pubDate>
+      <sparkle:version>96</sparkle:version>
+      <sparkle:shortVersionString>1.17.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v1.17.0/Diduny-1.17.0.dmg" sparkle:edSignature="wkg8hd6TLc79Ehj0p5XS3FP6DhFY/my5ttx94Rf9NrNYA9OnwgANRaO3lnTyBTN/g7Zsdvt6686+I248PMmIDg==" length="8629066" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v1.17.0</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 1.18.0</title>
+      <pubDate>Mon, 27 Jul 2026 10:58:46 +0000</pubDate>
+      <sparkle:version>97</sparkle:version>
+      <sparkle:shortVersionString>1.18.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v1.18.0/Diduny-1.18.0.dmg" sparkle:edSignature="Fz0qrBjSrHrj7wfJfFLm7Ik1prw8ZqlZEHQCafuyTbY+zX3HXEgtm2foxZg2PM1v+Kx9X1URuluB75HeN/wZBg==" length="9161355" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v1.18.0</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 1.18.1</title>
+      <pubDate>Mon, 27 Jul 2026 14:48:26 +0000</pubDate>
+      <sparkle:version>98</sparkle:version>
+      <sparkle:shortVersionString>1.18.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v1.18.1/Diduny-1.18.1.dmg" sparkle:edSignature="5cOHjKzDpk1QrdvLQg8jYyyUS5mHxi8bWoFKWjBqtWriW8elbugqdsdYFxtDYuKqHUMRkpItcD5M2fNVc33iCw==" length="9196010" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v1.18.1</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 2.0.0</title>
+      <pubDate>Wed, 29 Jul 2026 07:02:29 +0000</pubDate>
+      <sparkle:version>99</sparkle:version>
+      <sparkle:shortVersionString>2.0.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v2.0.0/Diduny-2.0.0.dmg" sparkle:edSignature="Z9p9Xlgd0x5fmUYmR8+LrXA0VYaF8cejz4Muz9tEoKPIVI0vFOfD0CObfEMntK13KE3SfCyCT8avRwSnQa4VCg==" length="9576221" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v2.0.0</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 2.0.1</title>
+      <pubDate>Mon, 03 Aug 2026 08:41:57 +0000</pubDate>
+      <sparkle:version>100</sparkle:version>
+      <sparkle:shortVersionString>2.0.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v2.0.1/Diduny-2.0.1.dmg" sparkle:edSignature="bGQjFCT91Vj4tKr/4DBLJ07mwrEDP3djJjZk9srp5kcvIXsFjtNvBvYxGhsJ0vBrUdJK1SG19nY+lZxVOwuSBw==" length="127800855" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v2.0.1</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 2.1.0</title>
+      <pubDate>Mon, 03 Aug 2026 10:39:24 +0000</pubDate>
+      <sparkle:version>101</sparkle:version>
+      <sparkle:shortVersionString>2.1.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v2.1.0/Diduny-2.1.0.dmg" sparkle:edSignature="am1RtOEbEaZdA26h8SeUJu1649Vg7/e87S3OYm/o7pOxuY+fyO1HvaVxtjqBAzCzq4YvIv679XGIeIqkumwpCg==" length="125815590" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v2.1.0</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 2.1.1</title>
+      <pubDate>Fri, 07 Aug 2026 09:53:10 +0000</pubDate>
+      <sparkle:version>102</sparkle:version>
+      <sparkle:shortVersionString>2.1.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v2.1.1/Diduny-2.1.1.dmg" sparkle:edSignature="4KKEE2JywwFOvOWP4oE0CDsaeFVQ4VrXha9jyIDeiCWuG5aQA83v+qaZjW9+Jay8ysY/WxFD8yCSPHRtzW+5Cw==" length="126046870" type="application/octet-stream" />
+      <sparkle:releaseNotesLink>https://github.com/rmarinsky/Diduny/releases/tag/v2.1.1</sparkle:releaseNotesLink>
+    </item>
+    <item>
+      <title>Version 2.2.0</title>
+      <pubDate>Sat, 15 Aug 2026 20:27:58 +0000</pubDate>
+      <sparkle:version>103</sparkle:version>
+      <sparkle:shortVersionString>2.2.0</sparkle:shortVersionString>
+      <sparkle:releaseNotesLink>https://rmarinsky.github.io/Diduny/release-notes/2.2.0.md</sparkle:releaseNotesLink>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rmarinsky/Diduny/releases/download/v2.2.0/Diduny-2.2.0.dmg" sparkle:edSignature="+dx2P699eZGOVlzScJh+hIjGMBNXhtGKW9ylXNL6HMdvbjppFQK1lyku9rY+QMaDv6yqb9fEge0jNgOzaLN2BQ==" length="126075500" type="application/octet-stream" />
+    </item>
   </channel>
 </rss>
