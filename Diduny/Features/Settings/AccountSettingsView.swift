@@ -7,11 +7,6 @@ struct AccountSettingsView: View {
     @State private var proxyTestResult: ProxyTestResult?
     @State private var isRefreshingConfig = false
 
-    // Auth state
-    @State private var authEmail: String = ""
-    @State private var otpCode: String = ""
-    @State private var authError: String?
-    @State private var isAuthLoading = false
     private var authService: AuthService { AuthService.shared }
 
     enum ProxyTestResult {
@@ -32,93 +27,7 @@ struct AccountSettingsView: View {
                 }
 #endif
 
-                switch authService.authState {
-                case .loggedOut:
-                    if authService.showsMigrationNotice {
-                        Label("Diduny's account system changed. Sign in again to continue using Cloud features.", systemImage: "person.crop.circle.badge.exclamationmark")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-
-                    HStack {
-                        TextField("Your email address", text: $authEmail)
-                            .textFieldStyle(.roundedBorder)
-                            .textContentType(.emailAddress)
-                            .accessibilityLabel("Email address")
-
-                        Button("Send Code") {
-                            sendOtp()
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(authEmail.isEmpty || isAuthLoading)
-                    }
-
-                case .otpSent:
-                    HStack {
-                        TextField("Enter 6-digit code", text: $otpCode)
-                            .textFieldStyle(.roundedBorder)
-                            .textContentType(.oneTimeCode)
-                            .autocorrectionDisabled()
-                            .accessibilityLabel("One-time code")
-
-                        Button("Verify") {
-                            verifyOtp()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(otpCode.isEmpty || isAuthLoading)
-
-                        Button("Cancel") {
-                            otpCode = ""
-                            authError = nil
-                            authService.cancelOtpFlow()
-                        }
-                        .buttonStyle(.bordered)
-                    }
-
-                case .loggedIn:
-                    HStack {
-                        if let email = authService.userEmail {
-                            Text("Logged in as \(email)")
-                                .foregroundColor(.secondary)
-                        } else {
-                            Text("Logged in")
-                                .foregroundColor(.secondary)
-                        }
-
-                        Spacer()
-
-                        Button("Sign Out") {
-                            Task { await authService.logout() }
-                        }
-                        .buttonStyle(.bordered)
-                    }
-
-                    Label("Credentials are stored in the macOS Keychain.", systemImage: "lock.shield")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                if isAuthLoading {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-
-                if let error = authError {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundColor(.red)
-
-                        if authService.authState == .otpSent {
-                            Button("Send new code") {
-                                resendOtp()
-                            }
-                            .font(.caption)
-                            .buttonStyle(.borderless)
-                            .foregroundColor(.accentColor)
-                        }
-                    }
-                }
+                AccountSignInView()
 
 #if DEV_BUILD
                 HStack(spacing: 8) {
@@ -371,42 +280,6 @@ struct AccountSettingsView: View {
                 }
             }
         }
-    }
-
-    private func sendOtp() {
-        isAuthLoading = true
-        authError = nil
-
-        Task {
-            do {
-                try await authService.sendOtp(email: authEmail)
-            } catch {
-                authError = "Couldn't send a code. Try again."
-            }
-            isAuthLoading = false
-        }
-    }
-
-    private func verifyOtp() {
-        isAuthLoading = true
-        authError = nil
-
-        Task {
-            do {
-                try await authService.verifyOtp(email: authEmail, code: otpCode)
-                otpCode = ""
-                authEmail = ""
-            } catch {
-                authError = "That code couldn't be verified. Send a new one and try again."
-            }
-            isAuthLoading = false
-        }
-    }
-
-    private func resendOtp() {
-        otpCode = ""
-        authError = nil
-        sendOtp()
     }
 
     private func refreshRemoteConfig() {

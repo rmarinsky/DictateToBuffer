@@ -25,6 +25,7 @@ final class AuthService {
 
     private(set) var authState: AuthState
     private(set) var showsMigrationNotice = false
+    private(set) var pendingOtpEmail: String?
 
     var isLoggedIn: Bool { authState == .loggedIn }
     var userEmail: String? { tokenStore.read(key: Keys.userEmail) }
@@ -43,6 +44,7 @@ final class AuthService {
     nonisolated private let now: @Sendable () -> Date
     private let baseURLOverride: String?
     private var refreshTask: Task<Void, Error>?
+    private var otpFlowGeneration = 0
 
     private var proxyBaseURL: String {
         (baseURLOverride ?? SettingsStorage.shared.proxyBaseURL)
@@ -86,25 +88,49 @@ final class AuthService {
     }
 
     func sendOtp(email: String) async throws {
+        let email = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.isValidEmail(email) else { throw AuthError.invalidEmail }
+        let generation = otpFlowGeneration
         let request = try jsonRequest(path: "/api/v1/auth/send-otp", body: ["email": email])
         _ = try await perform(request, errorPrefix: "Failed to send OTP")
+        guard generation == otpFlowGeneration else { return }
+        pendingOtpEmail = email
         authState = .otpSent
     }
 
+    nonisolated static func isValidEmail(_ email: String) -> Bool {
+        guard !email.contains(where: \Character.isWhitespace) else { return false }
+        let parts = email.split(separator: "@", omittingEmptySubsequences: false)
+        guard parts.count == 2, !parts[0].isEmpty else { return false }
+        let domain = parts[1].split(separator: ".", omittingEmptySubsequences: false)
+        return domain.count >= 2 && domain.allSatisfy { !$0.isEmpty }
+    }
+
+    func resendOtp() async throws {
+        guard let pendingOtpEmail else { throw AuthError.notAuthenticated }
+        try await sendOtp(email: pendingOtpEmail)
+    }
+
     func verifyOtp(email: String, code: String) async throws {
+        guard code.count == 6, code.allSatisfy(\.isNumber) else { throw AuthError.invalidOtp }
+        let generation = otpFlowGeneration
         let request = try jsonRequest(
             path: "/api/v1/auth/verify-otp",
             body: ["email": email, "otp": code]
         )
         let data = try await perform(request, errorPrefix: "Verification failed")
+        guard generation == otpFlowGeneration else { return }
         let response = try JSONDecoder().decode(TokenResponse.self, from: data)
         try store(response, email: response.user?.email ?? email)
         UserDefaults.standard.removeObject(forKey: Keys.migrationNotice)
         showsMigrationNotice = false
+        pendingOtpEmail = nil
         authState = .loggedIn
     }
 
     func cancelOtpFlow() {
+        otpFlowGeneration &+= 1
+        pendingOtpEmail = nil
         authState = .loggedOut
     }
 
@@ -287,11 +313,13 @@ final class AuthService {
     }
 
     private func clearTokens() {
+        otpFlowGeneration &+= 1
         tokenStore.delete(key: Keys.accessToken)
         tokenStore.delete(key: Keys.refreshToken)
         tokenStore.delete(key: Keys.accessTokenExpiresAt)
         tokenStore.delete(key: Keys.userEmail)
         UserDefaults.standard.set(false, forKey: Keys.sessionPresent)
+        pendingOtpEmail = nil
         authState = .loggedOut
     }
 }
@@ -308,6 +336,8 @@ private struct AuthUser: Decodable {
 }
 
 enum AuthError: LocalizedError {
+    case invalidEmail
+    case invalidOtp
     case invalidURL
     case invalidResponse
     case notAuthenticated
@@ -315,6 +345,8 @@ enum AuthError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .invalidEmail: "Enter a valid email address"
+        case .invalidOtp: "Enter the six-digit code"
         case .invalidURL: "Invalid auth URL"
         case .invalidResponse: "Invalid server response"
         case .notAuthenticated: "Not authenticated — please log in"

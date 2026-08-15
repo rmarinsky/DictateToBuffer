@@ -2,6 +2,25 @@
 import XCTest
 
 final class RecordingsLibraryFilterTests: XCTestCase {
+    func test_persistedLibraryDetectionUsesMetadataOrRecordingFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        XCTAssertFalse(RecordingsLibraryStorage.hasPersistedLibrary(in: directory))
+
+        let metadata = directory.appendingPathComponent("recordings_metadata.json")
+        try Data("[]".utf8).write(to: metadata)
+        XCTAssertTrue(RecordingsLibraryStorage.hasPersistedLibrary(in: directory))
+
+        try FileManager.default.removeItem(at: metadata)
+        let recordings = directory.appendingPathComponent("Recordings", isDirectory: true)
+        try FileManager.default.createDirectory(at: recordings, withIntermediateDirectories: true)
+        try Data([0]).write(to: recordings.appendingPathComponent("recording.wav"))
+        XCTAssertTrue(RecordingsLibraryStorage.hasPersistedLibrary(in: directory))
+    }
+
     @MainActor
     func test_batchComposerActionTargetsRecordingsWithSharedTitle() {
         let controller = MainWindowController.shared

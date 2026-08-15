@@ -62,6 +62,124 @@ final class AuthServiceTests: XCTestCase {
         try await service.sendOtp(email: "roman@example.com")
 
         XCTAssertEqual(service.authState, .otpSent)
+        XCTAssertEqual(service.pendingOtpEmail, "roman@example.com")
+    }
+
+    @MainActor
+    func test_sendOtpRejectsMalformedEmailBeforeNetworkRequest() async {
+        let service = makeService { request in
+            XCTFail("Unexpected request to \(request.url?.absoluteString ?? "unknown URL")")
+            return Self.response(for: request, body: #"{"message":"unused"}"#)
+        }
+
+        for email in ["", "roman", "@example.com", "roman@", "roman@example"] {
+            do {
+                try await service.sendOtp(email: email)
+                XCTFail("Expected invalid email: \(email)")
+            } catch {
+                guard let authError = error as? AuthError, case .invalidEmail = authError else {
+                    return XCTFail("Expected invalidEmail, got \(error)")
+                }
+            }
+        }
+    }
+
+    @MainActor
+    func test_verifyOtpRejectsMalformedCodeBeforeNetworkRequest() async {
+        let service = makeService { request in
+            XCTFail("Unexpected request to \(request.url?.absoluteString ?? "unknown URL")")
+            return Self.response(for: request, body: #"{"message":"unused"}"#)
+        }
+
+        for code in ["", "12345", "1234567", "12A456"] {
+            do {
+                try await service.verifyOtp(email: "roman@example.com", code: code)
+                XCTFail("Expected invalid OTP: \(code)")
+            } catch {
+                guard let authError = error as? AuthError, case .invalidOtp = authError else {
+                    return XCTFail("Expected invalidOtp, got \(error)")
+                }
+            }
+        }
+    }
+
+    @MainActor
+    func test_resendUsesSharedOtpDestinationAndCancellationClearsIt() async throws {
+        let service = makeService { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/auth/send-otp")
+            XCTAssertEqual(
+                try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: String],
+                ["email": "roman@example.com"]
+            )
+            return Self.response(for: request, body: #"{"message":"OTP sent"}"#)
+        }
+
+        try await service.sendOtp(email: "roman@example.com")
+        try await service.resendOtp()
+
+        XCTAssertEqual(service.pendingOtpEmail, "roman@example.com")
+
+        service.cancelOtpFlow()
+
+        XCTAssertEqual(service.authState, .loggedOut)
+        XCTAssertNil(service.pendingOtpEmail)
+    }
+
+    @MainActor
+    func test_cancelIgnoresLateResendResponse() async throws {
+        let service = makeService { request in
+            Self.response(for: request, body: #"{"message":"OTP sent"}"#)
+        }
+        try await service.sendOtp(email: "roman@example.com")
+
+        let requestStarted = expectation(description: "Resend request started")
+        let allowResponse = DispatchSemaphore(value: 0)
+        MockAuthURLProtocol.handler = { request in
+            requestStarted.fulfill()
+            _ = allowResponse.wait(timeout: .now() + 2)
+            return Self.response(for: request, body: #"{"message":"OTP sent"}"#)
+        }
+
+        let resend = Task { try await service.resendOtp() }
+        await fulfillment(of: [requestStarted], timeout: 2)
+        service.cancelOtpFlow()
+        allowResponse.signal()
+        try await resend.value
+
+        XCTAssertEqual(service.authState, .loggedOut)
+        XCTAssertNil(service.pendingOtpEmail)
+    }
+
+    @MainActor
+    func test_cancelIgnoresLateVerificationResponse() async throws {
+        let store = MemoryAuthTokenStore()
+        let service = makeService(store: store) { request in
+            Self.response(for: request, body: #"{"message":"OTP sent"}"#)
+        }
+        try await service.sendOtp(email: "roman@example.com")
+
+        let requestStarted = expectation(description: "Verification request started")
+        let allowResponse = DispatchSemaphore(value: 0)
+        MockAuthURLProtocol.handler = { request in
+            requestStarted.fulfill()
+            _ = allowResponse.wait(timeout: .now() + 2)
+            return Self.response(
+                for: request,
+                body: #"{"accessToken":"access","accessTokenExpiresAt":2000000,"refreshToken":"refresh"}"#
+            )
+        }
+
+        let verification = Task {
+            try await service.verifyOtp(email: "roman@example.com", code: "123456")
+        }
+        await fulfillment(of: [requestStarted], timeout: 2)
+        service.cancelOtpFlow()
+        allowResponse.signal()
+        try await verification.value
+
+        XCTAssertEqual(service.authState, .loggedOut)
+        XCTAssertNil(store.read(key: "auth_access_token"))
+        XCTAssertNil(store.read(key: "auth_refresh_token"))
     }
 
     @MainActor
@@ -192,6 +310,7 @@ final class AuthServiceTests: XCTestCase {
 
     func test_authErrorDescriptions() {
         XCTAssertEqual(AuthError.invalidURL.errorDescription, "Invalid auth URL")
+        XCTAssertEqual(AuthError.invalidOtp.errorDescription, "Enter the six-digit code")
         XCTAssertEqual(AuthError.invalidResponse.errorDescription, "Invalid server response")
         XCTAssertEqual(AuthError.notAuthenticated.errorDescription, "Not authenticated — please log in")
         XCTAssertEqual(AuthError.serverError("Rate limited").errorDescription, "Rate limited")

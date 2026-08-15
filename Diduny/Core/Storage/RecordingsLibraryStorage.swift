@@ -15,6 +15,27 @@ struct RecordingDeletionRecovery: Codable, Equatable {
 final class RecordingsLibraryStorage {
     static let shared = RecordingsLibraryStorage()
 
+    nonisolated static var hasPersistedLibrary: Bool {
+        hasPersistedLibrary(in: defaultAppDirectory)
+    }
+
+    nonisolated static func hasPersistedLibrary(in appDirectory: URL) -> Bool {
+        let metadataURL = appDirectory.appendingPathComponent("recordings_metadata.json")
+        if FileManager.default.fileExists(atPath: metadataURL.path) { return true }
+
+        let recordingsURL = appDirectory.appendingPathComponent("Recordings")
+        return (try? FileManager.default.contentsOfDirectory(atPath: recordingsURL.path).isEmpty) == false
+    }
+
+    private nonisolated static var defaultAppDirectory: URL {
+        let appSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first!
+        let bundleID = Bundle.main.bundleIdentifier ?? "Diduny"
+        return appSupport.appendingPathComponent(bundleID)
+    }
+
     private(set) var recordings: [Recording] = []
 
     private let fileManager = FileManager.default
@@ -30,9 +51,7 @@ final class RecordingsLibraryStorage {
         batchStorage: TranscriptionBatchStorage? = nil
     ) {
         let fm = FileManager.default
-        let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let bundleID = Bundle.main.bundleIdentifier ?? "Diduny"
-        let appDir = baseDirectory ?? appSupport.appendingPathComponent(bundleID)
+        let appDir = baseDirectory ?? Self.defaultAppDirectory
         appSupportDir = appDir
         self.batchStorage = batchStorage ?? .shared
 

@@ -193,8 +193,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         launchedAtLogin = LaunchAtLogin.wasLaunchedAtLogin
         NSLog("[Diduny] applicationDidFinishLaunching: launchedAtLogin=%d", launchedAtLogin ? 1 : 0)
 
+        let hasExistingInstallState = AuthService.hasStoredSession
+            || SettingsStorage.hasPersistedFirstUseState
+            || RecordingsLibraryStorage.hasPersistedLibrary
+        let isFreshInstall = OnboardingManager.shared.prepareForLaunch(
+            hasExistingInstallState: hasExistingInstallState
+        )
+        if let currentVersion = Bundle.main.object(
+            forInfoDictionaryKey: "CFBundleShortVersionString"
+        ) as? String {
+            UpdateArrivalState.shared.recordLaunch(
+                version: currentVersion,
+                isFreshInstall: isFreshInstall
+            )
+        }
+
         MainWindowController.shared.configure(appDelegate: self)
         EdgeCommandPanelController.shared.configure(appDelegate: self)
+        OnboardingWindowController.shared.configure(appDelegate: self)
 
         // Start Sparkle updater (access lazy var to trigger init)
         _ = updaterManager
@@ -267,36 +283,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
-        // Permission-gate: evaluate live permission state before deciding what to show.
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let action = await OnboardingManager.shared.computeStartupAction()
-            switch action {
-            case .skipOnboarding:
-                setupAfterOnboarding()
+        setupApplicationServices()
 
-            case let .showFullTour(jumpStep):
-                OnboardingManager.shared.setupDefaultsForNewUser()
-                if let jump = jumpStep {
-                    OnboardingManager.shared.currentStep = jump
-                }
-                try? await Task.sleep(for: .milliseconds(120))
-                OnboardingWindowController.shared.showOnboarding(miniFlow: nil) {
-                    self.setupAfterOnboarding()
-                }
-
-            case let .showMiniFlow(steps):
-                try? await Task.sleep(for: .milliseconds(120))
-                OnboardingManager.shared.currentStep = steps.first ?? .microphonePermission
-                OnboardingWindowController.shared.showOnboarding(miniFlow: steps) {
-                    self.setupAfterOnboarding()
-                }
-            }
+        if OnboardingManager.shared.shouldPresentOnboardingWindow {
+            OnboardingWindowController.shared.showOnboarding()
+        } else {
+            showMainWindowAfterLaunch()
         }
     }
 
-    /// Setup that runs after onboarding completes (or if already completed)
-    private func setupAfterOnboarding() {
+    /// Runtime setup is never gated by first-use guidance.
+    private func setupApplicationServices() {
         // AuthService remains lazy until first cloud use; getAccessToken()
         // refreshes an expiring session on demand.
 
@@ -326,17 +323,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Log.app.info("[Auth] No stored session — cloud preferences remain stored, runtime uses local fallback")
         }
 
-        // Show main window so a Spotlight launch (fresh, app was not running)
-        // actually surfaces the UI. Deferred 200 ms to let the window system
-        // settle after all setup above finishes. Login-item launches stay
-        // silent — the app should only appear in the menu bar.
+    }
+
+    func showMainWindowAfterLaunch() {
+        // Spotlight launches should surface the overview after setup, while
+        // login-item launches stay menu-bar only.
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(200))
             NSLog("[Diduny] setupAfterOnboarding deferred: isVisible=%d policy=%d launchedAtLogin=%d",
                   MainWindowController.shared.isVisible ? 1 : 0, NSApp.activationPolicy().rawValue,
                   launchedAtLogin ? 1 : 0)
             if !launchedAtLogin, !MainWindowController.shared.isVisible {
-                MainWindowController.shared.showWindow()
+                MainWindowController.shared.showWindow(section: .overview)
             }
         }
     }

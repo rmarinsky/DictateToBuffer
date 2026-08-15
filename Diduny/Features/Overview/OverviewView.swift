@@ -197,6 +197,7 @@ struct OverviewView: View {
 
             ScrollView {
                 VStack(spacing: 12) {
+                    OverviewLaunchCard()
                     heroCard
                     metricGrid
                     chartCard

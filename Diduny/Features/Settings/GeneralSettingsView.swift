@@ -104,7 +104,8 @@ struct GeneralSettingsView: View {
                 Text("History & Storage")
             } footer: {
                 Text(
-                    "Choose how long Diduny keeps recordings in the library. Meeting recordings remain available under Recordings while Meetings is in beta."
+                    "Choose how long Diduny keeps recordings in the library. "
+                        + "Meeting recordings remain available under Recordings while Meetings is in beta."
                 )
             }
 
@@ -123,8 +124,8 @@ struct GeneralSettingsView: View {
             }
 
             Section {
-                Button("Show Welcome Tour") {
-                    showOnboarding()
+                Button("Open Setup Guide") {
+                    openSetupGuide()
                 }
                 .buttonStyle(.link)
             } header: {
@@ -180,11 +181,9 @@ struct GeneralSettingsView: View {
 
     // MARK: - Helpers
 
-    private func showOnboarding() {
+    private func openSetupGuide() {
         OnboardingManager.shared.showFromSettings()
-        OnboardingWindowController.shared.showOnboarding {
-            // Onboarding completed from settings
-        }
+        OnboardingWindowController.shared.showOnboarding()
     }
 
     private func pruneExpiredHistoryIfNeeded() {
