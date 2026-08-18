@@ -25,7 +25,7 @@ struct RecordingDetailView: View {
         recording: Recording,
         parentBatchName: String? = nil,
         onBack: (() -> Void)? = nil,
-        onClose: @escaping () -> Void = {}
+        onClose: @escaping () -> Void
     ) {
         self.recording = recording
         self.parentBatchName = parentBatchName
@@ -397,14 +397,14 @@ struct RecordingDetailView: View {
                 }
                 Spacer()
                 Button {
-                    ClipboardService.shared.copy(text: version.text, behavior: .raw)
+                    ClipboardService.shared.copy(text: version.displayText, behavior: .raw)
                 } label: {
                     Label("Copy Transcript", systemImage: "doc.on.doc")
                 }
                 .controlSize(.small)
             }
             ScrollView {
-                Text(transcriptVersionText(version))
+                Text(version.displayText)
                     .textSelection(.enabled)
                     .font(.body)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -427,11 +427,6 @@ struct RecordingDetailView: View {
             }
             return "Translation"
         }
-    }
-
-    private func transcriptVersionText(_ version: TranscriptVersion) -> String {
-        guard let segments = version.segments, !segments.isEmpty else { return version.text }
-        return segments.map { "[\($0.timestampLabel)] \($0.text)" }.joined(separator: "\n\n")
     }
 
     // MARK: - Processing actions
