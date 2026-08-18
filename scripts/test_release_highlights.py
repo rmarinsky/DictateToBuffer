@@ -33,9 +33,10 @@ class ReleaseHighlightsPipelineTests(unittest.TestCase):
 
             self.run_script("render", str(PAYLOAD), str(markdown))
             expected = (
-                "# Meeting transcripts copy in full\n\n"
-                "- Copying a transcript keeps its timestamps and speaker labels.\n"
-                "- Recording details close again from the X button or Esc.\n"
+                "# Diduny Pro subscription\n\n"
+                "- Upgrade to Diduny Pro for unlimited cloud dictation, billed monthly through WayForPay.\n"
+                "- Manage your subscription from Settings → Account: renewal status, cancel, and resume.\n"
+                "- The sidebar badge now reflects your plan right after launch.\n"
             )
             self.assertEqual(markdown.read_text(encoding="utf-8"), expected)
 
