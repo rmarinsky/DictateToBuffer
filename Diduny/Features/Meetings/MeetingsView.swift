@@ -72,7 +72,7 @@ struct MeetingsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .sheet(item: $selectedRecording) { recording in
-            RecordingDetailView(recording: recording)
+            RecordingDetailView(recording: recording, onClose: { selectedRecording = nil })
                 .frame(minWidth: 640, idealWidth: 700, minHeight: 500)
         }
         .alert("Delete Selected Meetings", isPresented: $showBulkDeleteConfirmation) {

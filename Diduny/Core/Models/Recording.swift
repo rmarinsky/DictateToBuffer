@@ -46,6 +46,38 @@ struct TimedTranscriptSegment: Codable, Equatable {
             ? String(format: "%d:%02d:%02d", hours, minutes, seconds)
             : String(format: "%02d:%02d", minutes, seconds)
     }
+
+    /// Human readable speaker name, e.g. `Speaker 1`. `nil` when the provider
+    /// returned no diarization for this segment.
+    var speakerLabel: String? {
+        guard let speaker else { return nil }
+        let trimmed = speaker.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.range(of: "speaker", options: [.caseInsensitive, .anchored]) != nil {
+            return trimmed
+        }
+        return "Speaker \(trimmed)"
+    }
+
+    /// One transcript line carrying the timestamp and, when available, the speaker.
+    var formattedLine: String {
+        if let speakerLabel {
+            return "[\(timestampLabel)] \(speakerLabel): \(text)"
+        }
+        return "[\(timestampLabel)] \(text)"
+    }
+}
+
+enum TimedTranscriptRenderer {
+    /// Renders timed segments as `[mm:ss] Speaker N: text` blocks, falling back to
+    /// the plain transcript when no timed segments exist.
+    static func render(segments: [TimedTranscriptSegment]?, fallbackText: String) -> String {
+        guard let segments, !segments.isEmpty else { return fallbackText }
+        let rendered = segments
+            .map(\.formattedLine)
+            .joined(separator: "\n\n")
+        return rendered.isEmpty ? fallbackText : rendered
+    }
 }
 
 struct TranscriptVersion: Identifiable, Codable, Equatable {
@@ -88,6 +120,13 @@ struct TranscriptVersion: Identifiable, Codable, Equatable {
         self.text = text
         self.segments = segments
         self.provenance = provenance
+    }
+
+    /// Transcript exactly as shown in the UI: timestamps and speaker labels when the
+    /// version carries timed segments, plain text otherwise. Use this for copy/export
+    /// so the clipboard matches what the user sees on screen.
+    var displayText: String {
+        TimedTranscriptRenderer.render(segments: segments, fallbackText: text)
     }
 }
 
@@ -182,10 +221,10 @@ struct Recording: Identifiable, Codable, Equatable {
 
     var displayTranscriptText: String? {
         guard let transcriptionText, !transcriptionText.isEmpty else { return nil }
-        guard let transcriptSegments, !transcriptSegments.isEmpty else { return transcriptionText }
-        return transcriptSegments
-            .map { "[\($0.timestampLabel)] \($0.text)" }
-            .joined(separator: "\n\n")
+        return TimedTranscriptRenderer.render(
+            segments: transcriptSegments,
+            fallbackText: transcriptionText
+        )
     }
 
     var requiresLocalTranscription: Bool {

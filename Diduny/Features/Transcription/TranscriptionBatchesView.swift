@@ -274,7 +274,7 @@ struct TranscriptionBatchInspectorView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 if let latest = recording.resolvedTranscriptHistory.last {
                                     Button("Copy") {
-                                        ClipboardService.shared.copy(text: latest.text, behavior: .raw)
+                                        ClipboardService.shared.copy(text: latest.displayText, behavior: .raw)
                                     }
                                     .controlSize(.small)
                                 }
