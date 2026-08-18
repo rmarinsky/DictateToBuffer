@@ -318,6 +318,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // Warm billing/usage state so the Pro badge and entitlement are
+        // correct right after launch, not only after opening Settings.
+        if AuthService.hasStoredSession {
+            Task {
+                await BillingService.shared.refresh()
+                await UsageService.shared.refresh()
+            }
+        }
+
         // Avoid initializing AuthService just for this log line.
         if !AuthService.hasStoredSession {
             Log.app.info("[Auth] No stored session — cloud preferences remain stored, runtime uses local fallback")

@@ -141,6 +141,7 @@ final class SettingsStorage {
         case meetingHistoryRetentionPolicy
         case whisperModelUnloadPolicy
         case proxyBaseURL
+        case billingPendingOrderReference
         case remoteConfigURL
         case userDeclinedScreenRecording
         case selectedBrowserSessionID
@@ -1272,6 +1273,20 @@ final class SettingsStorage {
     var proxyBaseURL: String {
         get { defaults.string(forKey: Key.proxyBaseURL.rawValue) ?? Self.defaultProxyBaseURL }
         set { defaults.set(newValue, forKey: Key.proxyBaseURL.rawValue) }
+    }
+
+    // Order reference of a WayForPay checkout that was opened in the browser
+    // but not yet confirmed — survives app restarts so billing sync can
+    // resolve the payment after relaunch.
+    var billingPendingOrderReference: String? {
+        get { defaults.string(forKey: Key.billingPendingOrderReference.rawValue) }
+        set {
+            if let newValue {
+                defaults.set(newValue, forKey: Key.billingPendingOrderReference.rawValue)
+            } else {
+                defaults.removeObject(forKey: Key.billingPendingOrderReference.rawValue)
+            }
+        }
     }
 
     var remoteConfigURL: String? {

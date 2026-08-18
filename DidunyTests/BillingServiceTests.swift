@@ -70,4 +70,49 @@ final class BillingServiceTests: XCTestCase {
         XCTAssertEqual(grantStatus.entitlement, .grant)
         XCTAssertTrue(grantStatus.hasUnlimitedAccess)
     }
+
+    func testBillingStatusDecodesUnknownEnumValuesWithoutFailing() throws {
+        let json = """
+        {
+          "plan": "team",
+          "entitlement": "trialing",
+          "status": "on_hold",
+          "renewsAt": null,
+          "activeUntil": null,
+          "cancelAtPeriodEnd": false,
+          "pendingOrderReference": null,
+          "usage": null
+        }
+        """.data(using: .utf8)!
+
+        let status = try JSONDecoder().decode(BillingStatusResponse.self, from: json)
+
+        XCTAssertEqual(status.plan, .unknown)
+        XCTAssertEqual(status.entitlement, .unknown)
+        XCTAssertEqual(status.status, .unknown)
+        XCTAssertFalse(status.hasUnlimitedAccess)
+    }
+
+    func testBillingStatusDecodesPastDueWithPrice() throws {
+        let json = """
+        {
+          "plan": "pro",
+          "entitlement": "paid",
+          "status": "past_due",
+          "renewsAt": null,
+          "activeUntil": "2026-08-14T00:00:00.000Z",
+          "cancelAtPeriodEnd": false,
+          "pendingOrderReference": null,
+          "price": { "amount": 205, "currency": "UAH" },
+          "usage": null
+        }
+        """.data(using: .utf8)!
+
+        let status = try JSONDecoder().decode(BillingStatusResponse.self, from: json)
+
+        XCTAssertEqual(status.status, .pastDue)
+        XCTAssertEqual(status.price?.amount, 205)
+        XCTAssertEqual(status.price?.formattedMonthly, "205 ₴/month")
+        XCTAssertTrue(status.hasUnlimitedAccess)
+    }
 }

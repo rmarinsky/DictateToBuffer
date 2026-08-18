@@ -231,7 +231,7 @@ struct AccountSettingsView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             } else {
-                Button("Upgrade to Diduny Pro") {
+                Button(upgradeLabel(status.price)) {
                     performBillingAction { try await BillingService.shared.startCheckout() }
                 }
                 .buttonStyle(.borderedProminent)
@@ -243,13 +243,20 @@ struct AccountSettingsView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
-        case .expired, .pastDue:
-            Button("Upgrade to Diduny Pro") {
+        case .expired, .pastDue, .unknown:
+            Button(upgradeLabel(status.price)) {
                 performBillingAction { try await BillingService.shared.startCheckout() }
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
         }
+    }
+
+    private func upgradeLabel(_ price: BillingPrice?) -> String {
+        if let price {
+            return "Upgrade to Diduny Pro — \(price.formattedMonthly)"
+        }
+        return "Upgrade to Diduny Pro"
     }
 
     private func billingTitle(_ status: BillingStatusResponse) -> String {
@@ -288,7 +295,7 @@ struct AccountSettingsView: View {
         case .active where status.entitlement == .legacyUnlimited:
             return "Legacy unlimited access"
         case .pastDue:
-            return "Payment needs attention"
+            return "Payment failed — WayForPay retries automatically. Update your card in WayForPay, or re-subscribe."
         case .expired:
             return "5 hours of cloud usage per month"
         default:
@@ -299,23 +306,25 @@ struct AccountSettingsView: View {
     private func billingBadge(_ status: BillingStatusResponse) -> String {
         switch status.entitlement {
         case .paid:
-            status.cancelAtPeriodEnd ? "CANCELLED" : "PRO"
+            if status.status == .pastDue { return "PAST DUE" }
+            return status.cancelAtPeriodEnd ? "CANCELLED" : "PRO"
         case .grant:
-            "GRANT"
+            return "GRANT"
         case .legacyUnlimited:
-            "LEGACY"
-        case .free:
-            status.status == .checkoutPending ? "PENDING" : "FREE"
+            return "LEGACY"
+        case .free, .unknown:
+            return status.status == .checkoutPending ? "PENDING" : "FREE"
         }
     }
 
     private func billingBadgeColor(_ status: BillingStatusResponse) -> Color {
         switch status.entitlement {
         case .paid:
+            if status.status == .pastDue { return .orange }
             return status.cancelAtPeriodEnd ? .orange : Color("BrandAccentDeep")
         case .grant, .legacyUnlimited:
             return .green
-        case .free:
+        case .free, .unknown:
             return status.status == .checkoutPending ? .orange : .secondary
         }
     }

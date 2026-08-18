@@ -36,8 +36,7 @@ final class BillingService {
                 Log.app.warning("[Billing] Failed to fetch billing: HTTP \(httpResponse.statusCode)")
                 return
             }
-            cachedStatus = try JSONDecoder().decode(BillingStatusResponse.self, from: data)
-            lastFetched = Date()
+            updateStatus(try JSONDecoder().decode(BillingStatusResponse.self, from: data))
             Log.app.info("[Billing] Refreshed: \(self.cachedStatus?.status.rawValue ?? "unknown")")
         } catch {
             Log.app.warning("[Billing] Failed to fetch billing: \(error.localizedDescription)")
@@ -46,29 +45,50 @@ final class BillingService {
 
     func startCheckout() async throws {
         let checkout = try await post(path: "/checkout", body: EmptyBillingBody(), as: BillingCheckoutResponse.self)
+        openCheckout(checkout)
+    }
+
+    func sync(orderReference: String? = nil) async throws {
+        let reference = orderReference ?? SettingsStorage.shared.billingPendingOrderReference
+        updateStatus(try await post(
+            path: "/sync",
+            body: BillingSyncRequest(orderReference: reference),
+            as: BillingStatusResponse.self
+        ))
+    }
+
+    func cancelRenewal() async throws {
+        updateStatus(try await post(path: "/cancel", body: EmptyBillingBody(), as: BillingStatusResponse.self))
+    }
+
+    /// Within the paid period the backend resumes the suspended WayForPay rule
+    /// and returns billing state; after expiry it returns a fresh checkout.
+    func resumeRenewal() async throws {
+        let data = try await postRaw(path: "/resume", body: EmptyBillingBody())
+        if let checkout = try? JSONDecoder().decode(BillingCheckoutResponse.self, from: data) {
+            openCheckout(checkout)
+            return
+        }
+        updateStatus(try JSONDecoder().decode(BillingStatusResponse.self, from: data))
+    }
+
+    private func openCheckout(_ checkout: BillingCheckoutResponse) {
+        SettingsStorage.shared.billingPendingOrderReference = checkout.orderReference
         cachedStatus = BillingStatusResponse.checkoutPending(orderReference: checkout.orderReference)
         guard let url = URL(string: checkout.paymentUrl) else {
-            throw BillingError.invalidCheckoutURL
+            return
         }
         NSWorkspace.shared.open(url)
     }
 
-    func sync(orderReference: String? = nil) async throws {
-        cachedStatus = try await post(
-            path: "/sync",
-            body: BillingSyncRequest(orderReference: orderReference),
-            as: BillingStatusResponse.self
-        )
+    private func updateStatus(_ status: BillingStatusResponse) {
+        cachedStatus = status
         lastFetched = Date()
-    }
-
-    func cancelRenewal() async throws {
-        cachedStatus = try await post(path: "/cancel", body: EmptyBillingBody(), as: BillingStatusResponse.self)
-        lastFetched = Date()
-    }
-
-    func resumeRenewal() async throws {
-        try await startCheckout()
+        // A checkout survives app restarts only through this stored reference;
+        // any settled state clears it.
+        if status.status != .checkoutPending {
+            SettingsStorage.shared.billingPendingOrderReference = nil
+        }
     }
 
     private func post<Body: Encodable, Response: Decodable>(
@@ -76,6 +96,10 @@ final class BillingService {
         body: Body,
         as responseType: Response.Type
     ) async throws -> Response {
+        try JSONDecoder().decode(responseType, from: try await postRaw(path: path, body: body))
+    }
+
+    private func postRaw<Body: Encodable>(path: String, body: Body) async throws -> Data {
         let proxyBase = SettingsStorage.shared.proxyBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let url = URL(string: "\(proxyBase)/api/v1/billing\(path)") else {
             throw BillingError.invalidURL
@@ -96,13 +120,22 @@ final class BillingService {
             }
             throw BillingError.server("HTTP \(httpResponse.statusCode)")
         }
-        return try JSONDecoder().decode(responseType, from: data)
+        return data
     }
 }
 
+// Billing enums decode unknown backend values into `.unknown` instead of
+// failing the whole response — a new lifecycle state on the server must never
+// blank the entire billing UI in older app builds.
 enum BillingPlan: String, Decodable {
     case free
     case pro
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = BillingPlan(rawValue: raw) ?? .unknown
+    }
 }
 
 enum BillingEntitlement: String, Decodable {
@@ -110,6 +143,12 @@ enum BillingEntitlement: String, Decodable {
     case paid
     case grant
     case legacyUnlimited = "legacy_unlimited"
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = BillingEntitlement(rawValue: raw) ?? .unknown
+    }
 }
 
 enum BillingStatus: String, Decodable {
@@ -118,6 +157,25 @@ enum BillingStatus: String, Decodable {
     case cancelled
     case pastDue = "past_due"
     case expired
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = BillingStatus(rawValue: raw) ?? .unknown
+    }
+}
+
+struct BillingPrice: Decodable {
+    let amount: Double
+    let currency: String
+
+    var formattedMonthly: String {
+        let value = amount.truncatingRemainder(dividingBy: 1) == 0
+            ? String(Int(amount))
+            : String(format: "%.2f", amount)
+        let symbol = currency == "UAH" ? "₴" : currency
+        return "\(value) \(symbol)/month"
+    }
 }
 
 struct BillingStatusResponse: Decodable {
@@ -128,6 +186,7 @@ struct BillingStatusResponse: Decodable {
     let activeUntil: String?
     let cancelAtPeriodEnd: Bool
     let pendingOrderReference: String?
+    let price: BillingPrice?
     let usage: UsageResponse?
 
     var hasUnlimitedAccess: Bool {
@@ -143,6 +202,7 @@ struct BillingStatusResponse: Decodable {
             activeUntil: nil,
             cancelAtPeriodEnd: false,
             pendingOrderReference: orderReference,
+            price: nil,
             usage: nil
         )
     }
