@@ -33,10 +33,9 @@ class ReleaseHighlightsPipelineTests(unittest.TestCase):
 
             self.run_script("render", str(PAYLOAD), str(markdown))
             expected = (
-                "# A clearer update and a faster first run\n\n"
-                "- See what changed before an update installs and after Diduny relaunches.\n"
-                "- Set up cloud dictation from Overview and try your first phrase immediately.\n"
-                "- Grant auto-paste and meeting permissions only when you need them.\n"
+                "# Meeting transcripts copy in full\n\n"
+                "- Copying a transcript keeps its timestamps and speaker labels.\n"
+                "- Recording details close again from the X button or Esc.\n"
             )
             self.assertEqual(markdown.read_text(encoding="utf-8"), expected)
 
