@@ -194,7 +194,7 @@ struct RecoveryState: Codable {
 final class RecoveryStateManager {
     static let shared = RecoveryStateManager()
 
-    private let fileURL: URL = {
+    private static let defaultFileURL: URL = {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let bundleID = Bundle.main.bundleIdentifier ?? "Diduny"
         let appDir = appSupport.appendingPathComponent(bundleID)
@@ -202,15 +202,26 @@ final class RecoveryStateManager {
         return appDir.appendingPathComponent("recovery_state.json")
     }()
 
-    private init() {}
+    private let fileURL: URL
 
-    func saveState(_ state: RecoveryState) {
+    private init() {
+        fileURL = Self.defaultFileURL
+    }
+
+    init(fileURL: URL) {
+        self.fileURL = fileURL
+    }
+
+    @discardableResult
+    func saveState(_ state: RecoveryState) -> Bool {
         do {
             let data = try JSONEncoder().encode(state)
-            try data.write(to: fileURL)
+            try data.write(to: fileURL, options: .atomic)
             Log.app.debug("Recovery state saved: \(state.recordingType.rawValue)")
+            return true
         } catch {
             Log.app.error("Failed to save recovery state: \(error.localizedDescription)")
+            return false
         }
     }
 

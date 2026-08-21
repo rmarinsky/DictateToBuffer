@@ -699,7 +699,10 @@ extension AppDelegate {
             let text: String? = if let rawTranscript {
                 if rawTranscript.segments.contains(where: { $0.speaker != nil }) {
                     // Cleanup accepts plain text and can discard diarization structure.
-                    TimedTranscriptSegment.formattedTranscript(rawTranscript.segments)
+                    TimedTranscriptRenderer.render(
+                        segments: rawTranscript.segments,
+                        fallbackText: rawTranscript.text
+                    )
                 } else {
                     await TranscriptCleanupService.shared.clean(
                         rawTranscript.text,

@@ -50,6 +50,12 @@ enum HistoryRetentionPolicy: String, CaseIterable, Identifiable {
 final class SettingsStorage {
     static let shared = SettingsStorage()
 
+    static var hasPersistedFirstUseState: Bool {
+        [Key.transcriptionProvider, .pushToTalkKey, .autoPaste].contains {
+            UserDefaults.standard.object(forKey: $0.rawValue) != nil
+        }
+    }
+
     private let defaults = UserDefaults.standard
     private static let baseFillerWords = [
         "е-е",
@@ -154,17 +160,19 @@ final class SettingsStorage {
     func applyNewUserDefaultsIfMissing() {
         let values: [Key: Any] = [
             .pushToTalkKey: PushToTalkKey.rightShift.rawValue,
-            .pushToTalkHoldEnabled: true,
-            .pushToTalkToggleEnabled: false,
+            .pushToTalkHoldEnabled: false,
+            .pushToTalkToggleEnabled: true,
+            .translationPushToTalkKey: PushToTalkKey.rightOption.rawValue,
             .translationPushToTalkHoldEnabled: false,
-            .translationPushToTalkToggleEnabled: false,
+            .translationPushToTalkToggleEnabled: true,
             .pushToTalkHoldStartDelaySeconds: 1.2,
             .translationPushToTalkHoldStartDelaySeconds: 1.2,
-            .pushToTalkToggleTapCount: 3,
-            .translationPushToTalkToggleTapCount: 3,
+            .pushToTalkToggleTapCount: 2,
+            .translationPushToTalkToggleTapCount: 2,
             .meetingHotkeyPressCount: 3,
             .meetingTranslationHotkeyPressCount: 3,
-            .autoPaste: true,
+            .autoPaste: false,
+            .transcriptionProvider: TranscriptionProvider.cloud.rawValue,
             .playSoundOnCompletion: true,
             .typingSpeedWordsPerMinute: 40.0
         ]

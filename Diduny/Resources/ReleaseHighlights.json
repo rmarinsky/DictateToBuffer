@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "headline": "Meeting transcripts copy in full",
+  "highlights": [
+    "Copying a transcript keeps its timestamps and speaker labels.",
+    "Recording details close again from the X button or Esc."
+  ]
+}

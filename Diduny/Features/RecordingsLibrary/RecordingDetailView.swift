@@ -25,7 +25,7 @@ struct RecordingDetailView: View {
         recording: Recording,
         parentBatchName: String? = nil,
         onBack: (() -> Void)? = nil,
-        onClose: @escaping () -> Void = {}
+        onClose: @escaping () -> Void
     ) {
         self.recording = recording
         self.parentBatchName = parentBatchName
@@ -406,7 +406,7 @@ struct RecordingDetailView: View {
     }
 
     private func transcriptCard(_ version: TranscriptVersion) -> some View {
-        let text = transcriptVersionText(version)
+        let text = version.displayText
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
@@ -463,10 +463,6 @@ struct RecordingDetailView: View {
             }
             return "Translation"
         }
-    }
-
-    private func transcriptVersionText(_ version: TranscriptVersion) -> String {
-        version.displayText
     }
 
     // MARK: - Processing actions

@@ -147,7 +147,7 @@ struct TranscriptionBatch: Codable, Equatable, Identifiable {
                 var details = ["Processed: \(version.createdAt.formatted(.iso8601))"]
                 if let provider = version.provider { details.append("Provider: \(provider)") }
                 if let model = version.modelIdentifier { details.append("Model: \(model)") }
-                return "### \(heading)\n\n\(details.joined(separator: "\n"))\n\n\(version.text)"
+                return "### \(heading)\n\n\(details.joined(separator: "\n"))\n\n\(version.displayText)"
             }.joined(separator: "\n\n")
         return "## \(recording.displayTitle)\n\n\(metadata.joined(separator: "\n"))\n\n\(history)"
     }

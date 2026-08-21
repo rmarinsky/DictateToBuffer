@@ -1,357 +1,163 @@
-import AVFoundation
-import ApplicationServices
 import Foundation
-import SwiftUI
+import Observation
 
-// MARK: - Onboarding Step
-
-enum OnboardingStep: Int, Codable, CaseIterable {
+/// Persisted raw values are append-only. Existing installations may still store
+/// the deprecated apiSetup value.
+enum OnboardingStep: Int, Codable {
     case welcome = 0
     case microphonePermission = 1
     case accessibilityPermission = 2
     case screenRecordingPermission = 3
     case shortcutSetup = 4
-    // Deprecated — see docs/decisions/0008-onboarding-step-enum-stability.md
-    // DO NOT remove: rawValue 5 may be persisted in UserDefaults on existing installs.
     case apiSetup = 5
     case complete = 6
-
-    var displayName: String {
-        switch self {
-        case .welcome: return "Welcome"
-        case .microphonePermission: return "Microphone"
-        case .accessibilityPermission: return "Accessibility"
-        case .screenRecordingPermission: return "Screen Recording"
-        case .shortcutSetup: return "Shortcut Setup"
-        case .apiSetup: return "API Setup"
-        case .complete: return "Complete"
-        }
-    }
-
-    var next: OnboardingStep? {
-        OnboardingStep(rawValue: rawValue + 1)
-    }
-
-    var previous: OnboardingStep? {
-        OnboardingStep(rawValue: rawValue - 1)
-    }
 }
-
-// MARK: - Startup Action
-
-enum StartupAction {
-    case skipOnboarding
-    case showFullTour(jumpToFirstMissing: OnboardingStep?)
-    case showMiniFlow(steps: [OnboardingStep])
-}
-
-// MARK: - Onboarding Manager
 
 @Observable
 final class OnboardingManager {
     static let shared = OnboardingManager()
 
-    private let hasCompletedOnboardingKey = "onboarding.completed"
-    private let onboardingVersionKey = "onboarding.version"
-    private let currentStepKey = "onboarding.currentStep"
-    private let firstLaunchTimestampKey = "onboarding.firstLaunchTimestamp"
-    private let currentOnboardingVersion = 1
+    private static let completedKey = "onboarding.completed"
+    private static let versionKey = "onboarding.version"
+    private static let currentStepKey = "onboarding.currentStep"
+    private static let firstLaunchTimestampKey = "onboarding.firstLaunchTimestamp"
+    private static let currentVersion = 1
 
-    // Step completion tracking
-    private let stepCompletedPrefix = "onboarding.step."
+    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private let applyNewUserDefaults: () -> Void
 
-    /// Force show onboarding even if completed (for settings)
-    var forceShowOnboarding = false
+    private(set) var setupGuideHiddenForSession = false
+    private(set) var setupGuideRequestedForSession = false
+    private(set) var didCompleteSetupThisSession = false
 
-    /// Set by computeStartupAction — signals the mini-flow step sequence to show
-    var miniFlowSteps: [OnboardingStep]? = nil
+    init(
+        defaults: UserDefaults = .standard,
+        applyNewUserDefaults: @escaping () -> Void = {
+            SettingsStorage.shared.applyNewUserDefaultsIfMissing()
+        }
+    ) {
+        self.defaults = defaults
+        self.applyNewUserDefaults = applyNewUserDefaults
+    }
 
-    /// Current step to resume from
     var currentStep: OnboardingStep {
         get {
-            let rawValue = UserDefaults.standard.integer(forKey: currentStepKey)
+            let rawValue = defaults.integer(forKey: Self.currentStepKey)
             return OnboardingStep(rawValue: rawValue) ?? .welcome
         }
         set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: currentStepKey)
+            defaults.set(newValue.rawValue, forKey: Self.currentStepKey)
         }
     }
 
     var hasCompletedOnboarding: Bool {
         get {
-            let completedVersion = UserDefaults.standard.integer(forKey: onboardingVersionKey)
-            let hasCompleted = UserDefaults.standard.bool(forKey: hasCompletedOnboardingKey)
-            return hasCompleted && completedVersion >= currentOnboardingVersion
+            defaults.bool(forKey: Self.completedKey)
+                && defaults.integer(forKey: Self.versionKey) >= Self.currentVersion
         }
         set {
-            UserDefaults.standard.set(newValue, forKey: hasCompletedOnboardingKey)
+            defaults.set(newValue, forKey: Self.completedKey)
             if newValue {
-                UserDefaults.standard.set(currentOnboardingVersion, forKey: onboardingVersionKey)
+                defaults.set(Self.currentVersion, forKey: Self.versionKey)
                 currentStep = .complete
             }
         }
     }
 
-    /// Check if this is the first launch ever
     var isFirstLaunch: Bool {
-        !UserDefaults.standard.bool(forKey: hasCompletedOnboardingKey)
+        defaults.object(forKey: Self.firstLaunchTimestampKey) == nil
+            && defaults.object(forKey: Self.completedKey) == nil
+            && defaults.object(forKey: Self.versionKey) == nil
+            && defaults.object(forKey: Self.currentStepKey) == nil
     }
 
-    /// Check if onboarding should be shown (legacy sync path — settings / force-show only)
-    var shouldShowOnboarding: Bool {
-        if forceShowOnboarding { return true }
-        if hasCompletedOnboarding { return false }
-        return true
+    var shouldShowSetupGuide: Bool {
+        setupGuideRequestedForSession
+            || didCompleteSetupThisSession
+            || (!hasCompletedOnboarding && !setupGuideHiddenForSession)
     }
 
-    private init() {
-        writeFirstLaunchTimestampIfNeeded()
+    var shouldPresentOnboardingWindow: Bool {
+        shouldShowSetupGuide
     }
 
-    // MARK: - First-launch timestamp (legacy-user detection signal)
-
-    private func writeFirstLaunchTimestampIfNeeded() {
-        guard UserDefaults.standard.object(forKey: firstLaunchTimestampKey) == nil else { return }
-        UserDefaults.standard.set(Date().timeIntervalSinceReferenceDate,
-                                  forKey: firstLaunchTimestampKey)
+    var canShowUpdateHighlights: Bool {
+        hasCompletedOnboarding && !shouldShowSetupGuide
     }
 
-    // MARK: - Permission-gate startup decision tree
-
-    /// Async: evaluates live permission state and returns the correct startup action.
-    func computeStartupAction() async -> StartupAction {
-        if forceShowOnboarding {
-            return .showFullTour(jumpToFirstMissing: nil)
+    /// Applies first-install defaults before runtime services snapshot them.
+    /// Returns true only on the first launch of a new installation.
+    @discardableResult
+    func prepareForLaunch(hasExistingInstallState: Bool = false) -> Bool {
+        let freshInstall = isFirstLaunch && !hasExistingInstallState
+        if freshInstall {
+            applyNewUserDefaults()
         }
-
-        // Live permission check — must be PASSIVE so we don't surface system prompts
-        // for permissions whose step the user hasn't reached yet.
-        let micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        let accessGranted = AXIsProcessTrusted()
-        let screenGranted = PermissionManager.shared.checkScreenRecordingPermissionPassive()
-        let userDeclinedScreen = SettingsStorage.shared.userDeclinedScreenRecording
-
-        // Build ordered missing-steps list.
-        // Microphone + Accessibility share one combined screen
-        // (SetupComputerStepView), so they collapse into a single step —
-        // otherwise the mini-flow renders the identical screen twice.
-        var missingSteps: [OnboardingStep] = []
-        if !micGranted || !accessGranted { missingSteps.append(.microphonePermission) }
-        if !screenGranted && !userDeclinedScreen { missingSteps.append(.screenRecordingPermission) }
-
-        // All permissions satisfied — skip regardless of hasCompletedOnboarding
-        if missingSteps.isEmpty { return .skipOnboarding }
-
-        // Legacy-user detection
-        let isLegacyUser = detectLegacyUser()
-
-        if !hasCompletedOnboarding && !isLegacyUser {
-            return .showFullTour(jumpToFirstMissing: missingSteps.first)
-        } else {
-            return .showMiniFlow(steps: missingSteps)
+        if defaults.object(forKey: Self.firstLaunchTimestampKey) == nil {
+            defaults.set(
+                Date().timeIntervalSinceReferenceDate,
+                forKey: Self.firstLaunchTimestampKey
+            )
         }
+        return freshInstall
     }
 
-    private func detectLegacyUser() -> Bool {
-        let hasFirstLaunchTimestamp = UserDefaults.standard.object(forKey: firstLaunchTimestampKey) != nil
-        // Timestamp is written on first launch; if it's already present before computeStartupAction
-        // runs (because init() ran first this session), the user is NOT a legacy user — they simply
-        // haven't finished onboarding. The legacy case is: an update install where the old app never
-        // wrote the timestamp, but an authenticated session is present.
-        // NOTE: init() always writes the timestamp on first launch of this build. So for a legacy
-        // user updating from a pre-onboarding build, the timestamp is written THIS launch. We
-        // therefore check the session BEFORE the timestamp write would disambiguate — which means
-        // we must rely solely on the session signal here.
-        // ADR-0008 Decision 2 is the authoritative contract.
-        if hasFirstLaunchTimestamp && !forceShowOnboarding {
-            // Already launched with onboarding present — not a legacy user
-            // UNLESS this is literally the first call this run AND the timestamp was
-            // just written by init(). We can't distinguish those two; we fall back to
-            // the session signal as the tie-breaker.
-            let hasSession = AuthService.hasStoredSession
-            if hasSession { return true }
-        }
-        // Timestamp absent (pre-onboarding build update): check session
-        return AuthService.hasStoredSession
+    func hideSetupGuideForSession() {
+        setupGuideHiddenForSession = true
+        setupGuideRequestedForSession = false
+        didCompleteSetupThisSession = false
     }
 
-    // MARK: - Step Management
-
-    /// Mark a step as completed and move to next
-    func completeStep(_ step: OnboardingStep) {
-        UserDefaults.standard.set(true, forKey: stepCompletedPrefix + "\(step.rawValue)")
-
-        // Move to next step
-        if let next = step.next {
-            currentStep = next
-        }
+    func showSetupGuide() {
+        setupGuideHiddenForSession = false
     }
 
-    /// Check if a specific step was completed
-    func isStepCompleted(_ step: OnboardingStep) -> Bool {
-        UserDefaults.standard.bool(forKey: stepCompletedPrefix + "\(step.rawValue)")
-    }
-
-    /// Skip to a specific step
-    func skipToStep(_ step: OnboardingStep) {
-        currentStep = step
-    }
-
-    // MARK: - Reset & Settings
-
-    /// Reset onboarding (for testing)
-    func reset() {
-        UserDefaults.standard.removeObject(forKey: hasCompletedOnboardingKey)
-        UserDefaults.standard.removeObject(forKey: onboardingVersionKey)
-        UserDefaults.standard.removeObject(forKey: currentStepKey)
-        UserDefaults.standard.removeObject(forKey: firstLaunchTimestampKey)
-
-        // Clear all step completion flags
-        for step in OnboardingStep.allCases {
-            UserDefaults.standard.removeObject(forKey: stepCompletedPrefix + "\(step.rawValue)")
-        }
-
-        forceShowOnboarding = false
-        miniFlowSteps = nil
-        currentStep = .welcome
-    }
-
-    /// Show onboarding from settings - resumes from current step
     func showFromSettings() {
-        forceShowOnboarding = true
-        // Always restart from the beginning when opening from settings.
-        if hasCompletedOnboarding || currentStep == .complete {
-            currentStep = .welcome
+        showSetupGuide()
+        setupGuideRequestedForSession = true
+    }
+
+    func canStartPractice(
+        isAuthenticated: Bool,
+        microphoneGranted: Bool,
+        accessibilityGranted: Bool,
+        screenRecordingGranted: Bool
+    ) -> Bool {
+        isAuthenticated && microphoneGranted && accessibilityGranted && screenRecordingGranted
+    }
+
+    func shouldShowReadyAfterPractice(recordingState: RecordingState) -> Bool {
+        recordingState == .success && hasCompletedOnboarding
+    }
+
+    func dictationProvider(
+        configuredProvider: TranscriptionProvider,
+        isAuthenticated: Bool
+    ) -> TranscriptionProvider {
+        !hasCompletedOnboarding && isAuthenticated ? .cloud : configuredProvider
+    }
+
+    /// Called only after RecordingsLibraryStorage confirms a saved recording.
+    @discardableResult
+    func didSaveSuccessfulDictation(
+        recordingID: UUID?,
+        text: String,
+        provider: TranscriptionProvider,
+        isAuthenticated: Bool,
+        requiredPermissionsGranted: Bool
+    ) -> Bool {
+        guard recordingID != nil,
+              !hasCompletedOnboarding,
+              provider == .cloud,
+              isAuthenticated,
+              requiredPermissionsGranted,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return false
         }
-    }
 
-    /// Set up default settings for new users
-    func setupDefaultsForNewUser() {
-        guard isFirstLaunch else { return }
-        SettingsStorage.shared.applyNewUserDefaultsIfMissing()
-    }
-}
-
-// MARK: - Onboarding Window Controller
-
-final class OnboardingWindowController {
-    static let shared = OnboardingWindowController()
-
-    private var window: NSWindow?
-    private var hostingView: NSHostingView<AnyView>?
-    private var windowDelegate: WindowDelegate?
-
-    private init() {}
-
-    func showOnboarding(miniFlow: [OnboardingStep]? = nil,
-                        completion: @escaping () -> Void)
-    {
-        // Promote app to regular activation so the onboarding window appears
-        // in the Dock and Cmd+Tab switcher. Diduny is LSUIElement (menu bar
-        // app), which by default hides windows from the Dock — bad for a
-        // first-run setup flow where the user needs to find the window.
-        // Reverted to .accessory in closeOnboarding().
-        NSApp.setActivationPolicy(.regular)
-
-        if let window {
-            window.makeKeyAndOrderFront(nil)
-            window.orderFrontRegardless()
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-
-        OnboardingManager.shared.miniFlowSteps = miniFlow
-
-        let isMiniFlow = miniFlow != nil
-        let windowTitle = isMiniFlow ? "Permissions Check" : "Welcome to Diduny"
-
-        let onboardingView = OnboardingContainerView(
-            onComplete: {
-                OnboardingManager.shared.hasCompletedOnboarding = true
-                OnboardingManager.shared.forceShowOnboarding = false
-                OnboardingManager.shared.miniFlowSteps = nil
-                self.closeOnboarding()
-                completion()
-            }
-        )
-
-        let hostingView = NSHostingView(rootView: AnyView(onboardingView))
-        self.hostingView = hostingView
-
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 820, height: 600),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-
-        window.title = windowTitle
-        window.contentView = hostingView
-        window.identifier = NSUserInterfaceItemIdentifier("diduny.onboarding")
-        window.center()
-        window.minSize = NSSize(width: 680, height: 520)
-        window.isReleasedWhenClosed = false
-        // Native macOS titlebar — no custom overrides
-        window.titleVisibility = .visible
-        window.titlebarAppearsTransparent = false
-        window.isMovableByWindowBackground = false
-        window.backgroundColor = .windowBackgroundColor
-        window.isOpaque = true
-
-        self.windowDelegate = WindowDelegate(onClose: {
-            // Close-via-X: save currentStep but do NOT mark hasCompletedOnboarding.
-            // Next launch resumes from saved step.
-            OnboardingManager.shared.forceShowOnboarding = false
-            OnboardingManager.shared.miniFlowSteps = nil
-            self.window = nil
-            self.hostingView = nil
-            self.windowDelegate = nil
-            // Revert to menu-bar-only mode now that the onboarding window is gone.
-            NSApp.setActivationPolicy(.accessory)
-            // Do NOT call completion() here — that would trigger setupAfterOnboarding
-            // prematurely while onboarding is unfinished.
-        })
-        window.delegate = self.windowDelegate
-
-        self.window = window
-        // Activate BEFORE ordering the window front: on macOS 26 a window
-        // ordered while the app is not active (right after the .accessory →
-        // .regular policy switch) can stay behind other apps' windows.
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
-        // Belt-and-braces: the policy switch is asynchronous in the process
-        // manager, so retry activation once it has settled.
-        Task { @MainActor [weak window] in
-            try? await Task.sleep(for: .milliseconds(150))
-            NSApp.activate(ignoringOtherApps: true)
-            window?.makeKeyAndOrderFront(nil)
-            window?.orderFrontRegardless()
-        }
-    }
-
-    func closeOnboarding() {
-        window?.delegate = nil
-        window?.close()
-        window = nil
-        hostingView = nil
-        windowDelegate = nil
-        // Revert to menu-bar-only mode (LSUIElement behaviour) — no Dock icon
-        // for normal app usage.
-        NSApp.setActivationPolicy(.accessory)
-    }
-}
-
-// MARK: - Window Delegate
-
-private final class WindowDelegate: NSObject, NSWindowDelegate {
-    let onClose: () -> Void
-
-    init(onClose: @escaping () -> Void) {
-        self.onClose = onClose
-    }
-
-    func windowWillClose(_: Notification) {
-        onClose()
+        hasCompletedOnboarding = true
+        didCompleteSetupThisSession = true
+        return true
     }
 }
