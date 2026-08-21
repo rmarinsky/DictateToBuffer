@@ -65,7 +65,7 @@ struct JobTranscriptionResult: Decodable {
         }
 
         return DiarizedTranscriptFormatter.format(
-            tokens: tokens,
+            tokens: providerSegments ?? tokens,
             fallbackText: text,
             insertsSpacesBetweenTokens: insertsSpacesBetweenTokens
         )
@@ -153,7 +153,7 @@ struct JobResult {
         }
 
         return DiarizedTranscriptFormatter.format(
-            tokens: tokens,
+            tokens: providerSegments ?? tokens,
             fallbackText: text,
             insertsSpacesBetweenTokens: insertsSpacesBetweenTokens
         )
@@ -188,7 +188,7 @@ struct GeneratedTranscript: Equatable {
     ) {
         text = preferSpeakerDiarization
             ? DiarizedTranscriptFormatter.format(
-                tokens: tokens,
+                tokens: providerSegments ?? tokens,
                 fallbackText: sourceText,
                 insertsSpacesBetweenTokens: insertsSpacesBetweenTokens
             )

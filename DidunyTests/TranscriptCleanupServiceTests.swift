@@ -139,6 +139,28 @@ struct TranscriptCleanupServiceTests {
         )
     }
 
+    @Test("Provider segments supply speaker labels when tokens do not")
+    func providerSegmentsSupplySpeakerLabels() throws {
+        let json = """
+        {
+          "text": "Hello Roman.",
+          "tokens": [
+            { "text": "Hello Roman.", "start_ms": 0, "end_ms": 800 }
+          ],
+          "segments": [
+            { "text": "Hello Roman.", "start_ms": 0, "end_ms": 800, "speaker": "1" }
+          ]
+        }
+        """
+
+        let result = try JSONDecoder().decode(JobTranscriptionResult.self, from: Data(json.utf8))
+
+        #expect(
+            result.generatedTranscript(preferSpeakerDiarization: true).text ==
+                "[00:00] Speaker 1: Hello Roman."
+        )
+    }
+
     @Test("Job result supports words payload and same-speaker timing gaps")
     func jobResultSupportsWordsPayloadAndTimingGaps() throws {
         let json = """

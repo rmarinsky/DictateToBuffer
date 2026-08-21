@@ -387,7 +387,8 @@ struct RecordingDetailView: View {
     }
 
     private func transcriptCard(_ version: TranscriptVersion) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let text = transcriptVersionText(version)
+        return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(transcriptVersionTitle(version)).font(.headline)
@@ -396,15 +397,31 @@ struct RecordingDetailView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button {
-                    ClipboardService.shared.copy(text: version.text, behavior: .raw)
-                } label: {
-                    Label("Copy Transcript", systemImage: "doc.on.doc")
+                HStack(spacing: 0) {
+                    Button {
+                        ClipboardService.shared.copy(text: text, behavior: .raw)
+                    } label: {
+                        Label("Copy Transcript", systemImage: "doc.on.doc")
+                    }
+                    Menu {
+                        Button("Save as TXT File…") {
+                            exportText(
+                                text,
+                                title: "Save Transcript",
+                                defaultFileName: "\(currentRecording.type.displayName) Transcript.txt"
+                            )
+                        }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .help("Transcript export options")
+                    .accessibilityLabel("Transcript export options")
                 }
                 .controlSize(.small)
             }
             ScrollView {
-                Text(transcriptVersionText(version))
+                Text(text)
                     .textSelection(.enabled)
                     .font(.body)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -430,19 +447,30 @@ struct RecordingDetailView: View {
     }
 
     private func transcriptVersionText(_ version: TranscriptVersion) -> String {
-        guard let segments = version.segments, !segments.isEmpty else { return version.text }
-        return segments.map { "[\($0.timestampLabel)] \($0.text)" }.joined(separator: "\n\n")
+        version.displayText
     }
 
     // MARK: - Processing actions
 
     private func exportCaption(_ artifact: TranscriptArtifact) {
+        exportText(
+            artifact.text,
+            title: "Export Source Captions",
+            defaultFileName: "YouTube Captions - \(artifact.languageCode).txt"
+        )
+    }
+
+    private func exportText(_ text: String, title: String, defaultFileName: String) {
         let panel = NSSavePanel()
-        panel.title = "Export Source Captions"
-        panel.nameFieldStringValue = "YouTube Captions - \(artifact.languageCode).txt"
+        panel.title = title
+        panel.nameFieldStringValue = defaultFileName
         panel.allowedContentTypes = [.plainText]
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? artifact.text.write(to: url, atomically: true, encoding: .utf8)
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            operationErrorMessage = "Could not save the text file: \(error.localizedDescription)"
+        }
     }
 
     private var cloudTranscriptionButton: some View {

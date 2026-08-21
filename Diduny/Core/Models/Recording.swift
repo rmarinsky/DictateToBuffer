@@ -46,6 +46,21 @@ struct TimedTranscriptSegment: Codable, Equatable {
             ? String(format: "%d:%02d:%02d", hours, minutes, seconds)
             : String(format: "%02d:%02d", minutes, seconds)
     }
+
+    var formattedText: String {
+        let prefix = "[\(timestampLabel)]"
+        guard let speaker = speaker?.trimmingCharacters(in: .whitespacesAndNewlines), !speaker.isEmpty else {
+            return "\(prefix) \(text)"
+        }
+        let label = speaker.range(of: "speaker", options: [.caseInsensitive, .anchored]) == nil
+            ? "Speaker \(speaker)"
+            : speaker
+        return "\(prefix) \(label): \(text)"
+    }
+
+    static func formattedTranscript(_ segments: [TimedTranscriptSegment]) -> String {
+        segments.map(\.formattedText).joined(separator: "\n\n")
+    }
 }
 
 struct TranscriptVersion: Identifiable, Codable, Equatable {
@@ -88,6 +103,11 @@ struct TranscriptVersion: Identifiable, Codable, Equatable {
         self.text = text
         self.segments = segments
         self.provenance = provenance
+    }
+
+    var displayText: String {
+        guard let segments, !segments.isEmpty else { return text }
+        return TimedTranscriptSegment.formattedTranscript(segments)
     }
 }
 
@@ -183,9 +203,7 @@ struct Recording: Identifiable, Codable, Equatable {
     var displayTranscriptText: String? {
         guard let transcriptionText, !transcriptionText.isEmpty else { return nil }
         guard let transcriptSegments, !transcriptSegments.isEmpty else { return transcriptionText }
-        return transcriptSegments
-            .map { "[\($0.timestampLabel)] \($0.text)" }
-            .joined(separator: "\n\n")
+        return TimedTranscriptSegment.formattedTranscript(transcriptSegments)
     }
 
     var requiresLocalTranscription: Bool {

@@ -551,9 +551,9 @@ extension AppDelegate {
                 didReceiveFinalization: didReceiveRealtimeFinalization
             )
 
-            let rawText: String?
+            let rawTranscript: GeneratedTranscript?
             if shouldUseRealtimeText {
-                rawText = realtimeText
+                rawTranscript = GeneratedTranscript(text: realtimeText)
                 Log.app.info("Using real-time transcript (\(realtimeText.count) chars)")
             } else if cloudModeEnabled {
                 if !realtimeText.isEmpty {
@@ -563,8 +563,6 @@ extension AppDelegate {
                         )
                 }
                 Log.app.info("No real-time transcript, falling back to async jobs API...")
-                let audioData = try await loadAudioData(from: compressedURL)
-                Log.app.info("Meeting recording size = \(audioData.count) bytes")
 
                 let asyncJobService = AsyncTranscriptionJobService()
                 let hints = SettingsStorage.shared.speechLanguageHints
@@ -577,14 +575,14 @@ extension AppDelegate {
                     config["language_hints_strict"] = true
                 }
 
-                rawText = try await asyncJobService.transcribeMeetingWithRetry(
-                    audioData: audioData,
+                rawTranscript = try await asyncJobService.transcribeFileDetailedWithRetry(
+                    audioFileURL: compressedURL,
                     config: config,
                     source: compressedURL.lastPathComponent,
                     sourceDurationSeconds: duration
                 ) { status in
                     Task { @MainActor in
-                        switch status {
+                        switch status.status {
                         case .queued:
                             DictationOverlayController.shared.showInfo(message: "Queued...", duration: 30)
                         case .uploading:
@@ -600,19 +598,24 @@ extension AppDelegate {
                         }
                     }
                 }
-                Log.app.info("Async jobs transcription received (\(rawText?.count ?? 0) chars)")
+                Log.app.info("Async jobs transcription received (\(rawTranscript?.text.count ?? 0) chars)")
             } else {
-                rawText = nil
+                rawTranscript = nil
                 Log.app.info("Saving meeting recording without automatic transcription")
             }
 
             // Apply server-side cleanup (filler words, dedup, formatting).
             // Falls back to raw text silently if no auth / no network.
-            let text: String? = if let r = rawText {
-                await TranscriptCleanupService.shared.clean(
-                    r,
-                    fillerWords: SettingsStorage.shared.fillerWords
-                )
+            let text: String? = if let rawTranscript {
+                if rawTranscript.segments.contains(where: { $0.speaker != nil }) {
+                    // Cleanup accepts plain text and can discard diarization structure.
+                    TimedTranscriptSegment.formattedTranscript(rawTranscript.segments)
+                } else {
+                    await TranscriptCleanupService.shared.clean(
+                        rawTranscript.text,
+                        fillerWords: SettingsStorage.shared.fillerWords
+                    )
+                }
             } else {
                 nil
             }
@@ -676,11 +679,14 @@ extension AppDelegate {
 
             if librarySavedId != nil {
                 if let text {
-                    RecordingsLibraryStorage.shared.updateRecording(
+                    let segments = rawTranscript?.segments
+                    RecordingsLibraryStorage.shared.completeTranscription(
                         id: recordingId,
                         status: .transcribed,
                         text: text,
-                        error: nil
+                        segments: segments?.isEmpty == false ? segments : nil,
+                        kind: .cloud,
+                        provider: TranscriptionProvider.cloud.rawValue
                     )
                 } else {
                     RecordingsLibraryStorage.shared.updateRecording(
