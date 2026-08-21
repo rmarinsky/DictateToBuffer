@@ -346,6 +346,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if let (state, fileExists) = RecoveryStateManager.shared.hasOrphanedRecording() {
+            // In-progress meeting chunks are recovered through their library row.
+            // The legacy modal only knows about the first chunk and would create a
+            // duplicate, incomplete recording after chunk rotation.
+            if state.inProgressMeetingRecordingID != nil {
+                RecoveryStateManager.shared.clearState()
+                return
+            }
             if fileExists {
                 Log.app.info("Found orphaned recording from \(state.startTime)")
                 showRecoveryAlert(for: state)

@@ -19,7 +19,7 @@ import os
 enum MeetingChunkStitcher {
     // MARK: - Types
 
-    struct Result {
+    struct Result: Sendable {
         /// The stitched output file. Matches the URL passed to `stitch`.
         let outputURL: URL
         /// Total audio duration written (seconds, derived from frames / sampleRate).

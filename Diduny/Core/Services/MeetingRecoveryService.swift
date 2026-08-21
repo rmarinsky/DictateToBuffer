@@ -34,8 +34,10 @@ final class MeetingRecoveryService {
 
         switch action {
         case .discard:
-            if let recording = storage.recordings.first(where: { $0.id == recordingID }) {
-                _ = storage.deleteRecording(recording)
+            if let recording = storage.recordings.first(where: { $0.id == recordingID }),
+               !storage.deleteRecording(recording)
+            {
+                return false
             }
             await cleanupInProgress(recordingID)
             return true
@@ -116,7 +118,9 @@ final class MeetingRecoveryService {
             if FileManager.default.fileExists(atPath: target.path) {
                 try? FileManager.default.removeItem(at: target)
             }
-            let result = try MeetingChunkStitcher.stitch(chunkURLs: chunkURLs, outputURL: target)
+            let result = try await Task.detached(priority: .utility) {
+                try MeetingChunkStitcher.stitch(chunkURLs: chunkURLs, outputURL: target)
+            }.value
             let compressed = await AudioCompressionService.compressToFLAC(wavURL: result.outputURL)
             return StitchOutput(url: compressed, durationSeconds: result.totalDurationSeconds)
         } catch {

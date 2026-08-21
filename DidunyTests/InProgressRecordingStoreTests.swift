@@ -167,6 +167,27 @@ final class InProgressRecordingStoreTests: XCTestCase {
         let impossibleDirectory = blockedFile.appendingPathComponent("child")
         XCTAssertThrowsError(try InProgressRecordingStore(baseDirectory: impossibleDirectory))
     }
+
+    func test_managedMeetingRecoveryStateIdentifiesInProgressSession() {
+        let id = UUID()
+        let state = RecoveryState(
+            tempFilePath: "/Application Support/Diduny/InProgressRecordings/\(id.uuidString)/chunk_001.wav",
+            startTime: Date(),
+            recordingType: .meeting
+        )
+
+        XCTAssertEqual(state.inProgressMeetingRecordingID, id)
+    }
+
+    func test_legacyRecoveryStateIsNotManagedInProgressMeeting() {
+        let state = RecoveryState(
+            tempFilePath: "/Application Support/Diduny/RecoveryAudio/recording.wav",
+            startTime: Date(),
+            recordingType: .meeting
+        )
+
+        XCTAssertNil(state.inProgressMeetingRecordingID)
+    }
 }
 
 @MainActor
