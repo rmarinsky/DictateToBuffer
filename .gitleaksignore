@@ -1,0 +1,4 @@
+# Historical Supabase anonymous client key: intentionally public, removed with
+# the owned-auth migration in v2.1.0. This fingerprint is scoped to that exact
+# deleted line and must not suppress future findings.
+b092948a0a34bb2a05184e797bfca28d4267769a:Diduny/Core/Services/SupabaseService.swift:generic-api-key:18
