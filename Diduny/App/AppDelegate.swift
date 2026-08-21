@@ -342,6 +342,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func checkForOrphanedRecordings() {
+        // Promote any leftover in-progress meeting directories into library needs-recovery rows.
+        Task { @MainActor in
+            await promoteOrphanedInProgressMeetings()
+        }
+
         if let (state, fileExists) = RecoveryStateManager.shared.hasOrphanedRecording() {
             if fileExists {
                 Log.app.info("Found orphaned recording from \(state.startTime)")
@@ -350,6 +355,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // File doesn't exist, just clear the state
                 RecoveryStateManager.shared.clearState()
             }
+        }
+    }
+
+    /// Ensures every on-disk `InProgressRecordings/<id>/` has a `.needsRecovery` library row.
+    private func promoteOrphanedInProgressMeetings() async {
+        guard let store = try? InProgressRecordingStore.sharedStore() else { return }
+        let ids = (try? await store.allInProgressRecordingIDs()) ?? []
+        let storage = RecordingsLibraryStorage.shared
+        for id in ids {
+            if let existing = storage.recordings.first(where: { $0.id == id }) {
+                if existing.status == .recording || existing.status == .needsRecovery {
+                    if existing.status == .recording {
+                        _ = storage.markNeedsRecovery(id: id)
+                    }
+                }
+                continue
+            }
+            // No library row yet (pre-live-row builds or begin failed) — synthesize one.
+            let manifest = try? await store.readManifest(for: id)
+            let type: Recording.RecordingType = switch manifest?.type {
+            case .meetingTranslation: .meetingTranslation
+            default: .meeting
+            }
+            let startedAt = manifest?.startedAt ?? Date()
+            _ = storage.beginMeetingRecording(id: id, type: type, createdAt: startedAt)
+            let endedAt = manifest?.lastWriteAt ?? Date()
+            let duration = max(0, endedAt.timeIntervalSince(startedAt))
+            _ = storage.markNeedsRecovery(id: id, endedAt: endedAt, durationSeconds: duration)
         }
     }
 
@@ -400,13 +433,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             duration: 5.0
         )
         // Transition recording states to idle so the UI is consistent.
-        // The in-progress directory is left intact for OrphanedRecordingDetector (M5a).
+        // Promote the live library row to needs-recovery; keep InProgressRecordings.
+        let endedAt = Date()
         if appState.meetingRecordingState == .recording {
+            if let id = meetingRecorderService.currentRecordingId {
+                let start = appState.meetingRecordingStartTime
+                let duration = start.map { endedAt.timeIntervalSince($0) }
+                _ = RecordingsLibraryStorage.shared.markNeedsRecovery(
+                    id: id,
+                    endedAt: endedAt,
+                    durationSeconds: duration
+                )
+            }
             appState.meetingRecordingState = .idle
             appState.meetingRecordingStartTime = nil
             handleMeetingStateChange(.idle)
         }
         if appState.meetingTranslationRecordingState == .recording {
+            if let id = meetingRecorderService.currentRecordingId {
+                let start = appState.meetingTranslationRecordingStartTime
+                let duration = start.map { endedAt.timeIntervalSince($0) }
+                _ = RecordingsLibraryStorage.shared.markNeedsRecovery(
+                    id: id,
+                    endedAt: endedAt,
+                    durationSeconds: duration
+                )
+            }
             appState.meetingTranslationRecordingState = .idle
             appState.meetingTranslationRecordingStartTime = nil
             handleMeetingTranslationStateChange(.idle)

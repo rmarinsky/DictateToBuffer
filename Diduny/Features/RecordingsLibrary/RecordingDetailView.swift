@@ -80,6 +80,14 @@ struct RecordingDetailView: View {
         currentRecording.type.isMeetingLike
     }
 
+    private var hasPlayableAudio: Bool {
+        storage.hasPlayableAudio(for: currentRecording)
+    }
+
+    private var isInProgressCapture: Bool {
+        currentRecording.status.isInProgressCapture
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -266,6 +274,7 @@ struct RecordingDetailView: View {
             fileURL: storage.audioFileURL(for: currentRecording),
             durationHint: currentRecording.durationSeconds
         )
+        .disabled(!hasPlayableAudio)
     }
 
     private var playbackAndProcessingSection: some View {
@@ -278,20 +287,30 @@ struct RecordingDetailView: View {
                 .padding(12)
                 .background(Color(.textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
 
-            HStack(spacing: 8) {
-                localTranscriptionButton
-                if !currentRecording.requiresLocalTranscription {
-                    cloudTranscriptionButton
+            if isInProgressCapture {
+                Text(
+                    currentRecording.status == .recording
+                        ? "Recording in progress — playback and transcription become available once it's finalized."
+                        : "This session needs recovery before it can be played or transcribed. Resolve it from the recordings list."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 8) {
+                    localTranscriptionButton
+                    if !currentRecording.requiresLocalTranscription {
+                        cloudTranscriptionButton
+                    }
                 }
-            }
 
-            if currentRecording.requiresLocalTranscription {
-                Text("Imported files and YouTube audio are transcribed locally to protect cloud limits.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+                if currentRecording.requiresLocalTranscription {
+                    Text("Imported files and YouTube audio are transcribed locally to protect cloud limits.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
-            translationMenu
+                translationMenu
+            }
         }
     }
 
@@ -629,12 +648,30 @@ struct RecordingDetailView: View {
     }()
 
     private var formattedDate: String {
-        Self.dateFormatter.string(from: currentRecording.createdAt)
+        let start = Self.dateFormatter.string(from: currentRecording.createdAt)
+        if currentRecording.status == .recording {
+            return "\(start) – …"
+        }
+        if let ended = currentRecording.resolvedEndedAt {
+            let endFormatter = DateFormatter()
+            endFormatter.dateStyle = .none
+            endFormatter.timeStyle = .short
+            return "\(start) – \(endFormatter.string(from: ended))"
+        }
+        return start
     }
 
     private var formattedDuration: String {
-        let minutes = Int(currentRecording.durationSeconds) / 60
-        let seconds = Int(currentRecording.durationSeconds) % 60
+        let totalSeconds: Int
+        if currentRecording.durationSeconds > 0 {
+            totalSeconds = Int(currentRecording.durationSeconds)
+        } else if let ended = currentRecording.resolvedEndedAt {
+            totalSeconds = max(0, Int(ended.timeIntervalSince(currentRecording.createdAt)))
+        } else {
+            totalSeconds = 0
+        }
+        let minutes = totalSeconds / 60
+        let seconds = totalSeconds % 60
         return String(format: "%d:%02d", minutes, seconds)
     }
 

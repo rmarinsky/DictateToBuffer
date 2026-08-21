@@ -90,6 +90,7 @@ final class RecordingsLibraryStorage {
         let recording = Recording(
             id: recordingID,
             createdAt: createdAt,
+            endedAt: createdAt.addingTimeInterval(duration),
             type: type,
             audioFileName: fileName,
             durationSeconds: duration,
@@ -177,6 +178,7 @@ final class RecordingsLibraryStorage {
         let recording = Recording(
             id: recordingID,
             createdAt: createdAt,
+            endedAt: createdAt.addingTimeInterval(duration),
             type: type,
             audioFileName: fileName,
             durationSeconds: duration,
@@ -210,6 +212,192 @@ final class RecordingsLibraryStorage {
         }
         Log.app.info("Recording saved from file: \(type.rawValue), \(fileSize) bytes")
         return recordingID
+    }
+
+    // MARK: - Live meeting session (row from start)
+
+    /// Creates a library row at meeting start. `id` must match the in-progress store UUID.
+    /// Always force-saves so retention "Never" cannot skip recovery visibility.
+    @discardableResult
+    func beginMeetingRecording(
+        id: UUID,
+        type: Recording.RecordingType,
+        createdAt: Date = Date(),
+        sourceDevice: RecordingDeviceInfo? = nil,
+        translationTargetLanguageCode: String? = nil
+    ) -> UUID? {
+        guard type.isMeetingLike else {
+            Log.app.error("beginMeetingRecording called with non-meeting type: \(type.rawValue)")
+            return nil
+        }
+
+        if let index = recordings.firstIndex(where: { $0.id == id }) {
+            recordings[index].status = .recording
+            recordings[index].endedAt = nil
+            recordings[index].statusDetail = nil
+            recordings[index].errorMessage = nil
+            guard saveMetadataSynchronously() else { return nil }
+            return id
+        }
+
+        let recording = Recording(
+            id: id,
+            createdAt: createdAt,
+            endedAt: nil,
+            type: type,
+            audioFileName: "",
+            durationSeconds: 0,
+            fileSizeBytes: 0,
+            status: .recording,
+            sourceDevice: sourceDevice,
+            translationTargetLanguageCode: translationTargetLanguageCode
+        )
+        recordings.insert(recording, at: 0)
+        guard saveMetadataSynchronously() else {
+            recordings.removeAll { $0.id == id }
+            return nil
+        }
+        Log.app.info("Meeting library row begun: \(id.uuidString)")
+        return id
+    }
+
+    /// Attaches durable audio to an existing live/recovery row and advances status.
+    @discardableResult
+    func finalizeInProgressRecording(
+        id: UUID,
+        audioURL: URL,
+        duration: TimeInterval,
+        endedAt: Date,
+        status: Recording.ProcessingStatus,
+        recoverySource: RecoverySource? = nil,
+        forceSave: Bool = true
+    ) -> Bool {
+        guard let index = recordings.firstIndex(where: { $0.id == id }) else { return false }
+
+        let ext = audioURL.pathExtension.isEmpty ? "wav" : audioURL.pathExtension
+        let fileName = "\(id.uuidString).\(ext)"
+        let destURL = recordingsDir.appendingPathComponent(fileName)
+
+        do {
+            if fileManager.fileExists(atPath: destURL.path) {
+                try fileManager.removeItem(at: destURL)
+            }
+            try fileManager.copyItem(at: audioURL, to: destURL)
+        } catch {
+            Log.app.error("Failed to finalize recording audio: \(error.localizedDescription)")
+            return false
+        }
+
+        let fileSize: Int64 = if let attrs = try? fileManager.attributesOfItem(atPath: destURL.path),
+                                 let size = attrs[.size] as? Int64
+        {
+            size
+        } else {
+            0
+        }
+
+        let previous = recordings[index]
+        recordings[index] = Recording(
+            id: previous.id,
+            createdAt: previous.createdAt,
+            endedAt: endedAt,
+            type: previous.type,
+            audioFileName: fileName,
+            durationSeconds: duration,
+            fileSizeBytes: fileSize,
+            status: status,
+            transcriptionText: previous.transcriptionText,
+            errorMessage: nil,
+            statusDetail: nil,
+            processedAt: previous.processedAt,
+            chapters: previous.chapters,
+            sourceDevice: previous.sourceDevice,
+            translationTargetLanguageCode: previous.translationTargetLanguageCode,
+            recoverySource: recoverySource ?? previous.recoverySource,
+            sourceFileName: previous.sourceFileName,
+            sourceFileSizeBytes: previous.sourceFileSizeBytes,
+            remoteSource: previous.remoteSource,
+            sourceCaptionArtifacts: previous.sourceCaptionArtifacts,
+            generatedTranscriptProvenance: previous.generatedTranscriptProvenance,
+            transcriptSegments: previous.transcriptSegments,
+            title: previous.title,
+            description: previous.description,
+            transcriptHistory: previous.transcriptHistory
+        )
+
+        if forceSave {
+            guard saveMetadataSynchronously() else {
+                recordings[index] = previous
+                try? fileManager.removeItem(at: destURL)
+                return false
+            }
+        } else {
+            saveMetadata()
+        }
+        Log.app.info("Meeting library row finalized: \(id.uuidString), status=\(status.rawValue)")
+        return true
+    }
+
+    @discardableResult
+    func markNeedsRecovery(
+        id: UUID,
+        endedAt: Date = Date(),
+        durationSeconds: TimeInterval? = nil,
+        recoverySource: RecoverySource = .orphanedSession
+    ) -> Bool {
+        guard let index = recordings.firstIndex(where: { $0.id == id }) else { return false }
+        let previous = recordings[index]
+        recordings[index].status = .needsRecovery
+        recordings[index].endedAt = endedAt
+        recordings[index].recoverySource = previous.recoverySource ?? recoverySource
+        recordings[index].statusDetail = nil
+        if let durationSeconds {
+            // durationSeconds is `let` — rebuild via finalize-style memberwise if needed.
+            // Use a full reconstruct to update duration.
+            recordings[index] = Recording(
+                id: previous.id,
+                createdAt: previous.createdAt,
+                endedAt: endedAt,
+                type: previous.type,
+                audioFileName: previous.audioFileName,
+                durationSeconds: durationSeconds,
+                fileSizeBytes: previous.fileSizeBytes,
+                status: .needsRecovery,
+                transcriptionText: previous.transcriptionText,
+                errorMessage: previous.errorMessage,
+                statusDetail: nil,
+                processedAt: previous.processedAt,
+                chapters: previous.chapters,
+                sourceDevice: previous.sourceDevice,
+                translationTargetLanguageCode: previous.translationTargetLanguageCode,
+                recoverySource: previous.recoverySource ?? recoverySource,
+                sourceFileName: previous.sourceFileName,
+                sourceFileSizeBytes: previous.sourceFileSizeBytes,
+                remoteSource: previous.remoteSource,
+                sourceCaptionArtifacts: previous.sourceCaptionArtifacts,
+                generatedTranscriptProvenance: previous.generatedTranscriptProvenance,
+                transcriptSegments: previous.transcriptSegments,
+                title: previous.title,
+                description: previous.description,
+                transcriptHistory: previous.transcriptHistory
+            )
+        }
+        guard saveMetadataSynchronously() else {
+            recordings[index] = previous
+            return false
+        }
+        return true
+    }
+
+    func updateStatusDetail(id: UUID, detail: String?) {
+        guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
+        recordings[index].statusDetail = detail
+        saveMetadata()
+    }
+
+    func hasPlayableAudio(for recording: Recording) -> Bool {
+        guard recording.hasAttachedAudio else { return false }
+        return fileManager.fileExists(atPath: audioFileURL(for: recording).path)
     }
 
     // MARK: - Delete
@@ -322,6 +510,8 @@ final class RecordingsLibraryStorage {
 
     func pruneExpiredRecordings(now: Date = Date()) {
         let expiredIds = Set(recordings.compactMap { recording -> UUID? in
+            // Never auto-prune live or recovery rows.
+            if recording.status.isInProgressCapture { return nil }
             let policy = SettingsStorage.shared.historyRetentionPolicy(for: recording.type)
             guard let cutoff = policy.expirationCutoff(now: now),
                   recording.createdAt <= cutoff
@@ -529,7 +719,13 @@ final class RecordingsLibraryStorage {
                     at: recDir, includingPropertiesForKeys: nil
                 ) {
                     let names = Set(contents.map(\.lastPathComponent))
-                    loaded.removeAll { !names.contains($0.audioFileName) }
+                    loaded.removeAll { recording in
+                        // Live / needs-recovery rows may have no durable audio yet.
+                        if recording.audioFileName.isEmpty {
+                            return !recording.status.isInProgressCapture
+                        }
+                        return !names.contains(recording.audioFileName)
+                    }
                 }
                 return (loaded, resetInterrupted)
             } catch {
@@ -551,10 +747,47 @@ final class RecordingsLibraryStorage {
         in recordings: inout [Recording]
     ) -> Bool {
         var didReset = false
-        for index in recordings.indices where recordings[index].status == .processing {
-            recordings[index].status = .unprocessed
-            recordings[index].errorMessage = nil
-            didReset = true
+        for index in recordings.indices {
+            switch recordings[index].status {
+            case .processing:
+                recordings[index].status = .unprocessed
+                recordings[index].errorMessage = nil
+                didReset = true
+            case .recording:
+                let previous = recordings[index]
+                let endedAt = previous.endedAt ?? Date()
+                let duration = max(0, endedAt.timeIntervalSince(previous.createdAt))
+                recordings[index] = Recording(
+                    id: previous.id,
+                    createdAt: previous.createdAt,
+                    endedAt: endedAt,
+                    type: previous.type,
+                    audioFileName: previous.audioFileName,
+                    durationSeconds: previous.durationSeconds > 0 ? previous.durationSeconds : duration,
+                    fileSizeBytes: previous.fileSizeBytes,
+                    status: .needsRecovery,
+                    transcriptionText: previous.transcriptionText,
+                    errorMessage: nil,
+                    statusDetail: nil,
+                    processedAt: previous.processedAt,
+                    chapters: previous.chapters,
+                    sourceDevice: previous.sourceDevice,
+                    translationTargetLanguageCode: previous.translationTargetLanguageCode,
+                    recoverySource: previous.recoverySource ?? .orphanedSession,
+                    sourceFileName: previous.sourceFileName,
+                    sourceFileSizeBytes: previous.sourceFileSizeBytes,
+                    remoteSource: previous.remoteSource,
+                    sourceCaptionArtifacts: previous.sourceCaptionArtifacts,
+                    generatedTranscriptProvenance: previous.generatedTranscriptProvenance,
+                    transcriptSegments: previous.transcriptSegments,
+                    title: previous.title,
+                    description: previous.description,
+                    transcriptHistory: previous.transcriptHistory
+                )
+                didReset = true
+            default:
+                break
+            }
         }
         return didReset
     }
@@ -648,6 +881,7 @@ final class RecordingsLibraryStorage {
             recordings[index] = Recording(
                 id: recording.id,
                 createdAt: recording.createdAt,
+                endedAt: recording.endedAt,
                 type: recording.type,
                 audioFileName: replacementFileName,
                 durationSeconds: recording.durationSeconds,
@@ -655,6 +889,7 @@ final class RecordingsLibraryStorage {
                 status: recording.status,
                 transcriptionText: recording.transcriptionText,
                 errorMessage: recording.errorMessage,
+                statusDetail: recording.statusDetail,
                 processedAt: recording.processedAt,
                 chapters: recording.chapters,
                 sourceDevice: recording.sourceDevice,

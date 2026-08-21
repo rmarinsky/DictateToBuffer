@@ -65,30 +65,65 @@ extension AppDelegate {
             do {
                 if let audioURL = try await meetingRecorderService.stopRecording() {
                     let duration = recordingStartTime.map { stopTime.timeIntervalSince($0) } ?? 0
-                    RecordingsLibraryStorage.shared.saveRecording(
-                        audioURL: audioURL,
-                        type: .meeting,
-                        duration: duration
-                    )
-                    // Library has taken ownership — remove the in-progress directory (RLR-M1).
-                    if let ipId = cancelInProgressRecordingId {
+                    var saved = false
+                    if let ipId = cancelInProgressRecordingId,
+                       RecordingsLibraryStorage.shared.recordings.contains(where: { $0.id == ipId })
+                    {
+                        saved = RecordingsLibraryStorage.shared.finalizeInProgressRecording(
+                            id: ipId,
+                            audioURL: audioURL,
+                            duration: duration,
+                            endedAt: stopTime,
+                            status: .unprocessed,
+                            forceSave: true
+                        )
+                    } else {
+                        saved = RecordingsLibraryStorage.shared.saveRecording(
+                            id: cancelInProgressRecordingId,
+                            audioURL: audioURL,
+                            type: .meeting,
+                            duration: duration,
+                            createdAt: recordingStartTime ?? stopTime,
+                            forceSave: true
+                        ) != nil
+                    }
+                    // Only clean up after durable library handoff.
+                    if saved, let ipId = cancelInProgressRecordingId {
                         if let store = try? InProgressRecordingStore.sharedStore() {
                             try? await store.cleanup(recordingId: ipId)
                         }
+                        try? FileManager.default.removeItem(at: audioURL)
+                        Log.app.info("cancelMeetingRecording: audio saved after cancel")
+                    } else if !saved {
+                        Log.app.warning("cancelMeetingRecording: library save failed — keeping in-progress audio")
+                        if let ipId = cancelInProgressRecordingId {
+                            _ = RecordingsLibraryStorage.shared.markNeedsRecovery(
+                                id: ipId,
+                                endedAt: stopTime,
+                                durationSeconds: duration
+                            )
+                        }
                     }
-                    try? FileManager.default.removeItem(at: audioURL)
-                    Log.app.info("cancelMeetingRecording: audio saved after cancel")
                 } else {
                     await meetingRecorderService.cancelRecording()
+                    if let ipId = cancelInProgressRecordingId {
+                        await discardLiveMeetingRow(id: ipId)
+                    }
                 }
             } catch {
                 Log.app
                     .warning("cancelMeetingRecording: failed to save audio on cancel - \(error.localizedDescription)")
                 await meetingRecorderService.cancelRecording()
+                if let ipId = cancelInProgressRecordingId {
+                    _ = RecordingsLibraryStorage.shared.markNeedsRecovery(id: ipId, endedAt: stopTime)
+                }
             }
         } else {
             // Cancel meeting recorder without persisting
             await meetingRecorderService.cancelRecording()
+            if let ipId = cancelInProgressRecordingId {
+                await discardLiveMeetingRow(id: ipId)
+            }
         }
 
         // Release the live transcript after the Flow panel returns to idle.
@@ -225,6 +260,28 @@ extension AppDelegate {
                     updateRecordingFeedbackConnectionStatus(.connected, mode: .meeting)
                 }
             }
+
+            // Library row from start — same UUID as InProgressRecordingStore.
+            if let recordingId = meetingRecorderService.currentRecordingId {
+                let startTime = appState.meetingRecordingStartTime ?? Date()
+                let deviceInfo = meetingRecorderService.microphoneDevice.map {
+                    RecordingDeviceInfo(
+                        uid: $0.uid,
+                        name: $0.name,
+                        transportType: $0.transportType.displayName,
+                        sampleRate: $0.sampleRate,
+                        channelCount: $0.inputChannels,
+                        wasDefaultRoute: $0.isDefault
+                    )
+                }
+                _ = RecordingsLibraryStorage.shared.beginMeetingRecording(
+                    id: recordingId,
+                    type: .meeting,
+                    createdAt: startTime,
+                    sourceDevice: deviceInfo
+                )
+            }
+
             startMetrics.finish(outcome: "ok")
 
             // Activate escape cancel handler
@@ -370,6 +427,19 @@ extension AppDelegate {
             Task { @MainActor in
                 store?.connectionStatus = status
                 self?.updateRecordingFeedbackConnectionStatus(status, mode: .meeting)
+                if let id = self?.meetingRecorderService.currentRecordingId {
+                    let detail: String? = switch status {
+                    case .connecting, .reconnecting:
+                        "Reconnecting…"
+                    case let .failed(message):
+                        message.isEmpty
+                            ? "Live transcript interrupted — audio still recording"
+                            : "Live transcript interrupted — audio still recording (\(message))"
+                    case .connected, .disconnected:
+                        nil
+                    }
+                    RecordingsLibraryStorage.shared.updateStatusDetail(id: id, detail: detail)
+                }
             }
         }
 
@@ -481,9 +551,10 @@ extension AppDelegate {
         var originalWavURL: URL?
         let stopTime = Date()
         let duration = recordingStartTime.map { stopTime.timeIntervalSince($0) } ?? 0
-        let recordingId = UUID()
         // Capture in-progress recording ID before stopRecording() clears it (RLR-M1).
+        // Library row created at start uses this same UUID.
         let inProgressRecordingId = meetingRecorderService.currentRecordingId
+        let recordingId = inProgressRecordingId ?? UUID()
 
         func cleanupTemporaryAudio() {
             if let wavURL = originalWavURL {
@@ -524,22 +595,41 @@ extension AppDelegate {
                 capturedAudioURL = compressedURL
             }
 
-            // Save to the library immediately — transcription can take tens of
-            // minutes and a cancelled/failed pipeline must never lose the
-            // audio. The transcript is attached to this entry when it lands.
-            // The in-progress directory is NOT cleaned up yet: compressedURL
-            // still lives inside it and is read by the jobs fallback below.
-            librarySavedId = RecordingsLibraryStorage.shared.saveRecording(
-                id: recordingId,
-                audioURL: compressedURL,
-                type: .meeting,
-                duration: duration
-            )
-            if librarySavedId != nil {
-                RecordingsLibraryStorage.shared.updateRecording(
+            // Finalize the live library row (same UUID as start). Fall back to
+            // saveRecording when beginMeetingRecording never created a row.
+            let hasLiveRow = RecordingsLibraryStorage.shared.recordings.contains { $0.id == recordingId }
+            if hasLiveRow {
+                let ok = RecordingsLibraryStorage.shared.finalizeInProgressRecording(
                     id: recordingId,
+                    audioURL: compressedURL,
+                    duration: duration,
+                    endedAt: stopTime,
                     status: .processing,
-                    error: nil
+                    forceSave: true
+                )
+                librarySavedId = ok ? recordingId : nil
+            } else {
+                librarySavedId = RecordingsLibraryStorage.shared.saveRecording(
+                    id: recordingId,
+                    audioURL: compressedURL,
+                    type: .meeting,
+                    duration: duration,
+                    createdAt: recordingStartTime ?? stopTime,
+                    forceSave: true
+                )
+                if librarySavedId != nil {
+                    RecordingsLibraryStorage.shared.updateRecording(
+                        id: recordingId,
+                        status: .processing,
+                        error: nil
+                    )
+                }
+            }
+            if librarySavedId == nil, let ipId = inProgressRecordingId {
+                _ = RecordingsLibraryStorage.shared.markNeedsRecovery(
+                    id: ipId,
+                    endedAt: stopTime,
+                    durationSeconds: duration
                 )
             }
 
@@ -697,32 +787,41 @@ extension AppDelegate {
                 }
             }
             // The pipeline is done reading compressedURL — the in-progress
-            // directory (which contains it) can go now (RLR-M1).
-            cleanupInProgressDirectory()
+            // directory (which contains it) can go now only after durable handoff.
+            if librarySavedId != nil {
+                cleanupInProgressDirectory()
+                if didCompress {
+                    try? FileManager.default.removeItem(at: audioURL)
+                }
+                try? FileManager.default.removeItem(at: compressedURL)
+                RecoveryStateManager.shared.clearState()
+            }
 
             if SettingsStorage.shared.playSoundOnCompletion {
                 NSSound(named: .init("Funk"))?.play()
             }
-
-            RecoveryStateManager.shared.clearState()
-            if didCompress {
-                try? FileManager.default.removeItem(at: audioURL)
-            }
-            try? FileManager.default.removeItem(at: compressedURL)
 
         } catch is CancellationError {
             Log.app.info("stopMeetingRecording: Cancelled")
             // The library entry (saved right after compression) stays — a
             // cancelled transcription must not throw away the meeting audio.
             // updateRecording is a no-op when the entry was never saved.
-            RecordingsLibraryStorage.shared.updateRecording(
-                id: recordingId,
-                status: .unprocessed,
-                error: nil
-            )
-            cleanupTemporaryAudio()
-            cleanupInProgressDirectory()
-            RecoveryStateManager.shared.clearState()
+            if librarySavedId != nil {
+                RecordingsLibraryStorage.shared.updateRecording(
+                    id: recordingId,
+                    status: .unprocessed,
+                    error: nil
+                )
+                cleanupTemporaryAudio()
+                cleanupInProgressDirectory()
+                RecoveryStateManager.shared.clearState()
+            } else if let ipId = inProgressRecordingId {
+                _ = RecordingsLibraryStorage.shared.markNeedsRecovery(
+                    id: ipId,
+                    endedAt: stopTime,
+                    durationSeconds: duration
+                )
+            }
             await MainActor.run {
                 appState.meetingRecordingState = .idle
                 appState.meetingRecordingStartTime = nil
@@ -743,16 +842,38 @@ extension AppDelegate {
                 RecoveryStateManager.shared.clearState()
             } else if let audioURL = capturedAudioURL {
                 let duration = recordingStartTime.map { stopTime.timeIntervalSince($0) } ?? 0
-                RecordingsLibraryStorage.shared.saveRecording(
-                    id: recordingId,
-                    audioURL: audioURL,
-                    type: .meeting,
-                    duration: duration
-                )
-                // Library has taken ownership — remove the in-progress directory (RLR-M1).
-                cleanupInProgressDirectory()
-                cleanupTemporaryAudio()
-                RecoveryStateManager.shared.clearState()
+                let hasLiveRow = RecordingsLibraryStorage.shared.recordings.contains { $0.id == recordingId }
+                let saved: Bool
+                if hasLiveRow {
+                    saved = RecordingsLibraryStorage.shared.finalizeInProgressRecording(
+                        id: recordingId,
+                        audioURL: audioURL,
+                        duration: duration,
+                        endedAt: stopTime,
+                        status: .unprocessed,
+                        forceSave: true
+                    )
+                } else {
+                    saved = RecordingsLibraryStorage.shared.saveRecording(
+                        id: recordingId,
+                        audioURL: audioURL,
+                        type: .meeting,
+                        duration: duration,
+                        createdAt: recordingStartTime ?? stopTime,
+                        forceSave: true
+                    ) != nil
+                }
+                if saved {
+                    cleanupInProgressDirectory()
+                    cleanupTemporaryAudio()
+                    RecoveryStateManager.shared.clearState()
+                } else if let ipId = inProgressRecordingId {
+                    _ = RecordingsLibraryStorage.shared.markNeedsRecovery(
+                        id: ipId,
+                        endedAt: stopTime,
+                        durationSeconds: duration
+                    )
+                }
             }
 
             let processingState = appState.meetingRecordingState
@@ -828,5 +949,15 @@ extension AppDelegate {
         }
 
         escapeService.activate()
+    }
+
+    /// Removes the live library row and in-progress directory after an explicit discard cancel.
+    func discardLiveMeetingRow(id: UUID) async {
+        if let recording = RecordingsLibraryStorage.shared.recordings.first(where: { $0.id == id }) {
+            _ = RecordingsLibraryStorage.shared.deleteRecording(recording)
+        }
+        if let store = try? InProgressRecordingStore.sharedStore() {
+            try? await store.cleanup(recordingId: id)
+        }
     }
 }

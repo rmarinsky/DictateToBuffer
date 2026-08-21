@@ -395,7 +395,9 @@ final class RecordingModelMigrationTests: XCTestCase {
             .transcribed,
             .translated,
             .failed,
-            .partiallyRecovered
+            .partiallyRecovered,
+            .recording,
+            .needsRecovery
         ]
 
         for status in allCases {
@@ -412,10 +414,14 @@ final class RecordingModelMigrationTests: XCTestCase {
                 _ = status
             case .partiallyRecovered:
                 _ = status
+            case .recording:
+                _ = status
+            case .needsRecovery:
+                _ = status
             }
         }
         // If this compiles, all cases are handled.
-        XCTAssertEqual(allCases.count, 6)
+        XCTAssertEqual(allCases.count, 8)
     }
 
     // MARK: - 4. RecoverySource raw-value stability

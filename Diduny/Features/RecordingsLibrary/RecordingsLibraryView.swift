@@ -159,10 +159,19 @@ struct RecordingsLibraryView: View {
                     if playbackService.playingRecordingId == recording.id {
                         playbackService.stop()
                     }
+                    let id = recording.id
+                    let needsInProgressCleanup = recording.status.isInProgressCapture
                     if storage.deleteRecording(recording) {
-                        selectedRecordingIds.remove(recording.id)
-                        if case let .recording(id, _) = inspectorSelection, id == recording.id {
+                        selectedRecordingIds.remove(id)
+                        if case let .recording(selectedId, _) = inspectorSelection, selectedId == id {
                             inspectorSelection = nil
+                        }
+                        if needsInProgressCleanup {
+                            Task {
+                                if let store = try? InProgressRecordingStore.sharedStore() {
+                                    try? await store.cleanup(recordingId: id)
+                                }
+                            }
                         }
                     } else {
                         deletionErrorMessage = "The recording and its files were left unchanged."
@@ -360,6 +369,12 @@ struct RecordingsLibraryView: View {
                         },
                         onTranscribe: { transcribe(recording) },
                         onDelete: { requestDelete(recording) },
+                        onProcessRecovery: recording.status == .needsRecovery
+                            ? { resolveRecovery(recording, action: .processNow) }
+                            : nil,
+                        onSaveRecoveryAudio: recording.status == .needsRecovery
+                            ? { resolveRecovery(recording, action: .saveAudioOnly) }
+                            : nil,
                         isSelectionMode: isSelectionMode,
                         isSelected: selectedRecordingIds.contains(recording.id),
                         onToggleSelection: { toggleSelection(for: recording) }
@@ -479,16 +494,29 @@ struct RecordingsLibraryView: View {
 
     @ViewBuilder
     private func recordingContextMenu(for recording: Recording) -> some View {
+        if recording.status == .needsRecovery {
+            Button("Process Now") {
+                resolveRecovery(recording, action: .processNow)
+            }
+            Button("Save Audio Only") {
+                resolveRecovery(recording, action: .saveAudioOnly)
+            }
+            Button("Discard Recovery", role: .destructive) {
+                resolveRecovery(recording, action: .discard)
+            }
+            Divider()
+        }
+
         Button(recording.remoteSource == nil ? "Transcribe" : "Transcribe Again…") {
             transcribe(recording)
         }
-        .disabled(recording.status == .processing)
+        .disabled(recording.status == .processing || recording.status.isInProgressCapture)
 
         if recording.type.isMeetingLike {
             Button("Transcribe with Speakers") {
                 queueService.enqueue([recording.id], action: .transcribeDiarize, providerOverride: .cloud)
             }
-            .disabled(recording.status == .processing)
+            .disabled(recording.status == .processing || recording.status.isInProgressCapture)
         }
 
         Menu("Translate to") {
@@ -506,7 +534,7 @@ struct RecordingsLibraryView: View {
                 }
             }
         }
-        .disabled(recording.status == .processing)
+        .disabled(recording.status == .processing || recording.status.isInProgressCapture)
 
         if let text = recording.displayTranscriptText {
             Divider()
@@ -535,6 +563,24 @@ struct RecordingsLibraryView: View {
     private func requestDelete(_ recording: Recording) {
         recordingToDelete = recording
         showDeleteConfirmation = true
+    }
+
+    private func resolveRecovery(
+        _ recording: Recording,
+        action: MeetingRecoveryService.RecoveryAction
+    ) {
+        Task { @MainActor in
+            let ok = await MeetingRecoveryService.shared.resolve(
+                recordingID: recording.id,
+                action: action
+            )
+            if !ok, action != .discard {
+                DictationOverlayController.shared.showInfo(
+                    message: "Could not recover meeting audio",
+                    duration: 3
+                )
+            }
+        }
     }
 
     private func toggleSelectionMode() {
