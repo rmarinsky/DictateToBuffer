@@ -11,7 +11,10 @@ extension AppDelegate {
         toggleMeetingRecording(provider: provider)
     }
 
-    func toggleMeetingRecording(provider: TranscriptionProvider) {
+    func toggleMeetingRecording(
+        provider: TranscriptionProvider,
+        cancelPipeline: (() async -> Void)? = nil
+    ) {
         let meetingRecordingState = appState.meetingRecordingState
         Log.app.info("toggleMeetingRecording called, current state: \(meetingRecordingState)")
 
@@ -23,6 +26,7 @@ extension AppDelegate {
         switch meetingRecordingState {
         case .idle:
             guard canStartRecording(kind: .meeting) else { return }
+            meetingPipelineGeneration &+= 1
             ShareableContentCache.shared.prewarm()
             if provider == .cloud {
                 Task { _ = await AuthService.shared.getAccessToken() }
@@ -39,17 +43,39 @@ extension AppDelegate {
             }
         case .processing:
             Log.app.info("Meeting state is processing, canceling...")
-            let inFlightTask = meetingPipelineTask
-            inFlightTask?.cancel()
-            meetingPipelineTask = Task {
-                if let inFlightTask {
-                    await inFlightTask.value
-                }
-                await self.cancelMeetingRecording()
-            }
+            cancelMeetingPipeline(cancelPipeline: cancelPipeline)
         default:
             Log.app.info("Meeting state is \(meetingRecordingState), ignoring toggle")
         }
+    }
+
+    @discardableResult
+    func cancelMeetingPipeline(
+        cancelPipeline: (() async -> Void)? = nil
+    ) -> Task<Void, Never>? {
+        let state = appState.meetingRecordingState
+        guard state == .processing || state == .recording else { return nil }
+
+        let cancellationGeneration = meetingPipelineGeneration
+        let inFlightTask = meetingPipelineTask
+        inFlightTask?.cancel()
+        let cancellationTask = Task {
+            if let inFlightTask {
+                await inFlightTask.value
+            }
+            let currentState = self.appState.meetingRecordingState
+            guard !Task.isCancelled,
+                  currentState == .processing || currentState == .recording,
+                  self.meetingPipelineGeneration == cancellationGeneration
+            else { return }
+            if let cancelPipeline {
+                await cancelPipeline()
+            } else {
+                await self.cancelMeetingRecording()
+            }
+        }
+        meetingPipelineTask = cancellationTask
+        return cancellationTask
     }
 
     /// Tears down an active or processing meeting recording. Callers that need
@@ -1100,8 +1126,8 @@ extension AppDelegate {
         escapeService.onCancel = { [weak self] in
             Task { @MainActor in
                 let shouldSaveAudio = SettingsStorage.shared.escapeCancelSaveAudio
-                self?.meetingPipelineTask?.cancel()
-                await self?.cancelMeetingRecording()
+                let cancellationTask = self?.cancelMeetingPipeline()
+                await cancellationTask?.value
                 let message = shouldSaveAudio ? "Recording cancelled and saved" : "Recording cancelled"
                 DictationOverlayController.shared.showInfo(message: message)
             }

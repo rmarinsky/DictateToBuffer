@@ -138,6 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var voicePipelineTask: Task<Void, Never>?
     var translationPipelineTask: Task<Void, Never>?
     var meetingPipelineTask: Task<Void, Never>?
+    var meetingPipelineGeneration: UInt64 = 0
     var activeMeetingTranscriptionSessionID: UUID?
     var activeMeetingTranscriptionProvider: TranscriptionProvider?
     var meetingTranslationPipelineTask: Task<Void, Never>?
@@ -710,8 +711,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if appState.meetingRecordingState == .processing,
            appState.meetingRecordingStartTime == nil
         {
-            meetingPipelineTask?.cancel()
-            await cancelMeetingRecording()
+            let cancellationTask = cancelMeetingPipeline()
+            await cancellationTask?.value
             return
         }
 

@@ -234,12 +234,20 @@ final class MeetingLiveLibraryRowTests: XCTestCase {
         XCTAssertEqual(originalStatusApplied, false)
     }
 
-    func test_cancelledRecorderInitialization_finishesBeforeRestart() async throws {
+    func test_repeatedCancelDuringRecorderInitialization_cannotTearDownRestart() async throws {
         let delegate = AppDelegate()
         var resumeRecorderStart: CheckedContinuation<Void, Never>?
-        var resumeRestartPermission: CheckedContinuation<Bool, Never>?
         let recorderStartBegan = expectation(description: "Recorder initialization started")
-        let restartPermissionBegan = expectation(description: "Restart permission started")
+        let restartedSessionID = UUID()
+        var cancellationCount = 0
+        let cancelAndRestart = {
+            cancellationCount += 1
+            delegate.appState.meetingRecordingState = .idle
+            delegate.meetingPipelineGeneration &+= 1
+            delegate.activeMeetingTranscriptionSessionID = restartedSessionID
+            delegate.activeMeetingTranscriptionProvider = .local
+            delegate.appState.meetingRecordingState = .processing
+        }
 
         delegate.appState.meetingRecordingState = .processing
         let firstStart = Task {
@@ -258,20 +266,67 @@ final class MeetingLiveLibraryRowTests: XCTestCase {
         await fulfillment(of: [recorderStartBegan], timeout: 1)
         let firstSessionID = try XCTUnwrap(delegate.activeMeetingTranscriptionSessionID)
 
-        delegate.toggleMeetingRecording(provider: .local)
-        let cancellationTask = try XCTUnwrap(delegate.meetingPipelineTask)
+        delegate.toggleMeetingRecording(provider: .local, cancelPipeline: cancelAndRestart)
+        delegate.toggleMeetingRecording(provider: .local, cancelPipeline: cancelAndRestart)
+        let latestCancellationTask = try XCTUnwrap(delegate.meetingPipelineTask)
         await Task.yield()
 
         XCTAssertEqual(delegate.appState.meetingRecordingState, .processing)
         XCTAssertEqual(delegate.activeMeetingTranscriptionSessionID, firstSessionID)
 
         resumeRecorderStart?.resume()
-        await cancellationTask.value
+        await latestCancellationTask.value
 
+        XCTAssertEqual(cancellationCount, 1)
+        XCTAssertEqual(delegate.appState.meetingRecordingState, .processing)
+        XCTAssertEqual(delegate.activeMeetingTranscriptionSessionID, restartedSessionID)
+        XCTAssertEqual(delegate.activeMeetingTranscriptionProvider, .local)
+        XCTAssertNotEqual(restartedSessionID, firstSessionID)
+
+        delegate.appState.meetingRecordingState = .idle
+        delegate.activeMeetingTranscriptionSessionID = nil
+        delegate.activeMeetingTranscriptionProvider = nil
+    }
+
+    func test_feedbackCancelDuringRecorderInitialization_finishesBeforeRestart() async throws {
+        let delegate = AppDelegate()
+        var resumeRecorderStart: CheckedContinuation<Void, Never>?
+        let recorderStartBegan = expectation(description: "Recorder initialization started")
+        let feedbackCancelFinished = expectation(description: "Feedback cancel finished")
+        feedbackCancelFinished.isInverted = true
+
+        delegate.appState.meetingRecordingState = .processing
+        let firstStart = Task {
+            await delegate.startMeetingRecording(
+                provider: .local,
+                ensureScreenRecordingPermission: { true },
+                startRecorder: {
+                    await withCheckedContinuation { continuation in
+                        resumeRecorderStart = continuation
+                        recorderStartBegan.fulfill()
+                    }
+                }
+            )
+        }
+        delegate.meetingPipelineTask = firstStart
+        await fulfillment(of: [recorderStartBegan], timeout: 1)
+        let firstSessionID = try XCTUnwrap(delegate.activeMeetingTranscriptionSessionID)
+
+        let feedbackCancel = Task {
+            await delegate.stopActiveRecordingFromFeedback()
+            feedbackCancelFinished.fulfill()
+        }
+        await fulfillment(of: [feedbackCancelFinished], timeout: 0.05)
+        XCTAssertEqual(delegate.appState.meetingRecordingState, .processing)
+        XCTAssertEqual(delegate.activeMeetingTranscriptionSessionID, firstSessionID)
+
+        resumeRecorderStart?.resume()
+        await feedbackCancel.value
         XCTAssertEqual(delegate.appState.meetingRecordingState, .idle)
-        XCTAssertNil(delegate.activeMeetingTranscriptionSessionID)
-        XCTAssertNil(delegate.activeMeetingTranscriptionProvider)
 
+        var resumeRestartPermission: CheckedContinuation<Bool, Never>?
+        let restartPermissionBegan = expectation(description: "Restart permission started")
+        delegate.meetingPipelineGeneration &+= 1
         delegate.appState.meetingRecordingState = .processing
         let restartedStart = Task {
             await delegate.startMeetingRecording(
@@ -284,14 +339,35 @@ final class MeetingLiveLibraryRowTests: XCTestCase {
                 }
             )
         }
+        delegate.meetingPipelineTask = restartedStart
         await fulfillment(of: [restartPermissionBegan], timeout: 1)
         let restartedSessionID = try XCTUnwrap(delegate.activeMeetingTranscriptionSessionID)
-        XCTAssertNotEqual(restartedSessionID, firstSessionID)
+
+        await Task.yield()
+        XCTAssertEqual(delegate.appState.meetingRecordingState, .processing)
+        XCTAssertEqual(delegate.activeMeetingTranscriptionSessionID, restartedSessionID)
 
         restartedStart.cancel()
         resumeRestartPermission?.resume(returning: true)
         await restartedStart.value
         delegate.appState.meetingRecordingState = .idle
+        delegate.activeMeetingTranscriptionSessionID = nil
+        delegate.activeMeetingTranscriptionProvider = nil
+    }
+
+    func test_explicitCancelWhileRecording_usesCancellationPipelineOnce() async throws {
+        let delegate = AppDelegate()
+        var cancellationCount = 0
+        delegate.appState.meetingRecordingState = .recording
+
+        let cancellationTask = try XCTUnwrap(delegate.cancelMeetingPipeline {
+            cancellationCount += 1
+            delegate.appState.meetingRecordingState = .idle
+        })
+        await cancellationTask.value
+
+        XCTAssertEqual(cancellationCount, 1)
+        XCTAssertEqual(delegate.appState.meetingRecordingState, .idle)
     }
 
     func test_cancelledStartDuringPermissionWait_neverStartsRecorder() async {
