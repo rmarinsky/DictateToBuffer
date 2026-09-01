@@ -145,6 +145,62 @@ struct EdgeCommandPanelModelTests {
         #expect(meeting == NSRect(x: 1080, y: 240, width: 360, height: 420))
     }
 
+    @Test("Meeting suggestion is actionable for notch and compact-panel configurations")
+    func meetingSuggestionOverridesConfiguredFeedbackSurface() {
+        #expect(
+            EdgeCommandPanelController.meetingSuggestionPresentation(for: .notch)
+                == .meetingSuggestion
+        )
+        #expect(
+            EdgeCommandPanelController.meetingSuggestionPresentation(for: .compactPanel)
+                == .meetingSuggestion
+        )
+        #expect(
+            EdgeCommandPanelPlacement.size(for: .meetingSuggestion, edge: .right).height >= 44
+        )
+    }
+
+    @Test("Meeting suggestion start can be consumed only once")
+    func meetingSuggestionStartIsConsumedOnce() {
+        let model = EdgeCommandPanelModel(pairs: [.defaultPair], selectedPair: .defaultPair)
+        let meeting = DetectedMeeting(id: UUID(), client: .zoom)
+        let suggestion = MeetingSuggestion(meeting: meeting, processingMode: .local)
+
+        model.presentMeetingSuggestion(suggestion)
+
+        #expect(model.consumeMeetingSuggestionStart(id: meeting.id) == suggestion)
+        #expect(model.consumeMeetingSuggestionStart(id: meeting.id) == nil)
+    }
+
+    @Test("Disabling future suggestions keeps the current meeting suggestion open")
+    func disablingTrackingDoesNotDismissCurrentSuggestion() {
+        let model = EdgeCommandPanelModel(pairs: [.defaultPair], selectedPair: .defaultPair)
+        let suggestion = MeetingSuggestion(
+            meeting: DetectedMeeting(id: UUID(), client: .teams),
+            processingMode: .cloud
+        )
+
+        model.presentMeetingSuggestion(suggestion)
+        model.meetingSuggestionsEnabled = false
+
+        #expect(model.meetingSuggestion == suggestion)
+    }
+
+    @Test("Meeting suggestion controls meet the minimum pointer target")
+    func meetingSuggestionControlsMeetMinimumTarget() {
+        #expect(EdgeCommandPanelPlacement.meetingSuggestionControlHitTargetHeight >= 44)
+    }
+
+    @Test("Meeting suggestion describes the actual processing path")
+    func meetingSuggestionProcessingModeMatchesRuntimeReadiness() {
+        #expect(MeetingSuggestionProcessingMode.resolve(cloudEnabled: true, hasLocalModel: false) == .cloud)
+        #expect(MeetingSuggestionProcessingMode.resolve(cloudEnabled: false, hasLocalModel: true) == .local)
+        #expect(
+            MeetingSuggestionProcessingMode.resolve(cloudEnabled: false, hasLocalModel: false)
+                == .recordingOnly
+        )
+    }
+
     @Test("Auto-hide only collapses after the pointer leaves the panel")
     func autoHideChecksThePointerAtTheEndOfTheDelay() {
         let panelFrame = NSRect(x: 1154, y: 287, width: 286, height: 326)

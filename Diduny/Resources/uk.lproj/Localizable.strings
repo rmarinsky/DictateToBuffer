@@ -76,3 +76,14 @@
 "Suggest recording when a meeting starts" = "Пропонувати запис на початку зустрічі";
 "Meeting Suggestions" = "Пропозиції запису зустрічей";
 "Diduny checks meeting app activity locally. Recording starts only after you choose to start it." = "Diduny локально перевіряє активність застосунків для зустрічей. Запис починається лише після вашої дії.";
+"Looks like a meeting started" = "Схоже, почалася зустріч";
+"Start recording and transcription in %@ so you can return to the materials after the meeting?" = "Почати запис і транскрипцію в %@, щоб повернутися до матеріалів після зустрічі?";
+"Cloud - live transcription" = "Хмара - транскрипція наживо";
+"Local - transcription on this Mac" = "Локально - транскрипція на цьому Mac";
+"Recording only - download a local model for transcription" = "Лише запис - завантажте локальну модель для транскрипції";
+"Continue tracking meetings and suggesting recordings" = "Надалі відстежувати зустрічі та пропонувати запис";
+"Start recording" = "Почати запис";
+"Not now" = "Не зараз";
+"Close meeting recording suggestion" = "Закрити пропозицію запису зустрічі";
+"Start recording and transcription" = "Почати запис і транскрипцію";
+"Meeting recording suggestion" = "Пропозиція запису зустрічі";

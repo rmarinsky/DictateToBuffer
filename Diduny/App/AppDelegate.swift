@@ -165,6 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var pushToTalkService = PushToTalkService()
     lazy var translationPushToTalkService = PushToTalkService()
     lazy var meetingRecorderService = MeetingRecorderService()
+    lazy var meetingJoinMonitor = MeetingJoinMonitor()
     lazy var realtimeTranscriptionService = CloudRealtimeService()
     var localVoiceStreamingService: LocalWhisperStreamingService?
     var localMeetingStreamingService: LocalWhisperStreamingService?
@@ -283,6 +284,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(meetingSuggestionsEnabledChanged(_:)),
+            name: .meetingSuggestionsEnabledChanged,
+            object: nil
+        )
+
         setupApplicationServices()
 
         if OnboardingManager.shared.shouldPresentOnboardingWindow {
@@ -323,6 +331,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Log.app.info("[Auth] No stored session — cloud preferences remain stored, runtime uses local fallback")
         }
 
+        updateMeetingJoinMonitoring()
+
+    }
+
+    @objc private func meetingSuggestionsEnabledChanged(_: Notification) {
+        updateMeetingJoinMonitoring()
+    }
+
+    private func updateMeetingJoinMonitoring() {
+        guard SettingsStorage.shared.meetingSuggestionsEnabled else {
+            meetingJoinMonitor.stop()
+            return
+        }
+        meetingJoinMonitor.start { [weak self] event in
+            self?.handleMeetingPresenceEvent(event)
+        }
+    }
+
+    private func handleMeetingPresenceEvent(_ event: MeetingPresenceEvent) {
+        switch event {
+        case let .joined(meeting):
+            guard !hasAnyRecordingInProgress else { return }
+            EdgeCommandPanelController.shared.showMeetingSuggestion(meeting)
+        case let .ended(meeting):
+            EdgeCommandPanelController.shared.dismissMeetingSuggestion(id: meeting.id)
+        }
     }
 
     func showMainWindowAfterLaunch() {
@@ -600,6 +634,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_: Notification) {
+        meetingJoinMonitor.stop()
         hotkeyService.unregisterAll()
         pushToTalkService.stop()
         translationPushToTalkService.stop()
@@ -705,6 +740,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func isStateInProgress(_ state: RecordingState) -> Bool {
         state == .recording || state == .processing
+    }
+
+    var hasAnyRecordingInProgress: Bool {
+        isStateInProgress(appState.recordingState)
+            || isStateInProgress(appState.translationRecordingState)
+            || isStateInProgress(appState.meetingRecordingState)
+            || isStateInProgress(appState.meetingTranslationRecordingState)
     }
 
     private func restoreRecordingFeedbackAfterInfo(delay: TimeInterval = 1.6) {
