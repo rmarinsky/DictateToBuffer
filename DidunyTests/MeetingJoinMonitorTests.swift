@@ -13,7 +13,7 @@ final class MeetingJoinMonitorTests: XCTestCase {
             hasCallWindow: false,
             isFrontmostCallWindow: false
         )
-        let startedAt = Date(timeIntervalSince1970: 1_000)
+        let startedAt = Date(timeIntervalSince1970: 1000)
 
         XCTAssertNil(monitor.ingest([joinedZoom], at: startedAt))
         guard case let .joined(meeting) = monitor.ingest([joinedZoom], at: startedAt.addingTimeInterval(1)) else {
@@ -34,7 +34,7 @@ final class MeetingJoinMonitorTests: XCTestCase {
             hasCallWindow: false,
             isFrontmostCallWindow: false
         )
-        let startedAt = Date(timeIntervalSince1970: 2_000)
+        let startedAt = Date(timeIntervalSince1970: 2000)
 
         XCTAssertNil(monitor.ingest([joinedTeams], at: startedAt))
         guard case let .joined(firstMeeting) = monitor.ingest(
@@ -60,6 +60,49 @@ final class MeetingJoinMonitorTests: XCTestCase {
         XCTAssertNotEqual(firstMeeting.id, secondMeeting.id)
     }
 
+    func test_differentClientDoesNotKeepPromptedSessionAlive() {
+        let monitor = MeetingJoinMonitor()
+        let zoom = MeetingSignal(
+            client: .zoom,
+            source: .native,
+            isInputActive: true,
+            isOutputActive: true,
+            hasCallWindow: false,
+            isFrontmostCallWindow: false
+        )
+        let teams = MeetingSignal(
+            client: .teams,
+            source: .native,
+            isInputActive: true,
+            isOutputActive: true,
+            hasCallWindow: false,
+            isFrontmostCallWindow: false
+        )
+        let startedAt = Date(timeIntervalSince1970: 2000)
+
+        XCTAssertNil(monitor.ingest([zoom], at: startedAt))
+        guard case let .joined(zoomMeeting) = monitor.ingest(
+            [zoom],
+            at: startedAt.addingTimeInterval(1)
+        ) else {
+            return XCTFail("Expected Zoom to join")
+        }
+
+        XCTAssertNil(monitor.ingest([teams], at: startedAt.addingTimeInterval(2)))
+        XCTAssertEqual(
+            monitor.ingest([teams], at: startedAt.addingTimeInterval(31)),
+            .ended(zoomMeeting)
+        )
+        XCTAssertNil(monitor.ingest([teams], at: startedAt.addingTimeInterval(32)))
+        guard case let .joined(teamsMeeting) = monitor.ingest(
+            [teams],
+            at: startedAt.addingTimeInterval(33)
+        ) else {
+            return XCTFail("Expected Teams to join after Zoom ended")
+        }
+        XCTAssertEqual(teamsMeeting.client, .teams)
+    }
+
     func test_multipleCandidatesPreferFrontmostCallWindow() {
         let monitor = MeetingJoinMonitor()
         let backgroundDuplex = MeetingSignal(
@@ -78,7 +121,7 @@ final class MeetingJoinMonitorTests: XCTestCase {
             hasCallWindow: true,
             isFrontmostCallWindow: true
         )
-        let startedAt = Date(timeIntervalSince1970: 3_000)
+        let startedAt = Date(timeIntervalSince1970: 3000)
         let signals = [backgroundDuplex, frontmostCall]
 
         XCTAssertNil(monitor.ingest(signals, at: startedAt))
@@ -87,6 +130,16 @@ final class MeetingJoinMonitorTests: XCTestCase {
         }
 
         XCTAssertEqual(meeting.client, .webex)
+    }
+
+    func test_frontmostCallWindowUsesWindowOrderWithinOneApplication() {
+        XCTAssertEqual(
+            MeetingJoinMonitor.frontmostCallWindowID(
+                callWindowIDs: [22, 11],
+                orderedWindowIDs: [90, 11, 22]
+            ),
+            11
+        )
     }
 
     func test_disabledMonitorDoesNotPollOrEmitEvents() async {
@@ -130,7 +183,7 @@ final class MeetingJoinMonitorTests: XCTestCase {
             }
         }
         SettingsStorage.shared.meetingSuggestionsEnabled = true
-        let startedAt = Date(timeIntervalSince1970: 5_000)
+        let startedAt = Date(timeIntervalSince1970: 5000)
         var tick = 0
         var pollCount = 0
         var events: [MeetingPresenceEvent] = []
@@ -224,6 +277,47 @@ final class MeetingJoinMonitorTests: XCTestCase {
         }
     }
 
+    func test_nativeChatNotificationAndVoiceMessageAreNotMeetings() {
+        let nonMeetingSnapshots: [([MeetingAudioProcessSnapshot], [MeetingWindowSnapshot])] = [
+            (
+                [MeetingAudioProcessSnapshot(
+                    bundleIdentifier: "com.microsoft.teams2",
+                    isInputActive: false,
+                    isOutputActive: true
+                )],
+                [MeetingWindowSnapshot(
+                    bundleIdentifier: "com.microsoft.teams2",
+                    title: "Microsoft Teams",
+                    isFrontmost: true
+                )]
+            ),
+            (
+                [MeetingAudioProcessSnapshot(
+                    bundleIdentifier: "com.tinyspeck.slackmacgap",
+                    isInputActive: true,
+                    isOutputActive: false
+                )],
+                [MeetingWindowSnapshot(
+                    bundleIdentifier: "com.tinyspeck.slackmacgap",
+                    title: "Slack",
+                    isFrontmost: true
+                )]
+            ),
+            (
+                [],
+                [MeetingWindowSnapshot(
+                    bundleIdentifier: "com.microsoft.teams2",
+                    title: "Teams Meeting",
+                    isFrontmost: true
+                )]
+            )
+        ]
+
+        for (audio, windows) in nonMeetingSnapshots {
+            XCTAssertTrue(MeetingJoinMonitor.signals(audio: audio, windows: windows).isEmpty)
+        }
+    }
+
     func test_shortSignalFlapDoesNotJoin() {
         let monitor = MeetingJoinMonitor()
         let signal = MeetingSignal(
@@ -234,7 +328,7 @@ final class MeetingJoinMonitorTests: XCTestCase {
             hasCallWindow: false,
             isFrontmostCallWindow: false
         )
-        let startedAt = Date(timeIntervalSince1970: 4_000)
+        let startedAt = Date(timeIntervalSince1970: 4000)
 
         XCTAssertNil(monitor.ingest([signal], at: startedAt))
         XCTAssertNil(monitor.ingest([], at: startedAt.addingTimeInterval(1)))
@@ -251,7 +345,7 @@ final class MeetingJoinMonitorTests: XCTestCase {
             hasCallWindow: true,
             isFrontmostCallWindow: true
         )
-        let startedAt = Date(timeIntervalSince1970: 6_000)
+        let startedAt = Date(timeIntervalSince1970: 6000)
 
         XCTAssertNil(monitor.ingest([meet], at: startedAt))
         guard case let .joined(meeting) = monitor.ingest([meet], at: startedAt.addingTimeInterval(1)) else {

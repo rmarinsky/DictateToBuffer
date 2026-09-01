@@ -44,13 +44,17 @@ struct MeetingSettingsView: View {
                 }
 
                 if meetingCloudModeEnabled {
-                    Text("Cloud mode streams transcription during recording. If realtime is unavailable, app falls back to cloud transcription after stop.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    Text(
+                        "Cloud mode streams live transcription. If it is unavailable, Diduny transcribes in the cloud after stop."
+                    )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 } else {
-                    Text("Local mode records audio only. You can process it later from Recordings using local Whisper models.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    Text(
+                        "Local mode transcribes on this Mac after stop when a model is ready. Without one, saved audio stays unprocessed in Recordings."
+                    )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 }
             }
 
@@ -126,9 +130,11 @@ struct MeetingSettingsView: View {
                 } header: {
                     Text("Audio Gain")
                 } footer: {
-                    Text("Adjust the volume balance between your microphone and system audio. Changes apply to the next recording.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    Text(
+                        "Adjust the volume balance between your microphone and system audio. Changes apply to the next recording."
+                    )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 }
             }
 

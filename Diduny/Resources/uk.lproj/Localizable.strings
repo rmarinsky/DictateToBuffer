@@ -88,3 +88,5 @@
 "Start recording and transcription" = "Почати запис і транскрипцію";
 "Meeting recording suggestion" = "Пропозиція запису зустрічі";
 "Recording saved. Download a local model in Settings to transcribe it." = "Запис збережено. Завантажте локальну модель у налаштуваннях, щоб транскрибувати його.";
+"Cloud mode streams live transcription. If it is unavailable, Diduny transcribes in the cloud after stop." = "Хмарний режим транслює транскрипцію наживо. Якщо вона недоступна, Diduny транскрибує в хмарі після зупинки.";
+"Local mode transcribes on this Mac after stop when a model is ready. Without one, saved audio stays unprocessed in Recordings." = "Локальний режим транскрибує на цьому Mac після зупинки, якщо модель готова. Без неї збережене аудіо лишається необробленим у «Записах».";

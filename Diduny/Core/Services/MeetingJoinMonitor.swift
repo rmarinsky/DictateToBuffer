@@ -5,7 +5,7 @@ import Foundation
 import OSLog
 import ScreenCaptureKit
 
-enum MeetingClient: String, CaseIterable, Equatable, Sendable {
+enum MeetingClient: String, CaseIterable, Equatable {
     case zoom
     case teams
     case googleMeet
@@ -25,18 +25,18 @@ enum MeetingClient: String, CaseIterable, Equatable, Sendable {
     }
 }
 
-struct DetectedMeeting: Equatable, Sendable {
+struct DetectedMeeting: Equatable {
     let id: UUID
     let client: MeetingClient
 }
 
-enum MeetingPresenceEvent: Equatable, Sendable {
+enum MeetingPresenceEvent: Equatable {
     case joined(DetectedMeeting)
     case ended(DetectedMeeting)
 }
 
-struct MeetingSignal: Equatable, Sendable {
-    enum Source: Equatable, Sendable {
+struct MeetingSignal: Equatable {
+    enum Source: Equatable {
         case native
         case browser
     }
@@ -59,16 +59,22 @@ struct MeetingSignal: Equatable, Sendable {
     }
 }
 
-struct MeetingAudioProcessSnapshot: Equatable, Sendable {
+struct MeetingAudioProcessSnapshot: Equatable {
     let bundleIdentifier: String
     let isInputActive: Bool
     let isOutputActive: Bool
 }
 
-struct MeetingWindowSnapshot: Equatable, Sendable {
+struct MeetingWindowSnapshot: Equatable {
     let bundleIdentifier: String
     let title: String
     let isFrontmost: Bool
+}
+
+private struct MeetingWindowCandidate {
+    let id: CGWindowID
+    let bundleIdentifier: String
+    let title: String
 }
 
 @MainActor
@@ -163,14 +169,16 @@ final class MeetingJoinMonitor {
             )
         }
     }
+}
 
+extension MeetingJoinMonitor {
     private struct CoreAudioScan {
         let processes: [MeetingAudioProcessSnapshot]
         let supportsProcessActivity: Bool
         let systemInputActive: Bool
     }
 
-    private static func captureSignals() async -> [MeetingSignal] {
+    private nonisolated static func captureSignals() async -> [MeetingSignal] {
         let audio = readCoreAudioActivity()
         let hasAudioCandidate = audio.supportsProcessActivity
             ? audio.processes.contains {
@@ -180,15 +188,15 @@ final class MeetingJoinMonitor {
             : audio.systemInputActive
         guard hasAudioCandidate else { return [] }
 
-        return signals(
+        return await signals(
             audio: audio.processes,
-            windows: await readMeetingWindows(),
+            windows: readMeetingWindows(),
             supportsProcessActivity: audio.supportsProcessActivity,
             systemInputActive: audio.systemInputActive
         )
     }
 
-    private static func readCoreAudioActivity() -> CoreAudioScan {
+    private nonisolated static func readCoreAudioActivity() -> CoreAudioScan {
         let systemObjectID = AudioObjectID(kAudioObjectSystemObject)
         var processListAddress = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyProcessObjectList,
@@ -229,7 +237,7 @@ final class MeetingJoinMonitor {
         )
     }
 
-    private static func readObjectIDs(
+    private nonisolated static func readObjectIDs(
         from objectID: AudioObjectID,
         address: inout AudioObjectPropertyAddress
     ) -> [AudioObjectID]? {
@@ -248,7 +256,7 @@ final class MeetingJoinMonitor {
         return status == noErr ? values : nil
     }
 
-    private static func readBundleIdentifier(from objectID: AudioObjectID) -> String? {
+    private nonisolated static func readBundleIdentifier(from objectID: AudioObjectID) -> String? {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioProcessPropertyBundleID,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -263,7 +271,7 @@ final class MeetingJoinMonitor {
         return value.takeRetainedValue() as String
     }
 
-    private static func readBooleanProperty(
+    private nonisolated static func readBooleanProperty(
         _ selector: AudioObjectPropertySelector,
         from objectID: AudioObjectID,
         scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal
@@ -280,7 +288,7 @@ final class MeetingJoinMonitor {
             && value != 0
     }
 
-    private static func isSystemInputActive() -> Bool {
+    private nonisolated static func isSystemInputActive() -> Bool {
         let systemObjectID = AudioObjectID(kAudioObjectSystemObject)
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultInputDevice,
@@ -304,24 +312,40 @@ final class MeetingJoinMonitor {
         )
     }
 
-    private static func readMeetingWindows() async -> [MeetingWindowSnapshot] {
+    private nonisolated static func readMeetingWindows() async -> [MeetingWindowSnapshot] {
         guard CGPreflightScreenCaptureAccess() else { return [] }
-        let frontmostBundleIdentifier = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(
                 false,
                 onScreenWindowsOnly: true
             )
-            return content.windows.compactMap { window in
+            let candidates = content.windows.compactMap { window -> MeetingWindowCandidate? in
                 guard let bundleIdentifier = window.owningApplication?.bundleIdentifier,
                       isSupportedApplicationBundle(bundleIdentifier),
                       let title = window.title,
                       !title.isEmpty
                 else { return nil }
-                return MeetingWindowSnapshot(
+                return MeetingWindowCandidate(
+                    id: window.windowID,
                     bundleIdentifier: bundleIdentifier,
-                    title: title,
-                    isFrontmost: bundleIdentifier == frontmostBundleIdentifier
+                    title: title
+                )
+            }
+            let callWindowIDs = candidates.compactMap { candidate in
+                isCallWindow(
+                    bundleIdentifier: candidate.bundleIdentifier,
+                    title: candidate.title
+                ) ? candidate.id : nil
+            }
+            let frontmostID = frontmostCallWindowID(
+                callWindowIDs: callWindowIDs,
+                orderedWindowIDs: orderedOnScreenWindowIDs()
+            )
+            return candidates.map { candidate in
+                MeetingWindowSnapshot(
+                    bundleIdentifier: candidate.bundleIdentifier,
+                    title: candidate.title,
+                    isFrontmost: candidate.id == frontmostID
                 )
             }
         } catch {
@@ -329,7 +353,34 @@ final class MeetingJoinMonitor {
         }
     }
 
-    static func signals(
+    nonisolated static func frontmostCallWindowID(
+        callWindowIDs: [CGWindowID],
+        orderedWindowIDs: [CGWindowID]
+    ) -> CGWindowID? {
+        let callWindowIDs = Set(callWindowIDs)
+        return orderedWindowIDs.first(where: callWindowIDs.contains)
+    }
+
+    private nonisolated static func orderedOnScreenWindowIDs() -> [CGWindowID] {
+        guard let windowInfo = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] else { return [] }
+        return windowInfo.compactMap { entry in
+            (entry[kCGWindowNumber as String] as? NSNumber)?.uint32Value
+        }
+    }
+
+    private nonisolated static func isCallWindow(bundleIdentifier: String, title: String) -> Bool {
+        if let client = nativeMeetingClient(for: bundleIdentifier) {
+            return isNativeCallWindow(title: title, client: client)
+        }
+        return BrowserKind.allCases.contains {
+            belongsToBundleFamily(bundleIdentifier, root: $0.bundleIdentifier)
+        } && browserMeetingClient(for: title) != nil
+    }
+
+    nonisolated static func signals(
         audio: [MeetingAudioProcessSnapshot],
         windows: [MeetingWindowSnapshot],
         supportsProcessActivity: Bool = true,
@@ -394,14 +445,23 @@ final class MeetingJoinMonitor {
 
         return result
     }
+}
 
+extension MeetingJoinMonitor {
     func ingest(_ signals: [MeetingSignal], at now: Date) -> MeetingPresenceEvent? {
+        if case let .prompted(meeting, lastSeenAt) = state {
+            if signals.contains(where: { $0.isValid && $0.client == meeting.client }) {
+                state = .prompted(meeting: meeting, lastSeenAt: now)
+                return nil
+            }
+            guard now.timeIntervalSince(lastSeenAt) >= 30 else { return nil }
+            state = .ended
+            Log.app.info("Meeting \(meeting.client.rawValue, privacy: .public): prompted -> ended")
+            return .ended(meeting)
+        }
+
         guard let signal = preferredSignal(in: signals) else {
             switch state {
-            case let .prompted(meeting, lastSeenAt) where now.timeIntervalSince(lastSeenAt) >= 30:
-                state = .ended
-                Log.app.info("Meeting \(meeting.client.rawValue, privacy: .public): prompted -> ended")
-                return .ended(meeting)
             case .candidate:
                 state = .idle
             default:
@@ -426,8 +486,7 @@ final class MeetingJoinMonitor {
             state = .prompted(meeting: meeting, lastSeenAt: now)
             Log.app.info("Meeting \(client.rawValue, privacy: .public): candidate -> prompted")
             return .joined(meeting)
-        case let .prompted(meeting, _):
-            state = .prompted(meeting: meeting, lastSeenAt: now)
+        case .prompted:
             return nil
         }
     }
@@ -448,11 +507,11 @@ final class MeetingJoinMonitor {
         }
     }
 
-    private static func belongsToBundleFamily(_ bundleIdentifier: String, root: String) -> Bool {
+    private nonisolated static func belongsToBundleFamily(_ bundleIdentifier: String, root: String) -> Bool {
         bundleIdentifier == root || bundleIdentifier.hasPrefix(root + ".")
     }
 
-    private static func isSupportedApplicationBundle(_ bundleIdentifier: String) -> Bool {
+    private nonisolated static func isSupportedApplicationBundle(_ bundleIdentifier: String) -> Bool {
         nativeMeetingClient(for: bundleIdentifier) != nil
             || BrowserKind.allCases.contains { browser in
                 belongsToBundleFamily(bundleIdentifier, root: browser.bundleIdentifier)
@@ -460,31 +519,34 @@ final class MeetingJoinMonitor {
             }
     }
 
-    private static func browserOwnsAudioBundle(_ bundleIdentifier: String, browser: BrowserKind) -> Bool {
+    private nonisolated static func browserOwnsAudioBundle(
+        _ bundleIdentifier: String,
+        browser: BrowserKind
+    ) -> Bool {
         belongsToBundleFamily(bundleIdentifier, root: browser.bundleIdentifier)
             || (browser == .safari && bundleIdentifier.hasPrefix("com.apple.WebKit."))
     }
 
-    private static func browserMeetingClient(for title: String) -> MeetingClient? {
+    private nonisolated static func browserMeetingClient(for title: String) -> MeetingClient? {
         let title = title.lowercased()
         if title.contains("google meet")
             || title.range(of: #"\bmeet\b.*\b[a-z]{3}-[a-z]{4}-[a-z]{3}\b"#, options: .regularExpression) != nil
         {
             return .googleMeet
         }
-        if title.contains("zoom") && (title.contains("meeting") || title.contains("webinar")) {
+        if title.contains("zoom"), title.contains("meeting") || title.contains("webinar") {
             return .zoom
         }
-        if title.contains("microsoft teams") && (title.contains("meeting") || title.contains("call")) {
+        if title.contains("microsoft teams"), title.contains("meeting") || title.contains("call") {
             return .teams
         }
-        if title.contains("webex") && (title.contains("meeting") || title.contains("personal room")) {
+        if title.contains("webex"), title.contains("meeting") || title.contains("personal room") {
             return .webex
         }
         return nil
     }
 
-    private static func nativeMeetingClient(for bundleIdentifier: String) -> MeetingClient? {
+    private nonisolated static func nativeMeetingClient(for bundleIdentifier: String) -> MeetingClient? {
         if bundleIdentifier.hasPrefix("us.zoom.") {
             return .zoom
         }
@@ -508,7 +570,7 @@ final class MeetingJoinMonitor {
         return nil
     }
 
-    private static func isNativeCallWindow(title: String, client: MeetingClient) -> Bool {
+    private nonisolated static func isNativeCallWindow(title: String, client: MeetingClient) -> Bool {
         let title = title.lowercased()
         switch client {
         case .zoom:
