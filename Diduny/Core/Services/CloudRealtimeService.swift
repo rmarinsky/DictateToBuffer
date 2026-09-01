@@ -88,6 +88,25 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
         set { finalizeStateLock.lock(); defer { finalizeStateLock.unlock() }; _onSegmentBoundary = newValue }
     }
 
+    func setConnectionHandlers(
+        onError: ((Error) -> Void)?,
+        onConnectionStatusChanged: ((RealtimeConnectionStatus) -> Void)?
+    ) {
+        finalizeStateLock.lock()
+        _onError = onError
+        _onConnectionStatusChanged = onConnectionStatusChanged
+        finalizeStateLock.unlock()
+    }
+
+    private func connectionHandlers() -> (
+        onError: ((Error) -> Void)?,
+        onConnectionStatusChanged: ((RealtimeConnectionStatus) -> Void)?
+    ) {
+        finalizeStateLock.lock()
+        defer { finalizeStateLock.unlock() }
+        return (_onError, _onConnectionStatusChanged)
+    }
+
     // MARK: - Connect
 
     func connect(
@@ -716,15 +735,14 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
             _ = await UsageService.shared.refresh()
         }
     ) -> Task<Void, Never> {
-        let errorHandler = onError
-        let statusHandler = onConnectionStatusChanged
+        let handlers = connectionHandlers()
         return Task {
             let usage = await loadCachedUsage()
-            errorHandler?(RealtimeTranscriptionError.usageLimitExceeded(
+            handlers.onError?(RealtimeTranscriptionError.usageLimitExceeded(
                 usedHours: usage?.usedHours ?? 0,
                 limitHours: usage?.limitHours ?? 5
             ))
-            statusHandler?(.failed("Cloud usage limit reached"))
+            handlers.onConnectionStatusChanged?(.failed("Cloud usage limit reached"))
             await refreshUsage()
         }
     }

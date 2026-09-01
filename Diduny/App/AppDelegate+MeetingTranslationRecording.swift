@@ -321,7 +321,7 @@ extension AppDelegate {
             }
         }
 
-        rtService.onConnectionStatusChanged = { [weak self, weak store] status in
+        let connectionStatusHandler: (RealtimeConnectionStatus) -> Void = { [weak self, weak store] status in
             Task { @MainActor in
                 store?.connectionStatus = status
                 self?.updateRecordingFeedbackConnectionStatus(status, mode: .meetingTranslation)
@@ -347,10 +347,14 @@ extension AppDelegate {
             }
         }
 
-        rtService.onError = { error in
+        let errorHandler: (Error) -> Void = { error in
             Log.transcription.error("Realtime meeting translation error: \(error.localizedDescription)")
             // Don't stop recording — file recording continues independently
         }
+        rtService.setConnectionHandlers(
+            onError: errorHandler,
+            onConnectionStatusChanged: connectionStatusHandler
+        )
 
         // Connect WebSocket (recording continues even if translation socket is unavailable)
         do {

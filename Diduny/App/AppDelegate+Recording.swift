@@ -808,7 +808,7 @@ extension AppDelegate {
             overlayCoalescer.add(tokens)
         }
 
-        rtService.onConnectionStatusChanged = { [weak self] status in
+        let connectionStatusHandler: (RealtimeConnectionStatus) -> Void = { [weak self] status in
             Log.transcription.info("Dictation RT status: \(String(describing: status))")
             Task { @MainActor in
                 self?.updateRecordingFeedbackConnectionStatus(status, mode: .voice)
@@ -822,12 +822,16 @@ extension AppDelegate {
             }
         }
 
-        rtService.onError = { [weak self] error in
+        let errorHandler: (Error) -> Void = { [weak self] error in
             Log.transcription.error("Dictation RT error: \(error.localizedDescription)")
             Task { @MainActor in
                 self?.updateRecordingFeedbackConnectionStatus(.failed(error.localizedDescription), mode: .voice)
             }
         }
+        rtService.setConnectionHandlers(
+            onError: errorHandler,
+            onConnectionStatusChanged: connectionStatusHandler
+        )
 
         voiceRealtimeConnectionError = nil
 

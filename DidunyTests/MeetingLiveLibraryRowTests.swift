@@ -188,25 +188,27 @@ final class MeetingLiveLibraryRowTests: XCTestCase {
 
         delegate.activeMeetingTranscriptionSessionID = originalSessionID
         delegate.activeMeetingTranscriptionProvider = .cloud
-        service.onError = { error in
-            Task { @MainActor in
-                _ = delegate.fallBackMeetingToLocalIfUsageUnavailable(
-                    error,
-                    sessionID: originalSessionID
-                )
-                originalCallbackCalled.fulfill()
+        service.setConnectionHandlers(
+            onError: { error in
+                Task { @MainActor in
+                    _ = delegate.fallBackMeetingToLocalIfUsageUnavailable(
+                        error,
+                        sessionID: originalSessionID
+                    )
+                    originalCallbackCalled.fulfill()
+                }
+            },
+            onConnectionStatusChanged: { status in
+                Task { @MainActor in
+                    originalStatusApplied = delegate.applyMeetingRealtimeConnectionStatus(
+                        status,
+                        sessionID: originalSessionID,
+                        store: nil
+                    )
+                    originalStatusCalled.fulfill()
+                }
             }
-        }
-        service.onConnectionStatusChanged = { status in
-            Task { @MainActor in
-                originalStatusApplied = delegate.applyMeetingRealtimeConnectionStatus(
-                    status,
-                    sessionID: originalSessionID,
-                    store: nil
-                )
-                originalStatusCalled.fulfill()
-            }
-        }
+        )
 
         let notificationTask = service.reportUsageLimit(
             loadCachedUsage: {
@@ -221,8 +223,10 @@ final class MeetingLiveLibraryRowTests: XCTestCase {
 
         delegate.activeMeetingTranscriptionSessionID = nextSessionID
         delegate.activeMeetingTranscriptionProvider = .cloud
-        service.onError = { _ in nextCallbackCalled.fulfill() }
-        service.onConnectionStatusChanged = { _ in nextStatusCalled.fulfill() }
+        service.setConnectionHandlers(
+            onError: { _ in nextCallbackCalled.fulfill() },
+            onConnectionStatusChanged: { _ in nextStatusCalled.fulfill() }
+        )
         resumeUsage?.resume(returning: nil)
 
         await notificationTask.value

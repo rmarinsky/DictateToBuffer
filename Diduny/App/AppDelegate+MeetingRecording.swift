@@ -537,7 +537,7 @@ extension AppDelegate {
             coalescer?.add(tokens)
         }
 
-        rtService.onConnectionStatusChanged = { [weak self, weak store] status in
+        let connectionStatusHandler: (RealtimeConnectionStatus) -> Void = { [weak self, weak store] status in
             Task { @MainActor in
                 self?.applyMeetingRealtimeConnectionStatus(
                     status,
@@ -553,13 +553,17 @@ extension AppDelegate {
             coalescer?.addBoundary(boundary)
         }
 
-        rtService.onError = { [weak self] error in
+        let errorHandler: (Error) -> Void = { [weak self] error in
             Log.transcription.error("Realtime transcription error: \(error.localizedDescription)")
             Task { @MainActor in
                 self?.fallBackMeetingToLocalIfUsageUnavailable(error, sessionID: sessionID)
             }
             // Don't stop recording — file recording continues independently
         }
+        rtService.setConnectionHandlers(
+            onError: errorHandler,
+            onConnectionStatusChanged: connectionStatusHandler
+        )
 
         // Connect in the background — recording start never waits for the
         // network, and CloudRealtimeService buffers audio until the socket is

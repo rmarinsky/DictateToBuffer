@@ -687,7 +687,7 @@ extension AppDelegate {
             }
         }
 
-        rtService.onConnectionStatusChanged = { [weak self] status in
+        let connectionStatusHandler: (RealtimeConnectionStatus) -> Void = { [weak self] status in
             Log.transcription.info("Translation RT status: \(String(describing: status))")
             Task { @MainActor in
                 self?.updateRecordingFeedbackConnectionStatus(status, mode: feedbackMode)
@@ -701,12 +701,16 @@ extension AppDelegate {
             }
         }
 
-        rtService.onError = { [weak self] error in
+        let errorHandler: (Error) -> Void = { [weak self] error in
             Log.transcription.error("Translation RT error: \(error.localizedDescription)")
             Task { @MainActor in
                 self?.updateRecordingFeedbackConnectionStatus(.failed(error.localizedDescription), mode: feedbackMode)
             }
         }
+        rtService.setConnectionHandlers(
+            onError: errorHandler,
+            onConnectionStatusChanged: connectionStatusHandler
+        )
 
         translationRealtimeConnectionError = nil
 
@@ -756,10 +760,7 @@ extension AppDelegate {
             audioRecorder.onRealtimeAudioData = nil
             translationRealtimeSessionEnabled = false
             translationRealtimeAccumulator = nil
-            realtimeTranscriptionService.onTokensReceived = nil
-            realtimeTranscriptionService.onError = nil
-            realtimeTranscriptionService.onConnectionStatusChanged = nil
-            realtimeTranscriptionService.onSegmentBoundary = nil
+            realtimeTranscriptionService.clearCallbacks()
         }
 
         guard wasEnabled else {
