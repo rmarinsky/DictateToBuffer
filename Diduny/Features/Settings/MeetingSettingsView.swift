@@ -2,6 +2,7 @@ import AVFoundation
 import SwiftUI
 
 struct MeetingSettingsView: View {
+    @State private var meetingSuggestionsEnabled = SettingsStorage.shared.meetingSuggestionsEnabled
     @State private var meetingCloudModeEnabled: Bool = SettingsStorage.shared.meetingRealtimeTranscriptionEnabled
     @State private var audioSource = SettingsStorage.shared.meetingAudioSource
     @State private var micGain = SettingsStorage.shared.meetingMicGain
@@ -17,6 +18,21 @@ struct MeetingSettingsView: View {
 
     var body: some View {
         Form {
+            Section {
+                Toggle("Suggest recording when a meeting starts", isOn: $meetingSuggestionsEnabled)
+                    .onChange(of: meetingSuggestionsEnabled) { _, newValue in
+                        SettingsStorage.shared.meetingSuggestionsEnabled = newValue
+                    }
+            } header: {
+                Text("Meeting Suggestions")
+            } footer: {
+                Text(
+                    "Diduny checks meeting app activity locally. Recording starts only after you choose to start it."
+                )
+                .font(.caption)
+                .foregroundColor(.secondary)
+            }
+
             Section("Meeting Provider") {
                 Picker("Provider", selection: $meetingCloudModeEnabled) {
                     Text("Cloud").tag(true)
@@ -208,6 +224,7 @@ struct MeetingSettingsView: View {
         }
         .formStyle(.grouped)
         .onAppear {
+            meetingSuggestionsEnabled = SettingsStorage.shared.meetingSuggestionsEnabled
             meetingCloudModeEnabled = SettingsStorage.shared.meetingRealtimeTranscriptionEnabled
         }
         .onDisappear {

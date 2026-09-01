@@ -73,3 +73,6 @@
 "Couldn't send a code. Try again." = "Не вдалося надіслати код. Спробуйте ще раз.";
 "That code couldn't be verified. Send a new one and try again." = "Не вдалося підтвердити код. Надішліть новий і спробуйте ще раз.";
 "Couldn't send a new code. Try again." = "Не вдалося надіслати новий код. Спробуйте ще раз.";
+"Suggest recording when a meeting starts" = "Пропонувати запис на початку зустрічі";
+"Meeting Suggestions" = "Пропозиції запису зустрічей";
+"Diduny checks meeting app activity locally. Recording starts only after you choose to start it." = "Diduny локально перевіряє активність застосунків для зустрічей. Запис починається лише після вашої дії.";
