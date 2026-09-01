@@ -42,12 +42,12 @@ enum MainSection: String, Hashable {
 
     var isSettingsItem: Bool {
         switch self {
-        case .general, .audioDictation, .models, .shortcuts, .account: true
+        case .meetings, .general, .audioDictation, .models, .shortcuts, .account: true
         default: false
         }
     }
 
     var isBetaDisabled: Bool {
-        self == .meetings
+        false
     }
 }

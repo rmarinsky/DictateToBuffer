@@ -43,6 +43,11 @@ final class SettingsStorageProviderTests: XCTestCase {
         XCTAssertEqual(Bundle.main.bundleIdentifier, "ua.com.rmarinsky.diduny.test")
     }
 
+    func test_meetingsAreAvailableInSettingsNavigation() {
+        XCTAssertTrue(MainSection.meetings.isSettingsItem)
+        XCTAssertFalse(MainSection.meetings.isBetaDisabled)
+    }
+
     func test_persistedFirstUseDetectionUsesProviderShortcutOrAutoPaste() {
         let defaults = UserDefaults.standard
         let keys = ["transcriptionProvider", "pushToTalkKey", "autoPaste"]
