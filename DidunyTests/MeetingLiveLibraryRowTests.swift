@@ -123,16 +123,24 @@ final class MeetingLiveLibraryRowTests: XCTestCase {
     func test_normalLocalStop_enqueuesSavedRecordingOnce() {
         let id = UUID()
         var enqueuedIDs: [UUID] = []
+        var enqueuedAction: RecordingQueueService.QueueAction?
+        var enqueuedProvider: TranscriptionProvider?
 
         let didEnqueue = AppDelegate.enqueueLocalMeetingTranscriptionIfReady(
             savedRecordingID: id,
             cloudModeEnabled: false,
             hasLocalModel: true,
-            enqueue: { enqueuedIDs.append($0) }
+            enqueue: { ids, action, provider in
+                enqueuedIDs.append(contentsOf: ids)
+                enqueuedAction = action
+                enqueuedProvider = provider
+            }
         )
 
         XCTAssertTrue(didEnqueue)
         XCTAssertEqual(enqueuedIDs, [id])
+        XCTAssertEqual(enqueuedAction, .transcribe)
+        XCTAssertEqual(enqueuedProvider, .local)
     }
 
     func test_cloudOrUnpersistedStop_doesNotEnqueueLocalTranscription() {
@@ -143,30 +151,64 @@ final class MeetingLiveLibraryRowTests: XCTestCase {
             savedRecordingID: id,
             cloudModeEnabled: true,
             hasLocalModel: true,
-            enqueue: { enqueuedIDs.append($0) }
+            enqueue: { ids, _, _ in enqueuedIDs.append(contentsOf: ids) }
         ))
         XCTAssertFalse(AppDelegate.enqueueLocalMeetingTranscriptionIfReady(
             savedRecordingID: nil,
             cloudModeEnabled: false,
             hasLocalModel: true,
-            enqueue: { enqueuedIDs.append($0) }
+            enqueue: { ids, _, _ in enqueuedIDs.append(contentsOf: ids) }
         ))
 
         XCTAssertTrue(enqueuedIDs.isEmpty)
     }
 
-    func test_missingLocalModel_keepsSavedRecordingOutOfQueue() {
-        let id = UUID()
+    func test_missingLocalModel_keepsSavedRecordingAndAudioOutOfQueue() throws {
+        let id = try XCTUnwrap(storage.saveRecording(
+            audioData: Data("RIFF....WAVEfmt ".utf8),
+            type: .meeting,
+            duration: 42,
+            forceSave: true
+        ))
         var enqueuedIDs: [UUID] = []
 
         let didEnqueue = AppDelegate.enqueueLocalMeetingTranscriptionIfReady(
             savedRecordingID: id,
             cloudModeEnabled: false,
             hasLocalModel: false,
-            enqueue: { enqueuedIDs.append($0) }
+            enqueue: { ids, _, _ in enqueuedIDs.append(contentsOf: ids) }
         )
 
         XCTAssertFalse(didEnqueue)
         XCTAssertTrue(enqueuedIDs.isEmpty)
+        let saved = try XCTUnwrap(storage.recordings.first(where: { $0.id == id }))
+        XCTAssertEqual(saved.status, .unprocessed)
+        XCTAssertTrue(storage.hasPlayableAudio(for: saved))
+    }
+
+    func test_localQueue_marksRecordingProcessingWithoutLosingAudio() throws {
+        let id = try XCTUnwrap(storage.saveRecording(
+            audioData: Data("RIFF....WAVEfmt ".utf8),
+            type: .meeting,
+            duration: 42,
+            forceSave: true
+        ))
+        let queue = RecordingQueueService(
+            storage: storage,
+            startsAutomatically: false,
+            localModelIsAvailable: { _ in true }
+        )
+
+        queue.enqueue([id], action: .transcribe, providerOverride: .local)
+
+        XCTAssertEqual(queue.queueCount, 1)
+        let queued = try XCTUnwrap(storage.recordings.first(where: { $0.id == id }))
+        XCTAssertEqual(queued.status, .processing)
+        XCTAssertTrue(storage.hasPlayableAudio(for: queued))
+
+        queue.cancelAll()
+        let cancelled = try XCTUnwrap(storage.recordings.first(where: { $0.id == id }))
+        XCTAssertEqual(cancelled.status, .unprocessed)
+        XCTAssertTrue(storage.hasPlayableAudio(for: cancelled))
     }
 }

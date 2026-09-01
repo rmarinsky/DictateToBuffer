@@ -5,7 +5,7 @@ import Foundation
 final class RecordingQueueService {
     static let shared = RecordingQueueService()
 
-    enum QueueAction {
+    enum QueueAction: Equatable {
         case transcribe
         case transcribeDiarize
         case translate
@@ -27,8 +27,23 @@ final class RecordingQueueService {
     private var processingTask: Task<Void, Never>?
     private var pendingItems: [QueueItem] = []
     private var currentItem: QueueItem?
+    private let storage: RecordingsLibraryStorage
+    private let startsAutomatically: Bool
+    private let localModelIsAvailable: (String) -> Bool
 
-    private init() {
+    init(
+        storage: RecordingsLibraryStorage? = nil,
+        startsAutomatically: Bool = true,
+        localModelIsAvailable: ((String) -> Bool)? = nil
+    ) {
+        self.storage = storage ?? .shared
+        self.startsAutomatically = startsAutomatically
+        self.localModelIsAvailable = localModelIsAvailable ?? { modelName in
+            guard let model = WhisperModelManager.availableModels.first(where: { $0.name == modelName }) else {
+                return false
+            }
+            return WhisperModelManager.shared.isModelDownloaded(model)
+        }
         resetStaleProcessingStates()
     }
 
@@ -41,7 +56,6 @@ final class RecordingQueueService {
     ) {
         guard !ids.isEmpty else { return }
 
-        let storage = RecordingsLibraryStorage.shared
         let newItems = ids.compactMap { id in
             makeQueueItem(
                 id: id,
@@ -70,7 +84,6 @@ final class RecordingQueueService {
         processingTask?.cancel()
 
         let idsToReset = Set(pendingItems.map(\.id) + [currentItem?.id].compactMap { $0 })
-        let storage = RecordingsLibraryStorage.shared
         for id in idsToReset {
             storage.updateRecording(id: id, status: .unprocessed, error: nil)
         }
@@ -81,6 +94,7 @@ final class RecordingQueueService {
     }
 
     private func startProcessingIfNeeded() {
+        guard startsAutomatically else { return }
         guard processingTask == nil else { return }
         guard currentItem != nil || !pendingItems.isEmpty else { return }
 
@@ -118,8 +132,6 @@ final class RecordingQueueService {
     }
 
     private func processRecording(_ item: QueueItem) async {
-        let storage = RecordingsLibraryStorage.shared
-
         guard let recording = storage.recordings.first(where: { $0.id == item.id }) else {
             return
         }
@@ -356,7 +368,7 @@ final class RecordingQueueService {
 
     private func configuredProvider(for item: QueueItem) -> TranscriptionProvider {
         if item.action == .transcribe,
-           RecordingsLibraryStorage.shared.recordings
+           storage.recordings
            .first(where: { $0.id == item.id })?
            .requiresLocalTranscription == true
         {
@@ -396,9 +408,7 @@ final class RecordingQueueService {
                 }
             }
             let modelName = item.whisperModelOverride ?? SettingsStorage.shared.selectedWhisperModel
-            guard let model = WhisperModelManager.availableModels.first(where: { $0.name == modelName }),
-                  WhisperModelManager.shared.isModelDownloaded(model)
-            else {
+            guard localModelIsAvailable(modelName) else {
                 return "Download a local Whisper model in Settings."
             }
             return nil
@@ -426,7 +436,6 @@ final class RecordingQueueService {
     }
 
     private func resetStaleProcessingStates() {
-        let storage = RecordingsLibraryStorage.shared
         for recording in storage.recordings where recording.status == .processing {
             storage.updateRecording(id: recording.id, status: .unprocessed, error: nil)
         }

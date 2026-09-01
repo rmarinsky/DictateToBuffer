@@ -495,10 +495,10 @@ extension AppDelegate {
         savedRecordingID: UUID?,
         cloudModeEnabled: Bool,
         hasLocalModel: Bool,
-        enqueue: (UUID) -> Void
+        enqueue: ([UUID], RecordingQueueService.QueueAction, TranscriptionProvider?) -> Void
     ) -> Bool {
         guard let savedRecordingID, !cloudModeEnabled, hasLocalModel else { return false }
-        enqueue(savedRecordingID)
+        enqueue([savedRecordingID], .transcribe, .local)
         return true
     }
 
@@ -799,11 +799,11 @@ extension AppDelegate {
                         savedRecordingID: savedRecordingID,
                         cloudModeEnabled: cloudModeEnabled,
                         hasLocalModel: WhisperModelManager.shared.selectedModel() != nil
-                    ) { recordingID in
+                    ) { recordingIDs, action, provider in
                         RecordingQueueService.shared.enqueue(
-                            [recordingID],
-                            action: .transcribe,
-                            providerOverride: .local
+                            recordingIDs,
+                            action: action,
+                            providerOverride: provider
                         )
                     }
                     if !cloudModeEnabled, !didEnqueue {
