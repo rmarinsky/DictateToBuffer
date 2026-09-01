@@ -353,6 +353,7 @@ final class EdgeCommandPanelController: NSObject {
     private var panel: EdgeCommandPanel?
     private var panelContentView: EdgeCommandPanelContentView?
     private var model: EdgeCommandPanelModel?
+    private let meetingRecordingStarter: (() -> Void)?
     private var collapseTask: Task<Void, Never>?
     private var dock: EdgeCommandPanelDock?
     private var dragCursorOffset: NSPoint?
@@ -365,12 +366,9 @@ final class EdgeCommandPanelController: NSObject {
     private var isTabHidden = false
     private var hiddenTabScreenFrame: NSRect?
 
-    override private init() {
+    init(meetingRecordingStarter: (() -> Void)? = nil) {
+        self.meetingRecordingStarter = meetingRecordingStarter
         super.init()
-    }
-
-    static func meetingSuggestionPresentation(for _: RecordingFeedbackSurface) -> EdgeCommandPanelPresentation {
-        .meetingSuggestion
     }
 
     func configure(appDelegate: AppDelegate) {
@@ -508,9 +506,7 @@ final class EdgeCommandPanelController: NSObject {
         self.panel = panel
         position(
             panel,
-            presentation: Self.meetingSuggestionPresentation(
-                for: SettingsStorage.shared.recordingFeedbackSurface
-            )
+            presentation: .meetingSuggestion
         )
         revealPanelIfConcealed()
         panel.orderFrontRegardless()
@@ -522,9 +518,13 @@ final class EdgeCommandPanelController: NSObject {
         restoreConfiguredSurface()
     }
 
-    private func startMeetingRecording(fromSuggestionID id: UUID) {
+    func startMeetingRecording(fromSuggestionID id: UUID) {
         guard model?.consumeMeetingSuggestionStart(id: id) != nil else { return }
         restoreConfiguredSurface()
+        if let meetingRecordingStarter {
+            meetingRecordingStarter()
+            return
+        }
         guard let appDelegate,
               !appDelegate.hasAnyRecordingInProgress,
               appDelegate.canStartRecording(kind: .meeting)
@@ -838,7 +838,7 @@ final class EdgeCommandPanelController: NSObject {
         .commands(isCloud: model?.provider == .cloud)
     }
 
-    private var currentPresentation: EdgeCommandPanelPresentation {
+    var currentPresentation: EdgeCommandPanelPresentation {
         guard let model else { return .collapsed }
         if model.meetingSuggestion != nil {
             return .meetingSuggestion

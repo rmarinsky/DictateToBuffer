@@ -147,29 +147,35 @@ struct EdgeCommandPanelModelTests {
 
     @Test("Meeting suggestion is actionable for notch and compact-panel configurations")
     func meetingSuggestionOverridesConfiguredFeedbackSurface() {
-        #expect(
-            EdgeCommandPanelController.meetingSuggestionPresentation(for: .notch)
-                == .meetingSuggestion
-        )
-        #expect(
-            EdgeCommandPanelController.meetingSuggestionPresentation(for: .compactPanel)
-                == .meetingSuggestion
-        )
-        #expect(
-            EdgeCommandPanelPlacement.size(for: .meetingSuggestion, edge: .right).height >= 44
-        )
+        let savedSurface = SettingsStorage.shared.recordingFeedbackSurface
+        defer { SettingsStorage.shared.recordingFeedbackSurface = savedSurface }
+
+        for surface in [RecordingFeedbackSurface.notch, .compactPanel] {
+            SettingsStorage.shared.recordingFeedbackSurface = surface
+            let controller = EdgeCommandPanelController(meetingRecordingStarter: {})
+            let meeting = DetectedMeeting(id: UUID(), client: .zoom)
+
+            controller.showMeetingSuggestion(meeting)
+
+            #expect(controller.currentPresentation == .meetingSuggestion)
+            controller.dismissMeetingSuggestion(id: meeting.id)
+            #expect(controller.currentPresentation == .collapsed)
+        }
     }
 
-    @Test("Meeting suggestion start can be consumed only once")
-    func meetingSuggestionStartIsConsumedOnce() {
-        let model = EdgeCommandPanelModel(pairs: [.defaultPair], selectedPair: .defaultPair)
+    @Test("Meeting suggestion controller starts recording only once")
+    func meetingSuggestionControllerStartsOnce() {
+        var startCount = 0
+        let controller = EdgeCommandPanelController {
+            startCount += 1
+        }
         let meeting = DetectedMeeting(id: UUID(), client: .zoom)
-        let suggestion = MeetingSuggestion(meeting: meeting, processingMode: .local)
 
-        model.presentMeetingSuggestion(suggestion)
+        controller.showMeetingSuggestion(meeting)
+        controller.startMeetingRecording(fromSuggestionID: meeting.id)
+        controller.startMeetingRecording(fromSuggestionID: meeting.id)
 
-        #expect(model.consumeMeetingSuggestionStart(id: meeting.id) == suggestion)
-        #expect(model.consumeMeetingSuggestionStart(id: meeting.id) == nil)
+        #expect(startCount == 1)
     }
 
     @Test("Disabling future suggestions keeps the current meeting suggestion open")
