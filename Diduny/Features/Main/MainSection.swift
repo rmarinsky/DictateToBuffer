@@ -1,16 +1,19 @@
 import SwiftUI
 
-enum MainSection: String, Hashable {
+enum MainSection: String, CaseIterable, Hashable {
     case overview
     case recordings
     case typingTest
-    case meetings
 
     case general
     case audioDictation
+    case meetings
     case models
     case shortcuts
     case account
+
+    static let mainItems = allCases.filter { !$0.isSettingsItem }
+    static let settingsItems = allCases.filter(\.isSettingsItem)
 
     var label: String {
         switch self {
@@ -45,9 +48,5 @@ enum MainSection: String, Hashable {
         case .meetings, .general, .audioDictation, .models, .shortcuts, .account: true
         default: false
         }
-    }
-
-    var isBetaDisabled: Bool {
-        false
     }
 }

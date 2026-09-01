@@ -43,9 +43,9 @@ final class SettingsStorageProviderTests: XCTestCase {
         XCTAssertEqual(Bundle.main.bundleIdentifier, "ua.com.rmarinsky.diduny.test")
     }
 
-    func test_meetingsAreAvailableInSettingsNavigation() {
-        XCTAssertTrue(MainSection.meetings.isSettingsItem)
-        XCTAssertFalse(MainSection.meetings.isBetaDisabled)
+    func test_meetingsAreGroupedWithSettingsNavigation() {
+        XCTAssertTrue(MainSection.settingsItems.contains(.meetings))
+        XCTAssertFalse(MainSection.mainItems.contains(.meetings))
     }
 
     func test_persistedFirstUseDetectionUsesProviderShortcutOrAutoPaste() {

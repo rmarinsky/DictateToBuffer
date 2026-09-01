@@ -6,9 +6,6 @@ struct SidebarView: View {
 
     let topInset: CGFloat
 
-    private let mainItems: [MainSection] = [.overview, .recordings, .typingTest]
-    private let settingsItems: [MainSection] = [.general, .audioDictation, .meetings, .models, .shortcuts, .account]
-
     init(selectedSection: Binding<MainSection>, topInset: CGFloat = 34) {
         _selectedSection = selectedSection
         self.topInset = topInset
@@ -23,7 +20,7 @@ struct SidebarView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 3) {
-                    ForEach(mainItems, id: \.self) { section in
+                    ForEach(MainSection.mainItems, id: \.self) { section in
                         sidebarRow(for: section)
                     }
 
@@ -34,7 +31,7 @@ struct SidebarView: View {
                         .padding(.bottom, 3)
                         .padding(.leading, 4)
 
-                    ForEach(settingsItems, id: \.self) { section in
+                    ForEach(MainSection.settingsItems, id: \.self) { section in
                         sidebarRow(for: section)
                     }
                 }
@@ -110,19 +107,16 @@ struct SidebarView: View {
     }
 
     private func sidebarRow(for section: MainSection) -> some View {
-        SidebarRow(section: section, isSelected: selectedSection == section, isDisabled: section.isBetaDisabled)
-            .onTapGesture {
-                guard !section.isBetaDisabled else { return }
-                selectedSection = section
-            }
-            .focusable(false)
-            .accessibilityLabel(Text(section.label))
-            .accessibilityValue(Text(section
-                    .isBetaDisabled ? "Beta, unavailable" : selectedSection == section ? "Selected" : ""))
-            .accessibilityIdentifier("Sidebar \(section.label)")
-            .help(section
-                .isBetaDisabled ? "Meetings is in beta. Meeting recordings are available in Recordings." : section
-                .label)
+        Button {
+            selectedSection = section
+        } label: {
+            SidebarRow(section: section, isSelected: selectedSection == section)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(section.label))
+        .accessibilityValue(Text(selectedSection == section ? "Selected" : ""))
+        .accessibilityIdentifier("Sidebar \(section.label)")
+        .help(section.label)
     }
 }
 
@@ -131,7 +125,6 @@ struct SidebarView: View {
 private struct SidebarRow: View {
     let section: MainSection
     let isSelected: Bool
-    let isDisabled: Bool
 
     var body: some View {
         HStack(spacing: 8) {
@@ -143,14 +136,6 @@ private struct SidebarRow: View {
                 .font(.system(size: 13))
                 .foregroundColor(textColor)
             Spacer()
-            if isDisabled {
-                Text("BETA")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(Color(.quaternaryLabelColor).opacity(0.14), in: Capsule())
-            }
         }
         .padding(.vertical, 5)
         .padding(.horizontal, 8)
@@ -162,16 +147,13 @@ private struct SidebarRow: View {
             in: RoundedRectangle(cornerRadius: 6, style: .continuous)
         )
         .contentShape(Rectangle())
-        .opacity(isDisabled ? 0.55 : 1.0)
     }
 
     private var iconColor: Color {
-        if isDisabled { return .secondary.opacity(0.8) }
-        return isSelected ? .white : .secondary
+        isSelected ? .white : .secondary
     }
 
     private var textColor: Color {
-        if isDisabled { return .secondary }
-        return isSelected ? .white : .primary
+        isSelected ? .white : .primary
     }
 }
