@@ -103,7 +103,27 @@ enum MeetingSuggestionProcessingMode: Equatable {
 
 struct MeetingSuggestion: Equatable {
     let meeting: DetectedMeeting
-    let processingMode: MeetingSuggestionProcessingMode
+    var selectedProvider: TranscriptionProvider
+    var isCloudAvailable: Bool
+    let hasLocalModel: Bool
+
+    var processingMode: MeetingSuggestionProcessingMode {
+        .resolve(cloudEnabled: selectedProvider == .cloud, hasLocalModel: hasLocalModel)
+    }
+
+    static func resolve(
+        meeting: DetectedMeeting,
+        preferredProvider: TranscriptionProvider,
+        cloudAvailable: Bool,
+        hasLocalModel: Bool
+    ) -> Self {
+        Self(
+            meeting: meeting,
+            selectedProvider: preferredProvider == .cloud && cloudAvailable ? .cloud : .local,
+            isCloudAvailable: cloudAvailable,
+            hasLocalModel: hasLocalModel
+        )
+    }
 }
 
 enum EdgeCommandPanelPlacement {
@@ -195,7 +215,7 @@ enum EdgeCommandPanelPlacement {
         case let .live(mode):
             mode.isMeeting ? NSSize(width: 360, height: 420) : NSSize(width: 310, height: 310)
         case .meetingSuggestion:
-            NSSize(width: 390, height: 286)
+            NSSize(width: 390, height: 322)
         }
     }
 
@@ -330,6 +350,25 @@ final class EdgeCommandPanelModel {
     }
 
     @discardableResult
+    func selectMeetingSuggestionProvider(_ provider: TranscriptionProvider) -> Bool {
+        guard var suggestion = meetingSuggestion,
+              provider != .cloud || suggestion.isCloudAvailable
+        else { return false }
+        suggestion.selectedProvider = provider
+        meetingSuggestion = suggestion
+        return true
+    }
+
+    func updateMeetingSuggestionCloudAvailability(_ available: Bool, id: UUID) {
+        guard var suggestion = meetingSuggestion, suggestion.meeting.id == id else { return }
+        suggestion.isCloudAvailable = available
+        if !available {
+            suggestion.selectedProvider = .local
+        }
+        meetingSuggestion = suggestion
+    }
+
+    @discardableResult
     func consumeMeetingSuggestionStart(id: UUID) -> MeetingSuggestion? {
         guard meetingSuggestion?.meeting.id == id else { return nil }
         defer { meetingSuggestion = nil }
@@ -353,7 +392,7 @@ final class EdgeCommandPanelController: NSObject {
     private var panel: EdgeCommandPanel?
     private var panelContentView: EdgeCommandPanelContentView?
     private var model: EdgeCommandPanelModel?
-    private let meetingRecordingStarter: (() -> Void)?
+    private let meetingRecordingStarter: ((TranscriptionProvider) -> Void)?
     private var collapseTask: Task<Void, Never>?
     private var dock: EdgeCommandPanelDock?
     private var dragCursorOffset: NSPoint?
@@ -366,7 +405,7 @@ final class EdgeCommandPanelController: NSObject {
     private var isTabHidden = false
     private var hiddenTabScreenFrame: NSRect?
 
-    init(meetingRecordingStarter: (() -> Void)? = nil) {
+    init(meetingRecordingStarter: ((TranscriptionProvider) -> Void)? = nil) {
         self.meetingRecordingStarter = meetingRecordingStarter
         super.init()
     }
@@ -493,12 +532,15 @@ final class EdgeCommandPanelController: NSObject {
         collapseTask?.cancel()
         cancelTabAutoHide()
         refreshModel()
-        let suggestion = MeetingSuggestion(
+        let cloudAvailable = UsageService.canUseCloudTranscription(
+            hasStoredSession: AuthService.hasStoredSession,
+            usage: UsageService.shared.cachedUsage
+        )
+        let suggestion = MeetingSuggestion.resolve(
             meeting: meeting,
-            processingMode: .resolve(
-                cloudEnabled: SettingsStorage.shared.effectiveMeetingRealtimeTranscriptionEnabled,
-                hasLocalModel: WhisperModelManager.shared.selectedModel() != nil
-            )
+            preferredProvider: SettingsStorage.shared.meetingRealtimeTranscriptionEnabled ? .cloud : .local,
+            cloudAvailable: cloudAvailable,
+            hasLocalModel: WhisperModelManager.shared.selectedModel() != nil
         )
         model?.presentMeetingSuggestion(suggestion)
         model?.isShowingLiveFeedback = false
@@ -510,6 +552,23 @@ final class EdgeCommandPanelController: NSObject {
         )
         revealPanelIfConcealed()
         panel.orderFrontRegardless()
+
+        if AuthService.hasStoredSession {
+            Task { [weak self] in
+                await UsageService.shared.refresh()
+                guard let self else { return }
+                let available = UsageService.canUseCloudTranscription(
+                    hasStoredSession: AuthService.hasStoredSession,
+                    usage: UsageService.shared.cachedUsage
+                )
+                self.model?.updateMeetingSuggestionCloudAvailability(available, id: meeting.id)
+            }
+        }
+    }
+
+    @discardableResult
+    func selectMeetingSuggestionProvider(_ provider: TranscriptionProvider) -> Bool {
+        model?.selectMeetingSuggestionProvider(provider) ?? false
     }
 
     func dismissMeetingSuggestion(id: UUID) {
@@ -519,17 +578,17 @@ final class EdgeCommandPanelController: NSObject {
     }
 
     func startMeetingRecording(fromSuggestionID id: UUID) {
-        guard model?.consumeMeetingSuggestionStart(id: id) != nil else { return }
+        guard let suggestion = model?.consumeMeetingSuggestionStart(id: id) else { return }
         restoreConfiguredSurface()
         if let meetingRecordingStarter {
-            meetingRecordingStarter()
+            meetingRecordingStarter(suggestion.selectedProvider)
             return
         }
         guard let appDelegate,
               !appDelegate.hasAnyRecordingInProgress,
               appDelegate.canStartRecording(kind: .meeting)
         else { return }
-        appDelegate.toggleMeetingRecording()
+        appDelegate.toggleMeetingRecording(provider: suggestion.selectedProvider)
     }
 
     private func setMeetingSuggestionsEnabled(_ enabled: Bool) {
@@ -1308,6 +1367,27 @@ private struct MeetingSuggestionView: View {
             }
             .contentShape(Rectangle())
             .gesture(dragGesture)
+
+            Picker(
+                "Meeting transcription provider",
+                selection: Binding(
+                    get: { model.meetingSuggestion?.selectedProvider ?? suggestion.selectedProvider },
+                    set: { model.selectMeetingSuggestionProvider($0) }
+                )
+            ) {
+                Text("Cloud").tag(TranscriptionProvider.cloud)
+                Text("Local").tag(TranscriptionProvider.local)
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .disabled(!suggestion.isCloudAvailable)
+            .frame(minHeight: EdgeCommandPanelPlacement.meetingSuggestionControlHitTargetHeight)
+            .accessibilityLabel("Meeting transcription provider")
+            .accessibilityHint(
+                suggestion.isCloudAvailable
+                    ? "Choose Cloud or Local transcription"
+                    : "Cloud is unavailable. Local transcription will be used."
+            )
 
             Label(suggestion.processingMode.label, systemImage: suggestion.processingMode.icon)
                 .font(.system(size: 11.5, weight: .medium))

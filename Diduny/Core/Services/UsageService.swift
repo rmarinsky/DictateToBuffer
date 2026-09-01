@@ -12,6 +12,15 @@ final class UsageService {
 
     private init() {}
 
+    nonisolated static func canUseCloudTranscription(
+        hasStoredSession: Bool,
+        usage: UsageResponse?
+    ) -> Bool {
+        guard hasStoredSession else { return false }
+        guard let usage else { return true }
+        return usage.isWhitelisted || (usage.remainingMs ?? 0) > 0
+    }
+
     var formattedRemaining: String {
         guard let usage = cachedUsage else { return "—" }
         if usage.isWhitelisted { return "Unlimited" }

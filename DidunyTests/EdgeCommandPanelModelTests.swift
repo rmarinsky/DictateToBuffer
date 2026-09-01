@@ -152,7 +152,7 @@ struct EdgeCommandPanelModelTests {
 
         for surface in [RecordingFeedbackSurface.notch, .compactPanel] {
             SettingsStorage.shared.recordingFeedbackSurface = surface
-            let controller = EdgeCommandPanelController(meetingRecordingStarter: {})
+            let controller = EdgeCommandPanelController(meetingRecordingStarter: { _ in })
             let meeting = DetectedMeeting(id: UUID(), client: .zoom)
 
             controller.showMeetingSuggestion(meeting)
@@ -165,17 +165,72 @@ struct EdgeCommandPanelModelTests {
 
     @Test("Meeting suggestion controller starts recording only once")
     func meetingSuggestionControllerStartsOnce() {
-        var startCount = 0
-        let controller = EdgeCommandPanelController {
-            startCount += 1
+        var startedProviders: [TranscriptionProvider] = []
+        let controller = EdgeCommandPanelController { provider in
+            startedProviders.append(provider)
         }
         let meeting = DetectedMeeting(id: UUID(), client: .zoom)
 
         controller.showMeetingSuggestion(meeting)
+        controller.selectMeetingSuggestionProvider(.local)
         controller.startMeetingRecording(fromSuggestionID: meeting.id)
         controller.startMeetingRecording(fromSuggestionID: meeting.id)
 
-        #expect(startCount == 1)
+        #expect(startedProviders == [.local])
+    }
+
+    @Test("Meeting suggestion falls back to Local when Cloud is unavailable")
+    func unavailableCloudFallsBackToLocal() {
+        let model = EdgeCommandPanelModel(pairs: [.defaultPair], selectedPair: .defaultPair)
+        let suggestion = MeetingSuggestion.resolve(
+            meeting: DetectedMeeting(id: UUID(), client: .googleMeet),
+            preferredProvider: .cloud,
+            cloudAvailable: false,
+            hasLocalModel: true
+        )
+
+        model.presentMeetingSuggestion(suggestion)
+
+        #expect(model.meetingSuggestion?.selectedProvider == .local)
+        #expect(model.meetingSuggestion?.processingMode == .local)
+        #expect(!model.selectMeetingSuggestionProvider(.cloud))
+    }
+
+    @Test("Cloud eligibility requires a session and remaining usage")
+    func cloudEligibilityRequiresSessionAndUsage() {
+        let available = UsageResponse(
+            isWhitelisted: false,
+            usedHours: 1,
+            limitHours: 5,
+            remainingHours: 4,
+            usedMs: 3_600_000,
+            limitMs: 18_000_000,
+            remainingMs: 14_400_000
+        )
+        let exhausted = UsageResponse(
+            isWhitelisted: false,
+            usedHours: 5,
+            limitHours: 5,
+            remainingHours: 0,
+            usedMs: 18_000_000,
+            limitMs: 18_000_000,
+            remainingMs: 0
+        )
+        let noSubscription = UsageResponse(
+            isWhitelisted: false,
+            usedHours: 0,
+            limitHours: nil,
+            remainingHours: nil,
+            usedMs: 0,
+            limitMs: nil,
+            remainingMs: nil
+        )
+
+        #expect(UsageService.canUseCloudTranscription(hasStoredSession: true, usage: available))
+        #expect(!UsageService.canUseCloudTranscription(hasStoredSession: false, usage: available))
+        #expect(!UsageService.canUseCloudTranscription(hasStoredSession: true, usage: exhausted))
+        #expect(!UsageService.canUseCloudTranscription(hasStoredSession: true, usage: noSubscription))
+        #expect(UsageService.canUseCloudTranscription(hasStoredSession: true, usage: nil))
     }
 
     @Test("Disabling future suggestions keeps the current meeting suggestion open")
@@ -183,7 +238,9 @@ struct EdgeCommandPanelModelTests {
         let model = EdgeCommandPanelModel(pairs: [.defaultPair], selectedPair: .defaultPair)
         let suggestion = MeetingSuggestion(
             meeting: DetectedMeeting(id: UUID(), client: .teams),
-            processingMode: .cloud
+            selectedProvider: .cloud,
+            isCloudAvailable: true,
+            hasLocalModel: true
         )
 
         model.presentMeetingSuggestion(suggestion)

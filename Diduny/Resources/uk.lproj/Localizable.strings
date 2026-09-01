@@ -81,6 +81,9 @@
 "Cloud - live transcription" = "Хмара - транскрипція наживо";
 "Local - transcription on this Mac" = "Локально - транскрипція на цьому Mac";
 "Recording only - download a local model for transcription" = "Лише запис - завантажте локальну модель для транскрипції";
+"Meeting transcription provider" = "Спосіб транскрипції зустрічі";
+"Choose Cloud or Local transcription" = "Виберіть хмарну або локальну транскрипцію";
+"Cloud is unavailable. Local transcription will be used." = "Хмара недоступна. Буде використано локальну транскрипцію.";
 "Continue tracking meetings and suggesting recordings" = "Надалі відстежувати зустрічі та пропонувати запис";
 "Start recording" = "Почати запис";
 "Not now" = "Не зараз";

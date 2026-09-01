@@ -5,6 +5,13 @@ import Foundation
 
 extension AppDelegate {
     @objc func toggleMeetingRecording() {
+        let provider: TranscriptionProvider = SettingsStorage.shared.meetingRealtimeTranscriptionEnabled
+            ? .cloud
+            : .local
+        toggleMeetingRecording(provider: provider)
+    }
+
+    func toggleMeetingRecording(provider: TranscriptionProvider) {
         let meetingRecordingState = appState.meetingRecordingState
         Log.app.info("toggleMeetingRecording called, current state: \(meetingRecordingState)")
         // Recording intent: warm the two slow dependencies of a meeting start
@@ -21,7 +28,7 @@ extension AppDelegate {
         case .idle:
             meetingPipelineTask?.cancel()
             meetingPipelineTask = Task {
-                await self.startMeetingRecording()
+                await self.startMeetingRecording(provider: provider)
             }
         case .recording:
             meetingPipelineTask = Task {
@@ -45,6 +52,7 @@ extension AppDelegate {
     /// (self-cancel made the save-audio-on-cancel branch fail silently).
     func cancelMeetingRecording() async {
         Log.app.info("cancelMeetingRecording: BEGIN")
+        defer { activeMeetingTranscriptionProvider = nil }
 
         let recordingStartTime = appState.meetingRecordingStartTime
         let stopTime = Date()
@@ -151,12 +159,27 @@ extension AppDelegate {
         Log.app.info("cancelMeetingRecording: END")
     }
 
-    func startMeetingRecording() async {
+    func startMeetingRecording(provider requestedProvider: TranscriptionProvider) async {
         Log.app.info("startMeetingRecording: BEGIN")
 
         guard canStartRecording(kind: .meeting) else {
             Log.app.info("startMeetingRecording: blocked by another active recording mode")
             return
+        }
+
+        let cloudAvailable = UsageService.canUseCloudTranscription(
+            hasStoredSession: AuthService.hasStoredSession,
+            usage: UsageService.shared.cachedUsage
+        )
+        let provider: TranscriptionProvider = requestedProvider == .cloud && !cloudAvailable
+            ? .local
+            : requestedProvider
+        activeMeetingTranscriptionProvider = provider
+        var didStart = false
+        defer {
+            if !didStart {
+                activeMeetingTranscriptionProvider = nil
+            }
         }
 
         // Request screen capture permission on-demand
@@ -173,7 +196,7 @@ extension AppDelegate {
             return
         }
 
-        let cloudModeEnabled = SettingsStorage.shared.effectiveMeetingRealtimeTranscriptionEnabled
+        let cloudModeEnabled = provider == .cloud
 
         // Timed from after the permission check (which can block on a user
         // prompt) to the .recording state transition.
@@ -260,6 +283,7 @@ extension AppDelegate {
                     updateRecordingFeedbackConnectionStatus(.connected, mode: .meeting)
                 }
             }
+            didStart = true
 
             // Library row from start — same UUID as InProgressRecordingStore.
             if let recordingId = meetingRecorderService.currentRecordingId {
@@ -449,8 +473,11 @@ extension AppDelegate {
             coalescer?.addBoundary(boundary)
         }
 
-        rtService.onError = { error in
+        rtService.onError = { [weak self] error in
             Log.transcription.error("Realtime transcription error: \(error.localizedDescription)")
+            Task { @MainActor in
+                self?.fallBackMeetingToLocalIfUsageUnavailable(error)
+            }
             // Don't stop recording — file recording continues independently
         }
 
@@ -482,10 +509,22 @@ extension AppDelegate {
                     store?.isActive = true
                     store?.connectionStatus = .failed(error.localizedDescription)
                 }
+                fallBackMeetingToLocalIfUsageUnavailable(error)
             }
         }
 
         return store
+    }
+
+    @discardableResult
+    func fallBackMeetingToLocalIfUsageUnavailable(_ error: Error) -> Bool {
+        guard activeMeetingTranscriptionProvider == .cloud,
+              case .usageLimitExceeded = error as? RealtimeTranscriptionError
+        else { return false }
+        activeMeetingTranscriptionProvider = .local
+        meetingRecorderService.onRealtimeAudioData = nil
+        Log.app.info("Meeting transcription switched from Cloud to Local after usage rejection")
+        return true
     }
 
     // MARK: - Stop Meeting Recording
@@ -525,6 +564,7 @@ extension AppDelegate {
         }
 
         Log.app.info("stopMeetingRecording: BEGIN")
+        defer { activeMeetingTranscriptionProvider = nil }
 
         // Deactivate chapter bookmark hotkey
         hotkeyService.unregisterChapterHotkey()
@@ -646,7 +686,7 @@ extension AppDelegate {
             }
 
             let realtimeText = await MainActor.run { store?.finalTranscriptText ?? "" }
-            let cloudModeEnabled = SettingsStorage.shared.effectiveMeetingRealtimeTranscriptionEnabled
+            var cloudModeEnabled = activeMeetingTranscriptionProvider == .cloud
             let shouldUseRealtimeText = cloudModeEnabled
                 && shouldAcceptRealtimeTranscript(
                     realtimeText,
@@ -678,30 +718,37 @@ extension AppDelegate {
                     config["language_hints_strict"] = true
                 }
 
-                rawTranscript = try await asyncJobService.transcribeFileDetailedWithRetry(
-                    audioFileURL: compressedURL,
-                    config: config,
-                    source: compressedURL.lastPathComponent,
-                    sourceDurationSeconds: duration
-                ) { status in
-                    Task { @MainActor in
-                        switch status.status {
-                        case .queued:
-                            DictationOverlayController.shared.showInfo(message: "Queued...", duration: 30)
-                        case .uploading:
-                            DictationOverlayController.shared.showInfo(message: "Uploading...", duration: 30)
-                        case .processing:
-                            // Processing can take tens of minutes for large files —
-                            // use persistent processing state instead of auto-dismissing info
-                            DictationOverlayController.shared.startProcessing(mode: .meeting)
-                        case .finalizing:
-                            DictationOverlayController.shared.showInfo(message: "Finishing up...", duration: 30)
-                        default:
-                            break
+                do {
+                    rawTranscript = try await asyncJobService.transcribeFileDetailedWithRetry(
+                        audioFileURL: compressedURL,
+                        config: config,
+                        source: compressedURL.lastPathComponent,
+                        sourceDurationSeconds: duration
+                    ) { status in
+                        Task { @MainActor in
+                            switch status.status {
+                            case .queued:
+                                DictationOverlayController.shared.showInfo(message: "Queued...", duration: 30)
+                            case .uploading:
+                                DictationOverlayController.shared.showInfo(message: "Uploading...", duration: 30)
+                            case .processing:
+                                // Processing can take tens of minutes for large files —
+                                // use persistent processing state instead of auto-dismissing info
+                                DictationOverlayController.shared.startProcessing(mode: .meeting)
+                            case .finalizing:
+                                DictationOverlayController.shared.showInfo(message: "Finishing up...", duration: 30)
+                            default:
+                                break
+                            }
                         }
                     }
+                    Log.app.info("Async jobs transcription received (\(rawTranscript?.text.count ?? 0) chars)")
+                } catch let error as TranscriptionError where error.isUsageLimitExceeded {
+                    cloudModeEnabled = false
+                    activeMeetingTranscriptionProvider = .local
+                    rawTranscript = nil
+                    Log.app.info("Cloud usage unavailable at stop; queued Local transcription instead")
                 }
-                Log.app.info("Async jobs transcription received (\(rawTranscript?.text.count ?? 0) chars)")
             } else {
                 rawTranscript = nil
                 Log.app.info("Saving meeting recording without automatic transcription")
