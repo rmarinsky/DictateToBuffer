@@ -490,6 +490,18 @@ extension AppDelegate {
 
     // MARK: - Stop Meeting Recording
 
+    @discardableResult
+    static func enqueueLocalMeetingTranscriptionIfReady(
+        savedRecordingID: UUID?,
+        cloudModeEnabled: Bool,
+        hasLocalModel: Bool,
+        enqueue: (UUID) -> Void
+    ) -> Bool {
+        guard let savedRecordingID, !cloudModeEnabled, hasLocalModel else { return false }
+        enqueue(savedRecordingID)
+        return true
+    }
+
     func addMeetingChapter() {
         guard appState.meetingRecordingState == .recording,
               let startTime = appState.meetingRecordingStartTime else { return }
@@ -635,11 +647,12 @@ extension AppDelegate {
 
             let realtimeText = await MainActor.run { store?.finalTranscriptText ?? "" }
             let cloudModeEnabled = SettingsStorage.shared.effectiveMeetingRealtimeTranscriptionEnabled
-            let shouldUseRealtimeText = shouldAcceptRealtimeTranscript(
-                realtimeText,
-                duration: duration,
-                didReceiveFinalization: didReceiveRealtimeFinalization
-            )
+            let shouldUseRealtimeText = cloudModeEnabled
+                && shouldAcceptRealtimeTranscript(
+                    realtimeText,
+                    duration: duration,
+                    didReceiveFinalization: didReceiveRealtimeFinalization
+                )
 
             let rawTranscript: GeneratedTranscript?
             if shouldUseRealtimeText {
@@ -761,16 +774,10 @@ extension AppDelegate {
                     handleMeetingStateChange(.success)
                 }
 
-                if !cloudModeEnabled {
-                    DictationOverlayController.shared.showInfo(
-                        message: "Recording saved. Open Recordings and choose a local model to transcribe.",
-                        duration: 3.0
-                    )
-                }
             }
             Log.app.info("stopMeetingRecording: SUCCESS")
 
-            if librarySavedId != nil {
+            if let savedRecordingID = librarySavedId {
                 if let text {
                     let segments = rawTranscript?.segments
                     RecordingsLibraryStorage.shared.completeTranscription(
@@ -787,6 +794,24 @@ extension AppDelegate {
                         status: .unprocessed,
                         error: nil
                     )
+
+                    let didEnqueue = Self.enqueueLocalMeetingTranscriptionIfReady(
+                        savedRecordingID: savedRecordingID,
+                        cloudModeEnabled: cloudModeEnabled,
+                        hasLocalModel: WhisperModelManager.shared.selectedModel() != nil
+                    ) { recordingID in
+                        RecordingQueueService.shared.enqueue(
+                            [recordingID],
+                            action: .transcribe,
+                            providerOverride: .local
+                        )
+                    }
+                    if !cloudModeEnabled, !didEnqueue {
+                        DictationOverlayController.shared.showInfo(
+                            message: String(localized: "Recording saved. Download a local model in Settings to transcribe it."),
+                            duration: 3.0
+                        )
+                    }
                 }
             }
             // The pipeline is done reading compressedURL — the in-progress

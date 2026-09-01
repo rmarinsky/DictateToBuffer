@@ -119,4 +119,54 @@ final class MeetingLiveLibraryRowTests: XCTestCase {
         XCTAssertEqual(row.recoverySource, .orphanedSession)
         XCTAssertEqual(row.durationSeconds, 12, accuracy: 0.001)
     }
+
+    func test_normalLocalStop_enqueuesSavedRecordingOnce() {
+        let id = UUID()
+        var enqueuedIDs: [UUID] = []
+
+        let didEnqueue = AppDelegate.enqueueLocalMeetingTranscriptionIfReady(
+            savedRecordingID: id,
+            cloudModeEnabled: false,
+            hasLocalModel: true,
+            enqueue: { enqueuedIDs.append($0) }
+        )
+
+        XCTAssertTrue(didEnqueue)
+        XCTAssertEqual(enqueuedIDs, [id])
+    }
+
+    func test_cloudOrUnpersistedStop_doesNotEnqueueLocalTranscription() {
+        let id = UUID()
+        var enqueuedIDs: [UUID] = []
+
+        XCTAssertFalse(AppDelegate.enqueueLocalMeetingTranscriptionIfReady(
+            savedRecordingID: id,
+            cloudModeEnabled: true,
+            hasLocalModel: true,
+            enqueue: { enqueuedIDs.append($0) }
+        ))
+        XCTAssertFalse(AppDelegate.enqueueLocalMeetingTranscriptionIfReady(
+            savedRecordingID: nil,
+            cloudModeEnabled: false,
+            hasLocalModel: true,
+            enqueue: { enqueuedIDs.append($0) }
+        ))
+
+        XCTAssertTrue(enqueuedIDs.isEmpty)
+    }
+
+    func test_missingLocalModel_keepsSavedRecordingOutOfQueue() {
+        let id = UUID()
+        var enqueuedIDs: [UUID] = []
+
+        let didEnqueue = AppDelegate.enqueueLocalMeetingTranscriptionIfReady(
+            savedRecordingID: id,
+            cloudModeEnabled: false,
+            hasLocalModel: false,
+            enqueue: { enqueuedIDs.append($0) }
+        )
+
+        XCTAssertFalse(didEnqueue)
+        XCTAssertTrue(enqueuedIDs.isEmpty)
+    }
 }
