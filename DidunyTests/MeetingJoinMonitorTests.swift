@@ -220,6 +220,73 @@ final class MeetingJoinMonitorTests: XCTestCase {
         }
     }
 
+    func test_restartIgnoresSnapshotStartedBeforeStop() async {
+        let key = "meetingSuggestionsEnabled"
+        let storedValue = UserDefaults.standard.object(forKey: key)
+        defer {
+            if let storedValue {
+                UserDefaults.standard.set(storedValue, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+        SettingsStorage.shared.meetingSuggestionsEnabled = true
+        let signal = MeetingSignal(
+            client: .zoom,
+            source: .native,
+            isInputActive: true,
+            isOutputActive: true,
+            hasCallWindow: false,
+            isFrontmostCallWindow: false
+        )
+        let startedAt = Date(timeIntervalSince1970: 7000)
+        var staleContinuation: CheckedContinuation<[MeetingSignal], Never>?
+        var staleSnapshotReturned = false
+        var snapshotCount = 0
+        var clockTick = 0
+        var events: [MeetingPresenceEvent] = []
+        let monitor = MeetingJoinMonitor(
+            snapshot: {
+                snapshotCount += 1
+                if snapshotCount == 1 {
+                    let result = await withCheckedContinuation { continuation in
+                        staleContinuation = continuation
+                    }
+                    staleSnapshotReturned = true
+                    return result
+                }
+                return [signal]
+            },
+            now: {
+                defer { clockTick += 1 }
+                return startedAt.addingTimeInterval(TimeInterval(clockTick))
+            },
+            sleep: { _ in throw CancellationError() }
+        )
+
+        monitor.start { events.append($0) }
+        while staleContinuation == nil {
+            await Task.yield()
+        }
+        monitor.stop()
+
+        monitor.start { events.append($0) }
+        while clockTick == 0 {
+            await Task.yield()
+        }
+        staleContinuation?.resume(returning: [signal])
+        staleContinuation = nil
+        while !staleSnapshotReturned {
+            await Task.yield()
+        }
+        for _ in 0 ..< 5 {
+            await Task.yield()
+        }
+        monitor.stop()
+
+        XCTAssertTrue(events.isEmpty)
+    }
+
     func test_browserRequiresMeetingWindowAndAudioActivity() {
         let chromeAudio = MeetingAudioProcessSnapshot(
             bundleIdentifier: BrowserKind.chrome.bundleIdentifier,

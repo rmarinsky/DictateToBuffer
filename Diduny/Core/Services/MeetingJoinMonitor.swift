@@ -98,6 +98,7 @@ final class MeetingJoinMonitor {
     private var onEvent: ((MeetingPresenceEvent) -> Void)?
     private var workspaceObservers: [NSObjectProtocol] = []
     private var scanInFlight = false
+    private var scanGeneration: UInt = 0
 
     init(
         snapshot: @escaping SnapshotProvider = { await MeetingJoinMonitor.captureSignals() },
@@ -129,6 +130,7 @@ final class MeetingJoinMonitor {
     }
 
     func stop() {
+        scanGeneration &+= 1
         pollingTask?.cancel()
         pollingTask = nil
         let notificationCenter = NSWorkspace.shared.notificationCenter
@@ -140,9 +142,11 @@ final class MeetingJoinMonitor {
     }
 
     private func pollOnce() async {
+        let generation = scanGeneration
         guard pollingTask != nil, !scanInFlight else { return }
         scanInFlight = true
         let signals = await snapshot()
+        guard generation == scanGeneration else { return }
         scanInFlight = false
         guard pollingTask != nil, let event = ingest(signals, at: now()) else { return }
         onEvent?(event)
