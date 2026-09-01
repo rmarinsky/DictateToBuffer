@@ -705,6 +705,30 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
         )
     }
 
+    /// Binds a delayed 402 report to the callbacks that owned the failed connection.
+    /// A later recording may replace the service callbacks while usage is loading.
+    @discardableResult
+    func reportUsageLimit(
+        loadCachedUsage: @escaping () async -> UsageResponse? = {
+            UsageService.shared.cachedUsage
+        },
+        refreshUsage: @escaping () async -> Void = {
+            _ = await UsageService.shared.refresh()
+        }
+    ) -> Task<Void, Never> {
+        let errorHandler = onError
+        let statusHandler = onConnectionStatusChanged
+        return Task {
+            let usage = await loadCachedUsage()
+            errorHandler?(RealtimeTranscriptionError.usageLimitExceeded(
+                usedHours: usage?.usedHours ?? 0,
+                limitHours: usage?.limitHours ?? 5
+            ))
+            statusHandler?(.failed("Cloud usage limit reached"))
+            await refreshUsage()
+        }
+    }
+
     /// Called when the receive loop exits due to an error or a server-initiated close.
     ///
     /// ADR-0004 edge cases handled here:
@@ -733,16 +757,7 @@ final class CloudRealtimeService: NSObject, @unchecked Sendable {
         if (webSocketTask?.response as? HTTPURLResponse)?.statusCode == 402 {
             Log.transcription.warning("Cloud RT: WS upgrade returned 402 — usage limit, not reconnecting")
             endBufferingSession()
-            Task { [weak self] in
-                guard let self else { return }
-                let usage = await UsageService.shared.cachedUsage
-                await UsageService.shared.refresh()
-                self.onError?(RealtimeTranscriptionError.usageLimitExceeded(
-                    usedHours: usage?.usedHours ?? 0,
-                    limitHours: usage?.limitHours ?? 5
-                ))
-                self.onConnectionStatusChanged?(.failed("Cloud usage limit reached"))
-            }
+            reportUsageLimit()
             return
         }
 

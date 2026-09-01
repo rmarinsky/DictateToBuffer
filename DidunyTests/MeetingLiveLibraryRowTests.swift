@@ -171,6 +171,191 @@ final class MeetingLiveLibraryRowTests: XCTestCase {
         XCTAssertEqual(delegate.activeMeetingTranscriptionProvider, .cloud)
     }
 
+    func test_delayedCloudUsageRejection_staysBoundToOriginalMeetingCallback() async {
+        let delegate = AppDelegate()
+        let service = CloudRealtimeService()
+        let originalSessionID = UUID()
+        let nextSessionID = UUID()
+        let originalCallbackCalled = expectation(description: "Original callback receives delayed rejection")
+        let nextCallbackCalled = expectation(description: "Next callback must not receive stale rejection")
+        nextCallbackCalled.isInverted = true
+        let originalStatusCalled = expectation(description: "Original status callback receives delayed rejection")
+        let nextStatusCalled = expectation(description: "Next status callback must not receive stale rejection")
+        nextStatusCalled.isInverted = true
+        var originalStatusApplied: Bool?
+        var resumeUsage: CheckedContinuation<UsageResponse?, Never>?
+        let usageLoadStarted = expectation(description: "Usage load started")
+
+        delegate.activeMeetingTranscriptionSessionID = originalSessionID
+        delegate.activeMeetingTranscriptionProvider = .cloud
+        service.onError = { error in
+            Task { @MainActor in
+                _ = delegate.fallBackMeetingToLocalIfUsageUnavailable(
+                    error,
+                    sessionID: originalSessionID
+                )
+                originalCallbackCalled.fulfill()
+            }
+        }
+        service.onConnectionStatusChanged = { status in
+            Task { @MainActor in
+                originalStatusApplied = delegate.applyMeetingRealtimeConnectionStatus(
+                    status,
+                    sessionID: originalSessionID,
+                    store: nil
+                )
+                originalStatusCalled.fulfill()
+            }
+        }
+
+        let notificationTask = service.reportUsageLimit(
+            loadCachedUsage: {
+                await withCheckedContinuation { continuation in
+                    resumeUsage = continuation
+                    usageLoadStarted.fulfill()
+                }
+            },
+            refreshUsage: {}
+        )
+        await fulfillment(of: [usageLoadStarted], timeout: 1)
+
+        delegate.activeMeetingTranscriptionSessionID = nextSessionID
+        delegate.activeMeetingTranscriptionProvider = .cloud
+        service.onError = { _ in nextCallbackCalled.fulfill() }
+        service.onConnectionStatusChanged = { _ in nextStatusCalled.fulfill() }
+        resumeUsage?.resume(returning: nil)
+
+        await notificationTask.value
+        await fulfillment(
+            of: [originalCallbackCalled, originalStatusCalled, nextCallbackCalled, nextStatusCalled],
+            timeout: 0.1
+        )
+        XCTAssertEqual(delegate.activeMeetingTranscriptionProvider, .cloud)
+        XCTAssertEqual(originalStatusApplied, false)
+    }
+
+    func test_cancelledRecorderInitialization_finishesBeforeRestart() async throws {
+        let delegate = AppDelegate()
+        var resumeRecorderStart: CheckedContinuation<Void, Never>?
+        var resumeRestartPermission: CheckedContinuation<Bool, Never>?
+        let recorderStartBegan = expectation(description: "Recorder initialization started")
+        let restartPermissionBegan = expectation(description: "Restart permission started")
+
+        delegate.appState.meetingRecordingState = .processing
+        let firstStart = Task {
+            await delegate.startMeetingRecording(
+                provider: .local,
+                ensureScreenRecordingPermission: { true },
+                startRecorder: {
+                    await withCheckedContinuation { continuation in
+                        resumeRecorderStart = continuation
+                        recorderStartBegan.fulfill()
+                    }
+                }
+            )
+        }
+        delegate.meetingPipelineTask = firstStart
+        await fulfillment(of: [recorderStartBegan], timeout: 1)
+        let firstSessionID = try XCTUnwrap(delegate.activeMeetingTranscriptionSessionID)
+
+        delegate.toggleMeetingRecording(provider: .local)
+        let cancellationTask = try XCTUnwrap(delegate.meetingPipelineTask)
+        await Task.yield()
+
+        XCTAssertEqual(delegate.appState.meetingRecordingState, .processing)
+        XCTAssertEqual(delegate.activeMeetingTranscriptionSessionID, firstSessionID)
+
+        resumeRecorderStart?.resume()
+        await cancellationTask.value
+
+        XCTAssertEqual(delegate.appState.meetingRecordingState, .idle)
+        XCTAssertNil(delegate.activeMeetingTranscriptionSessionID)
+        XCTAssertNil(delegate.activeMeetingTranscriptionProvider)
+
+        delegate.appState.meetingRecordingState = .processing
+        let restartedStart = Task {
+            await delegate.startMeetingRecording(
+                provider: .local,
+                ensureScreenRecordingPermission: {
+                    await withCheckedContinuation { continuation in
+                        resumeRestartPermission = continuation
+                        restartPermissionBegan.fulfill()
+                    }
+                }
+            )
+        }
+        await fulfillment(of: [restartPermissionBegan], timeout: 1)
+        let restartedSessionID = try XCTUnwrap(delegate.activeMeetingTranscriptionSessionID)
+        XCTAssertNotEqual(restartedSessionID, firstSessionID)
+
+        restartedStart.cancel()
+        resumeRestartPermission?.resume(returning: true)
+        await restartedStart.value
+        delegate.appState.meetingRecordingState = .idle
+    }
+
+    func test_cancelledStartDuringPermissionWait_neverStartsRecorder() async {
+        let delegate = AppDelegate()
+        var resumePermission: CheckedContinuation<Bool, Never>?
+        let permissionStarted = expectation(description: "Permission request started")
+
+        delegate.appState.meetingRecordingState = .processing
+        let start = Task {
+            await delegate.startMeetingRecording(
+                provider: .local,
+                ensureScreenRecordingPermission: {
+                    await withCheckedContinuation { continuation in
+                        resumePermission = continuation
+                        permissionStarted.fulfill()
+                    }
+                }
+            )
+        }
+        await fulfillment(of: [permissionStarted], timeout: 1)
+
+        start.cancel()
+        resumePermission?.resume(returning: true)
+        await start.value
+
+        XCTAssertFalse(delegate.meetingRecorderService.isRecording)
+        XCTAssertNil(delegate.activeMeetingTranscriptionSessionID)
+        XCTAssertNil(delegate.activeMeetingTranscriptionProvider)
+        delegate.appState.meetingRecordingState = .idle
+    }
+
+    func test_meetingProviderResolution_usesCachedEligibilityWithoutNetworkPreflight() {
+        let exhausted = UsageResponse(
+            isWhitelisted: false,
+            usedHours: 5,
+            limitHours: 5,
+            remainingHours: 0,
+            usedMs: 18_000_000,
+            limitMs: 18_000_000,
+            remainingMs: 0
+        )
+
+        XCTAssertEqual(AppDelegate.resolveMeetingTranscriptionProvider(
+            requestedProvider: .cloud,
+            hasStoredSession: false,
+            cachedUsage: nil
+        ), .local)
+        XCTAssertEqual(AppDelegate.resolveMeetingTranscriptionProvider(
+            requestedProvider: .cloud,
+            hasStoredSession: true,
+            cachedUsage: exhausted
+        ), .local)
+        XCTAssertEqual(AppDelegate.resolveMeetingTranscriptionProvider(
+            requestedProvider: .cloud,
+            hasStoredSession: true,
+            cachedUsage: nil
+        ), .cloud)
+        XCTAssertEqual(AppDelegate.resolveMeetingTranscriptionProvider(
+            requestedProvider: .local,
+            hasStoredSession: true,
+            cachedUsage: nil
+        ), .local)
+    }
+
     func test_cloudOrUnpersistedStop_doesNotEnqueueLocalTranscription() {
         let id = UUID()
         var enqueuedIDs: [UUID] = []
