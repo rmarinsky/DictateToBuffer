@@ -422,29 +422,38 @@ final class MeetingJoinMonitorTests: XCTestCase {
         XCTAssertNil(monitor.ingest([meet], at: startedAt.addingTimeInterval(2)))
     }
 
-    func test_googleMeetMappingUsesEverySupportedBrowserFamily() {
+    func test_meetingClientMappingUsesEverySupportedBrowserFamily() {
+        let meetings: [(title: String, client: MeetingClient)] = [
+            ("Product review - Google Meet", .googleMeet),
+            ("Zoom Meeting", .zoom),
+            ("Microsoft Teams Meeting", .teams),
+            ("Webex Personal Room", .webex)
+        ]
+
         for browser in BrowserKind.allCases {
             let audioBundleIdentifier = browser == .safari
                 ? "com.apple.WebKit.WebContent"
                 : browser.bundleIdentifier + ".helper"
-            let signals = MeetingJoinMonitor.signals(
-                audio: [
-                    MeetingAudioProcessSnapshot(
-                        bundleIdentifier: audioBundleIdentifier,
-                        isInputActive: true,
-                        isOutputActive: false
-                    )
-                ],
-                windows: [
-                    MeetingWindowSnapshot(
-                        bundleIdentifier: browser.bundleIdentifier,
-                        title: "Product review - Google Meet",
-                        isFrontmost: false
-                    )
-                ]
-            )
+            for meeting in meetings {
+                let signals = MeetingJoinMonitor.signals(
+                    audio: [
+                        MeetingAudioProcessSnapshot(
+                            bundleIdentifier: audioBundleIdentifier,
+                            isInputActive: true,
+                            isOutputActive: false
+                        )
+                    ],
+                    windows: [
+                        MeetingWindowSnapshot(
+                            bundleIdentifier: browser.bundleIdentifier,
+                            title: meeting.title,
+                            isFrontmost: false
+                        )
+                    ]
+                )
 
-            XCTAssertEqual(signals.map(\.client), [.googleMeet], browser.rawValue)
+                XCTAssertEqual(signals.map(\.client), [meeting.client], "\(browser.rawValue): \(meeting.title)")
+            }
         }
     }
 
