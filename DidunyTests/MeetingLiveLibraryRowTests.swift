@@ -145,23 +145,30 @@ final class MeetingLiveLibraryRowTests: XCTestCase {
 
     func test_cloudUsageRejection_switchesActiveMeetingToLocal() {
         let delegate = AppDelegate()
+        let sessionID = UUID()
+        delegate.activeMeetingTranscriptionSessionID = sessionID
         delegate.activeMeetingTranscriptionProvider = .cloud
 
         XCTAssertTrue(delegate.fallBackMeetingToLocalIfUsageUnavailable(
-            RealtimeTranscriptionError.usageLimitExceeded(usedHours: 5, limitHours: 5)
+            RealtimeTranscriptionError.usageLimitExceeded(usedHours: 5, limitHours: 5),
+            sessionID: sessionID
         ))
         XCTAssertEqual(delegate.activeMeetingTranscriptionProvider, .local)
 
         XCTAssertFalse(delegate.fallBackMeetingToLocalIfUsageUnavailable(
-            RealtimeTranscriptionError.connectionFailed("offline")
+            RealtimeTranscriptionError.connectionFailed("offline"),
+            sessionID: sessionID
         ))
         XCTAssertEqual(delegate.activeMeetingTranscriptionProvider, .local)
 
-        delegate.activeMeetingTranscriptionProvider = nil
+        let nextSessionID = UUID()
+        delegate.activeMeetingTranscriptionSessionID = nextSessionID
+        delegate.activeMeetingTranscriptionProvider = .cloud
         XCTAssertFalse(delegate.fallBackMeetingToLocalIfUsageUnavailable(
-            RealtimeTranscriptionError.usageLimitExceeded(usedHours: 5, limitHours: 5)
+            RealtimeTranscriptionError.usageLimitExceeded(usedHours: 5, limitHours: 5),
+            sessionID: sessionID
         ))
-        XCTAssertNil(delegate.activeMeetingTranscriptionProvider)
+        XCTAssertEqual(delegate.activeMeetingTranscriptionProvider, .cloud)
     }
 
     func test_cloudOrUnpersistedStop_doesNotEnqueueLocalTranscription() {

@@ -52,7 +52,10 @@ extension AppDelegate {
     /// (self-cancel made the save-audio-on-cancel branch fail silently).
     func cancelMeetingRecording() async {
         Log.app.info("cancelMeetingRecording: BEGIN")
-        defer { activeMeetingTranscriptionProvider = nil }
+        defer {
+            activeMeetingTranscriptionSessionID = nil
+            activeMeetingTranscriptionProvider = nil
+        }
 
         let recordingStartTime = appState.meetingRecordingStartTime
         let stopTime = Date()
@@ -167,17 +170,24 @@ extension AppDelegate {
             return
         }
 
-        let cloudAvailable = UsageService.canUseCloudTranscription(
-            hasStoredSession: AuthService.hasStoredSession,
-            usage: UsageService.shared.cachedUsage
-        )
-        let provider: TranscriptionProvider = requestedProvider == .cloud && !cloudAvailable
-            ? .local
-            : requestedProvider
+        // Subscription/usage validation starts only after the user's explicit
+        // recording action. A failed or inconclusive check safely selects Local.
+        let refreshedUsage: UsageResponse? = if requestedProvider == .cloud, AuthService.hasStoredSession {
+            await UsageService.shared.refresh()
+        } else {
+            nil
+        }
+        let provider: TranscriptionProvider = requestedProvider == .cloud
+            && UsageService.canUseCloudTranscription(
+                hasStoredSession: AuthService.hasStoredSession,
+                usage: refreshedUsage
+            ) ? .cloud : .local
+        activeMeetingTranscriptionSessionID = UUID()
         activeMeetingTranscriptionProvider = provider
         var didStart = false
         defer {
             if !didStart {
+                activeMeetingTranscriptionSessionID = nil
                 activeMeetingTranscriptionProvider = nil
             }
         }
@@ -354,7 +364,7 @@ extension AppDelegate {
 
     func setupMeetingLiveTranscription(cloudModeEnabled: Bool) async -> LiveTranscriptStore {
         if cloudModeEnabled {
-            return await setupRealtimeTranscription()
+            return await setupRealtimeTranscription(sessionID: activeMeetingTranscriptionSessionID)
         }
 
         Log.app.info("Local meeting mode selected — starting live Whisper preview")
@@ -417,7 +427,7 @@ extension AppDelegate {
         return didReceiveFinalization
     }
 
-    private func setupRealtimeTranscription() async -> LiveTranscriptStore {
+    private func setupRealtimeTranscription(sessionID: UUID?) async -> LiveTranscriptStore {
         let store = await MainActor.run { LiveTranscriptStore() }
 
         let rtService = realtimeTranscriptionService
@@ -476,7 +486,7 @@ extension AppDelegate {
         rtService.onError = { [weak self] error in
             Log.transcription.error("Realtime transcription error: \(error.localizedDescription)")
             Task { @MainActor in
-                self?.fallBackMeetingToLocalIfUsageUnavailable(error)
+                self?.fallBackMeetingToLocalIfUsageUnavailable(error, sessionID: sessionID)
             }
             // Don't stop recording — file recording continues independently
         }
@@ -509,7 +519,7 @@ extension AppDelegate {
                     store?.isActive = true
                     store?.connectionStatus = .failed(error.localizedDescription)
                 }
-                fallBackMeetingToLocalIfUsageUnavailable(error)
+                fallBackMeetingToLocalIfUsageUnavailable(error, sessionID: sessionID)
             }
         }
 
@@ -517,8 +527,10 @@ extension AppDelegate {
     }
 
     @discardableResult
-    func fallBackMeetingToLocalIfUsageUnavailable(_ error: Error) -> Bool {
-        guard activeMeetingTranscriptionProvider == .cloud,
+    func fallBackMeetingToLocalIfUsageUnavailable(_ error: Error, sessionID: UUID?) -> Bool {
+        guard let sessionID,
+              activeMeetingTranscriptionSessionID == sessionID,
+              activeMeetingTranscriptionProvider == .cloud,
               case .usageLimitExceeded = error as? RealtimeTranscriptionError
         else { return false }
         activeMeetingTranscriptionProvider = .local
@@ -564,7 +576,10 @@ extension AppDelegate {
         }
 
         Log.app.info("stopMeetingRecording: BEGIN")
-        defer { activeMeetingTranscriptionProvider = nil }
+        defer {
+            activeMeetingTranscriptionSessionID = nil
+            activeMeetingTranscriptionProvider = nil
+        }
 
         // Deactivate chapter bookmark hotkey
         hotkeyService.unregisterChapterHotkey()

@@ -138,6 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var voicePipelineTask: Task<Void, Never>?
     var translationPipelineTask: Task<Void, Never>?
     var meetingPipelineTask: Task<Void, Never>?
+    var activeMeetingTranscriptionSessionID: UUID?
     var activeMeetingTranscriptionProvider: TranscriptionProvider?
     var meetingTranslationPipelineTask: Task<Void, Never>?
     /// In-flight meeting realtime WS connect, launched before capture setup so

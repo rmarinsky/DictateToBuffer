@@ -359,15 +359,6 @@ final class EdgeCommandPanelModel {
         return true
     }
 
-    func updateMeetingSuggestionCloudAvailability(_ available: Bool, id: UUID) {
-        guard var suggestion = meetingSuggestion, suggestion.meeting.id == id else { return }
-        suggestion.isCloudAvailable = available
-        if !available {
-            suggestion.selectedProvider = .local
-        }
-        meetingSuggestion = suggestion
-    }
-
     @discardableResult
     func consumeMeetingSuggestionStart(id: UUID) -> MeetingSuggestion? {
         guard meetingSuggestion?.meeting.id == id else { return nil }
@@ -532,7 +523,7 @@ final class EdgeCommandPanelController: NSObject {
         collapseTask?.cancel()
         cancelTabAutoHide()
         refreshModel()
-        let cloudAvailable = UsageService.canUseCloudTranscription(
+        let cloudAvailable = UsageService.canOfferCloudTranscription(
             hasStoredSession: AuthService.hasStoredSession,
             usage: UsageService.shared.cachedUsage
         )
@@ -552,18 +543,6 @@ final class EdgeCommandPanelController: NSObject {
         )
         revealPanelIfConcealed()
         panel.orderFrontRegardless()
-
-        if AuthService.hasStoredSession {
-            Task { [weak self] in
-                await UsageService.shared.refresh()
-                guard let self else { return }
-                let available = UsageService.canUseCloudTranscription(
-                    hasStoredSession: AuthService.hasStoredSession,
-                    usage: UsageService.shared.cachedUsage
-                )
-                self.model?.updateMeetingSuggestionCloudAvailability(available, id: meeting.id)
-            }
-        }
     }
 
     @discardableResult

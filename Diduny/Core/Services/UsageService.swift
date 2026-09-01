@@ -16,9 +16,15 @@ final class UsageService {
         hasStoredSession: Bool,
         usage: UsageResponse?
     ) -> Bool {
-        guard hasStoredSession else { return false }
-        guard let usage else { return true }
+        guard hasStoredSession, let usage else { return false }
         return usage.isWhitelisted || (usage.remainingMs ?? 0) > 0
+    }
+
+    nonisolated static func canOfferCloudTranscription(
+        hasStoredSession: Bool,
+        usage: UsageResponse?
+    ) -> Bool {
+        hasStoredSession && (usage == nil || canUseCloudTranscription(hasStoredSession: true, usage: usage))
     }
 
     var formattedRemaining: String {
@@ -35,9 +41,10 @@ final class UsageService {
         return Double(usage.usedMs) / Double(limitMs)
     }
 
-    func refresh() async {
+    @discardableResult
+    func refresh() async -> UsageResponse? {
         let proxyBase = SettingsStorage.shared.proxyBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URL(string: "\(proxyBase)/api/v1/usage/me") else { return }
+        guard let url = URL(string: "\(proxyBase)/api/v1/usage/me") else { return nil }
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -49,13 +56,16 @@ final class UsageService {
             let (data, httpResponse) = try await AuthService.shared.performWithAuth(request)
             guard (200 ... 299).contains(httpResponse.statusCode) else {
                 Log.app.warning("[Usage] Failed to fetch usage: HTTP \(httpResponse.statusCode)")
-                return
+                return nil
             }
-            cachedUsage = try JSONDecoder().decode(UsageResponse.self, from: data)
+            let usage = try JSONDecoder().decode(UsageResponse.self, from: data)
+            cachedUsage = usage
             lastFetched = Date()
             Log.app.info("[Usage] Refreshed: \(self.formattedRemaining)")
+            return usage
         } catch {
             Log.app.warning("[Usage] Failed to fetch usage: \(error.localizedDescription)")
+            return nil
         }
     }
 }

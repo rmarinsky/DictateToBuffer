@@ -196,8 +196,8 @@ struct EdgeCommandPanelModelTests {
         #expect(!model.selectMeetingSuggestionProvider(.cloud))
     }
 
-    @Test("Cloud eligibility requires a session and remaining usage")
-    func cloudEligibilityRequiresSessionAndUsage() {
+    @Test("Cloud use requires confirmed usage while an unknown cache remains selectable")
+    func cloudEligibilityDistinguishesConfirmedUseFromAnUnknownOffer() {
         let available = UsageResponse(
             isWhitelisted: false,
             usedHours: 1,
@@ -230,7 +230,9 @@ struct EdgeCommandPanelModelTests {
         #expect(!UsageService.canUseCloudTranscription(hasStoredSession: false, usage: available))
         #expect(!UsageService.canUseCloudTranscription(hasStoredSession: true, usage: exhausted))
         #expect(!UsageService.canUseCloudTranscription(hasStoredSession: true, usage: noSubscription))
-        #expect(UsageService.canUseCloudTranscription(hasStoredSession: true, usage: nil))
+        #expect(!UsageService.canUseCloudTranscription(hasStoredSession: true, usage: nil))
+        #expect(UsageService.canOfferCloudTranscription(hasStoredSession: true, usage: nil))
+        #expect(!UsageService.canOfferCloudTranscription(hasStoredSession: false, usage: nil))
     }
 
     @Test("Disabling future suggestions keeps the current meeting suggestion open")
