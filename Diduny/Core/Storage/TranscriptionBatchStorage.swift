@@ -308,13 +308,18 @@ final class TranscriptionBatchStorage {
         }
     }
 
-    func removeRecordingReferences(_ ids: Set<UUID>) throws {
-        guard !ids.isEmpty else { return }
+    @discardableResult
+    func removeRecordingReferences(
+        _ ids: Set<UUID>,
+        allowDuringRecordingRecovery: Bool = false,
+        deferDownloadedArtifactRemoval: Bool = false
+    ) throws -> [BatchTranscriptionItem] {
+        guard !ids.isEmpty else { return [] }
         let removedItems = batches.flatMap { batch in
             (batch.workItems ?? []).filter { $0.recordingID.map(ids.contains) == true }
         }
         try removedItems.forEach(validateDownloadedArtifact)
-        try mutateAndSave {
+        try mutateAndSave(allowDuringRecordingRecovery: allowDuringRecordingRecovery) {
             for index in batches.indices {
                 batches[index].recordingIDs.removeAll(where: ids.contains)
                 batches[index].workItems?.removeAll { item in
@@ -322,17 +327,24 @@ final class TranscriptionBatchStorage {
                 }
             }
         }
-        for item in removedItems {
-            do {
-                try removeDownloadedArtifact(item)
-            } catch {
-                Log.app.error("Failed to clean downloaded batch artifact: \(error.localizedDescription)")
-            }
+        if !deferDownloadedArtifactRemoval {
+            removeDownloadedArtifacts(removedItems)
+        }
+        return removedItems
+    }
+
+    func restoreSnapshot(_ snapshot: [TranscriptionBatch]) throws {
+        try mutateAndSave(allowDuringRecordingRecovery: true) {
+            batches = snapshot
         }
     }
 
     @discardableResult
-    func delete(batchID: UUID) throws -> Set<UUID> {
+    func delete(
+        batchID: UUID,
+        allowDuringRecordingRecovery: Bool = false,
+        deferDownloadedArtifactRemoval: Bool = false
+    ) throws -> (recordingIDs: Set<UUID>, removedItems: [BatchTranscriptionItem]) {
         guard let batch = batches.first(where: { $0.id == batchID }) else {
             throw StorageError.batchNotFound
         }
@@ -343,7 +355,7 @@ final class TranscriptionBatchStorage {
             }
         }
         try removedItems.forEach(validateDownloadedArtifact)
-        try mutateAndSave {
+        try mutateAndSave(allowDuringRecordingRecovery: allowDuringRecordingRecovery) {
             batches.removeAll { $0.id == batchID }
             for index in batches.indices {
                 batches[index].recordingIDs.removeAll(where: affected.contains)
@@ -352,27 +364,50 @@ final class TranscriptionBatchStorage {
                 }
             }
         }
-        for item in removedItems {
+        if !deferDownloadedArtifactRemoval {
+            removeDownloadedArtifacts(removedItems)
+        }
+        return (affected, removedItems)
+    }
+
+    @discardableResult
+    func removeDownloadedArtifacts(_ items: [BatchTranscriptionItem]) -> Bool {
+        removeDownloadedArtifacts(at: items.compactMap {
+            $0.downloadedAudioURL?.standardizedFileURL.path
+        })
+    }
+
+    @discardableResult
+    func removeDownloadedArtifacts(at paths: [String]) -> Bool {
+        guard paths.allSatisfy(Self.isValidDownloadedArtifactPath) else { return false }
+        for path in paths {
             do {
-                try removeDownloadedArtifact(item)
+                try removeDownloadedArtifact(at: path)
             } catch {
                 Log.app.error("Failed to clean downloaded batch artifact: \(error.localizedDescription)")
             }
         }
-        return affected
+        return paths.allSatisfy { !FileManager.default.fileExists(atPath: $0) }
     }
 
     private func validateDownloadedArtifact(_ item: BatchTranscriptionItem) throws {
-        guard let url = item.downloadedAudioURL?.standardizedFileURL else { return }
-        let temporaryRoot = FileManager.default.temporaryDirectory.standardizedFileURL.path + "/"
-        guard url.path.hasPrefix(temporaryRoot) else {
-            throw CocoaError(.fileWriteNoPermission, userInfo: [NSFilePathErrorKey: url.path])
+        guard let path = item.downloadedAudioURL?.standardizedFileURL.path else { return }
+        guard Self.isValidDownloadedArtifactPath(path) else {
+            throw CocoaError(.fileWriteNoPermission, userInfo: [NSFilePathErrorKey: path])
         }
     }
 
-    private func removeDownloadedArtifact(_ item: BatchTranscriptionItem) throws {
-        try validateDownloadedArtifact(item)
-        guard let url = item.downloadedAudioURL?.standardizedFileURL else { return }
+    nonisolated static func isValidDownloadedArtifactPath(_ path: String) -> Bool {
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        let temporaryRoot = FileManager.default.temporaryDirectory.standardizedFileURL.path + "/"
+        return url.path.hasPrefix(temporaryRoot)
+    }
+
+    private func removeDownloadedArtifact(at path: String) throws {
+        guard Self.isValidDownloadedArtifactPath(path) else {
+            throw CocoaError(.fileWriteNoPermission, userInfo: [NSFilePathErrorKey: path])
+        }
+        let url = URL(fileURLWithPath: path).standardizedFileURL
         let fileManager = FileManager.default
         let temporaryRoot = fileManager.temporaryDirectory.standardizedFileURL.path + "/"
         if fileManager.fileExists(atPath: url.path) {
@@ -393,7 +428,15 @@ final class TranscriptionBatchStorage {
         try encoder.encode(batches).write(to: metadataURL, options: .atomic)
     }
 
-    private func mutateAndSave(_ mutation: () -> Void) throws {
+    private func mutateAndSave(
+        allowDuringRecordingRecovery: Bool = false,
+        _ mutation: () -> Void
+    ) throws {
+        if !allowDuringRecordingRecovery,
+           !RecordingsLibraryStorage.allowsMutations(in: metadataURL.deletingLastPathComponent())
+        {
+            throw StorageError.unreadableMetadata
+        }
         let previous = batches
         mutation()
         do {

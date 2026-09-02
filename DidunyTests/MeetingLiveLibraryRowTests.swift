@@ -20,18 +20,32 @@ final class MeetingLiveLibraryRowTests: XCTestCase {
         try await super.tearDown()
     }
 
-    func test_beginMeetingRecording_createsRecordingStatusRowWithoutAudio() {
+    func test_beginMeetingRecording_createsRecordingStatusRowWithoutAudio() throws {
         let id = UUID()
         let started = Date(timeIntervalSince1970: 1_700_000_000)
         let result = storage.beginMeetingRecording(id: id, type: .meeting, createdAt: started)
         XCTAssertEqual(result, id)
 
-        let row = try! XCTUnwrap(storage.recordings.first(where: { $0.id == id }))
+        let row = try XCTUnwrap(storage.recordings.first(where: { $0.id == id }))
         XCTAssertEqual(row.status, .recording)
         XCTAssertEqual(row.createdAt, started)
         XCTAssertNil(row.endedAt)
         XCTAssertTrue(row.audioFileName.isEmpty)
         XCTAssertFalse(storage.hasPlayableAudio(for: row))
+    }
+
+    func test_beginMeetingRecording_saveFailurePreservesExistingRecoveryRow() throws {
+        let id = UUID()
+        _ = storage.beginMeetingRecording(id: id, type: .meeting)
+        XCTAssertTrue(storage.markNeedsRecovery(id: id))
+        let existing = try XCTUnwrap(storage.recordings.first(where: { $0.id == id }))
+
+        let metadataURL = directory.appendingPathComponent("recordings_metadata.json")
+        try FileManager.default.removeItem(at: metadataURL)
+        try FileManager.default.createDirectory(at: metadataURL, withIntermediateDirectories: true)
+
+        XCTAssertNil(storage.beginMeetingRecording(id: id, type: .meeting))
+        XCTAssertEqual(storage.recordings.first(where: { $0.id == id }), existing)
     }
 
     func test_finalizeInProgressRecording_attachesAudioAndEndedAt() throws {
@@ -109,15 +123,317 @@ final class MeetingLiveLibraryRowTests: XCTestCase {
         )
     }
 
-    func test_markNeedsRecovery_setsStatusAndSource() {
+    func test_markNeedsRecovery_setsStatusAndSource() throws {
         let id = UUID()
         _ = storage.beginMeetingRecording(id: id, type: .meetingTranslation)
         let ended = Date()
         XCTAssertTrue(storage.markNeedsRecovery(id: id, endedAt: ended, durationSeconds: 12))
-        let row = try! XCTUnwrap(storage.recordings.first(where: { $0.id == id }))
+        let row = try XCTUnwrap(storage.recordings.first(where: { $0.id == id }))
         XCTAssertEqual(row.status, .needsRecovery)
         XCTAssertEqual(row.recoverySource, .orphanedSession)
         XCTAssertEqual(row.durationSeconds, 12, accuracy: 0.001)
+    }
+
+    func test_promoteOrphanedMeeting_doesNotReportFailedPersistence() async throws {
+        let id = UUID()
+        XCTAssertEqual(storage.beginMeetingRecording(id: id, type: .meeting), id)
+        let inProgressStore = try InProgressRecordingStore(
+            baseDirectory: directory.appendingPathComponent("InProgressRecordings")
+        )
+        _ = try await inProgressStore.directoryURL(for: id)
+
+        let metadataURL = directory.appendingPathComponent("recordings_metadata.json")
+        try FileManager.default.removeItem(at: metadataURL)
+        try FileManager.default.createDirectory(at: metadataURL, withIntermediateDirectories: true)
+
+        let promoted = await AppDelegate().promoteOrphanedInProgressMeetings(
+            store: inProgressStore,
+            storage: storage
+        )
+
+        XCTAssertFalse(promoted.contains(id))
+        XCTAssertEqual(storage.recordings.first(where: { $0.id == id })?.status, .recording)
+    }
+
+    func test_recoveryStitchFailureKeepsRowRecoverable() async throws {
+        let id = UUID()
+        let inProgressStore = try InProgressRecordingStore(
+            baseDirectory: directory.appendingPathComponent("InProgressRecordings")
+        )
+        let recoveryService = MeetingRecoveryService(
+            storage: storage,
+            inProgressStore: inProgressStore
+        )
+        XCTAssertEqual(storage.beginMeetingRecording(id: id, type: .meeting), id)
+        XCTAssertTrue(storage.markNeedsRecovery(id: id))
+
+        let resolved = await recoveryService.resolve(
+            recordingID: id,
+            action: .saveAudioOnly
+        )
+
+        XCTAssertFalse(resolved)
+        let row = try XCTUnwrap(storage.recordings.first(where: { $0.id == id }))
+        XCTAssertEqual(row.status, .needsRecovery)
+        XCTAssertEqual(row.statusDetail, "Could not recover meeting audio")
+    }
+
+    func test_deleteRecording_removesRecoveryRowWithoutAttachedAudio() throws {
+        let id = UUID()
+        _ = storage.beginMeetingRecording(id: id, type: .meeting)
+        XCTAssertTrue(storage.markNeedsRecovery(id: id))
+        let row = try XCTUnwrap(storage.recordings.first(where: { $0.id == id }))
+
+        XCTAssertTrue(storage.deleteRecording(row))
+        XCTAssertFalse(storage.recordings.contains(where: { $0.id == id }))
+    }
+
+    func test_deleteRecording_rejectsActiveMeetingCapture() throws {
+        let id = UUID()
+        let inProgressDirectory = directory
+            .appendingPathComponent("InProgressRecordings")
+            .appendingPathComponent(id.uuidString)
+        try FileManager.default.createDirectory(
+            at: inProgressDirectory,
+            withIntermediateDirectories: true
+        )
+        XCTAssertEqual(storage.beginMeetingRecording(id: id, type: .meeting), id)
+        let row = try XCTUnwrap(storage.recordings.first(where: { $0.id == id }))
+
+        XCTAssertFalse(storage.deleteRecording(row))
+        XCTAssertTrue(storage.recordings.contains(where: { $0.id == id }))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: inProgressDirectory.path))
+    }
+
+    func test_deleteCancelledInProgressRecording_removesLiveRowAndRawDirectory() throws {
+        let id = UUID()
+        let inProgressDirectory = directory
+            .appendingPathComponent("InProgressRecordings")
+            .appendingPathComponent(id.uuidString)
+        try FileManager.default.createDirectory(
+            at: inProgressDirectory,
+            withIntermediateDirectories: true
+        )
+        XCTAssertEqual(storage.beginMeetingRecording(id: id, type: .meeting), id)
+        let row = try XCTUnwrap(storage.recordings.first(where: { $0.id == id }))
+
+        XCTAssertTrue(storage.deleteCancelledInProgressRecording(row))
+        XCTAssertFalse(storage.recordings.contains(where: { $0.id == id }))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: inProgressDirectory.path))
+    }
+
+    func test_deleteRecordings_cleansInProgressDirectory() async throws {
+        let id = UUID()
+        let inProgressStore = try InProgressRecordingStore(
+            baseDirectory: directory.appendingPathComponent("InProgressRecordings")
+        )
+        let inProgressDirectory = try await inProgressStore.directoryURL(for: id)
+        try Data("chunk".utf8).write(
+            to: inProgressDirectory.appendingPathComponent("chunk_001.wav")
+        )
+        _ = storage.beginMeetingRecording(id: id, type: .meeting)
+        XCTAssertTrue(storage.markNeedsRecovery(id: id))
+
+        XCTAssertTrue(storage.deleteRecordings(Set([id])))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: inProgressDirectory.path))
+    }
+
+    func test_startupRetriesPendingDeletionCleanup() throws {
+        let appDirectory = directory.appendingPathComponent("PendingDeletionCleanup")
+        let inProgressDirectory = appDirectory
+            .appendingPathComponent("InProgressRecordings")
+            .appendingPathComponent(".meeting.deleting-test")
+        try FileManager.default.createDirectory(
+            at: inProgressDirectory,
+            withIntermediateDirectories: true
+        )
+        try Data("chunk".utf8).write(
+            to: inProgressDirectory.appendingPathComponent("chunk_001.wav")
+        )
+        let cleanupURL = appDirectory.appendingPathComponent("recordings_delete_cleanup.json")
+        try JSONEncoder().encode([inProgressDirectory.path]).write(to: cleanupURL)
+        try Data("[]".utf8).write(
+            to: appDirectory.appendingPathComponent("recordings_metadata.json")
+        )
+        let batchStorage = try TranscriptionBatchStorage(baseDirectory: appDirectory)
+
+        _ = RecordingsLibraryStorage(
+            baseDirectory: appDirectory,
+            batchStorage: batchStorage
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: inProgressDirectory.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cleanupURL.path))
+    }
+
+    func test_startupRejectsPendingDeletionOutsideOwnedDirectories() throws {
+        let appDirectory = directory.appendingPathComponent("InvalidPendingDeletionCleanup")
+        try FileManager.default.createDirectory(at: appDirectory, withIntermediateDirectories: true)
+        let unrelatedFile = directory.appendingPathComponent(".unrelated.deleting-test")
+        try Data("keep".utf8).write(to: unrelatedFile)
+        let cleanupURL = appDirectory.appendingPathComponent("recordings_delete_cleanup.json")
+        try JSONEncoder().encode([unrelatedFile.path]).write(to: cleanupURL)
+        try Data("[]".utf8).write(
+            to: appDirectory.appendingPathComponent("recordings_metadata.json")
+        )
+        let batchStorage = try TranscriptionBatchStorage(baseDirectory: appDirectory)
+
+        _ = RecordingsLibraryStorage(
+            baseDirectory: appDirectory,
+            batchStorage: batchStorage
+        )
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unrelatedFile.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cleanupURL.path))
+    }
+
+    func test_nextDeletionAlsoRetriesPreviouslyPendingCleanup() throws {
+        let inProgressRoot = directory.appendingPathComponent("InProgressRecordings")
+        let previouslyStaged = inProgressRoot.appendingPathComponent(".previous.deleting-test")
+        try FileManager.default.createDirectory(at: previouslyStaged, withIntermediateDirectories: true)
+        try Data("old chunk".utf8).write(
+            to: previouslyStaged.appendingPathComponent("chunk_001.wav")
+        )
+        try JSONEncoder().encode([previouslyStaged.path]).write(
+            to: directory.appendingPathComponent("recordings_delete_cleanup.json")
+        )
+
+        let id = UUID()
+        let currentDirectory = inProgressRoot.appendingPathComponent(id.uuidString)
+        try FileManager.default.createDirectory(at: currentDirectory, withIntermediateDirectories: true)
+        XCTAssertEqual(storage.beginMeetingRecording(id: id, type: .meeting), id)
+        XCTAssertTrue(storage.markNeedsRecovery(id: id))
+
+        XCTAssertTrue(storage.deleteRecordings(Set([id])))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: previouslyStaged.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: currentDirectory.path))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent("recordings_delete_cleanup.json").path
+        ))
+    }
+
+    func test_deleteRemainsCommittedWhenRecoveryJournalCannotBeRemoved() throws {
+        let appDirectory = directory.appendingPathComponent("RecoveryJournalRemovalFailure")
+        let batchStorage = try TranscriptionBatchStorage(baseDirectory: appDirectory)
+        let storage = RecordingsLibraryStorage(
+            baseDirectory: appDirectory,
+            batchStorage: batchStorage,
+            deletionRecoveryRemover: { _ in throw CocoaError(.fileWriteNoPermission) }
+        )
+        let id = UUID()
+        let inProgressDirectory = appDirectory
+            .appendingPathComponent("InProgressRecordings")
+            .appendingPathComponent(id.uuidString)
+        try FileManager.default.createDirectory(
+            at: inProgressDirectory,
+            withIntermediateDirectories: true
+        )
+        XCTAssertEqual(storage.beginMeetingRecording(id: id, type: .meeting), id)
+        let batch = try batchStorage.create(name: "Meeting", recordingIDs: [id])
+        let row = try XCTUnwrap(storage.recordings.first(where: { $0.id == id }))
+
+        XCTAssertTrue(storage.deleteCancelledInProgressRecording(row))
+        XCTAssertFalse(storage.recordings.contains(where: { $0.id == id }))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: inProgressDirectory.path))
+        XCTAssertEqual(
+            batchStorage.batches.first(where: { $0.id == batch.id })?.recordingIDs,
+            []
+        )
+
+        let reloadedStorage = RecordingsLibraryStorage(
+            baseDirectory: appDirectory,
+            batchStorage: batchStorage
+        )
+        XCTAssertFalse(reloadedStorage.recordings.contains(where: { $0.id == id }))
+        XCTAssertEqual(
+            batchStorage.batches.first(where: { $0.id == batch.id })?.recordingIDs,
+            []
+        )
+    }
+
+    func test_deleteDoesNotOverwriteUnresolvedRecoveryJournal() throws {
+        let id = UUID()
+        let inProgressDirectory = directory
+            .appendingPathComponent("InProgressRecordings")
+            .appendingPathComponent(id.uuidString)
+        try FileManager.default.createDirectory(
+            at: inProgressDirectory,
+            withIntermediateDirectories: true
+        )
+        XCTAssertEqual(storage.beginMeetingRecording(id: id, type: .meeting), id)
+        let row = try XCTUnwrap(storage.recordings.first(where: { $0.id == id }))
+        let recovery = RecordingDeletionRecovery(
+            recordings: storage.recordings,
+            stagedFiles: []
+        )
+        try JSONEncoder().encode(recovery).write(
+            to: directory.appendingPathComponent("recordings_delete_recovery.json")
+        )
+
+        XCTAssertFalse(storage.deleteCancelledInProgressRecording(row))
+        XCTAssertTrue(storage.recordings.contains(where: { $0.id == id }))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: inProgressDirectory.path))
+    }
+
+    func test_unresolvedDeletionJournalBlocksNewRecordingSave() throws {
+        let recovery = RecordingDeletionRecovery(
+            recordings: storage.recordings,
+            stagedFiles: []
+        )
+        try JSONEncoder().encode(recovery).write(
+            to: directory.appendingPathComponent("recordings_delete_recovery.json")
+        )
+
+        let savedID = storage.saveRecording(
+            audioData: Data("new".utf8),
+            type: .meeting,
+            duration: 1,
+            forceSave: true
+        )
+
+        XCTAssertNil(savedID)
+        XCTAssertTrue(storage.recordings.isEmpty)
+    }
+
+    func test_deleteCanRetryAfterTransientMetadataWriteFailure() throws {
+        let appDirectory = directory.appendingPathComponent("TransientMetadataFailure")
+        let batchStorage = try TranscriptionBatchStorage(baseDirectory: appDirectory)
+        var failNextWrite = false
+        let storage = RecordingsLibraryStorage(
+            baseDirectory: appDirectory,
+            batchStorage: batchStorage,
+            synchronousMetadataWriter: { recordings, url in
+                if failNextWrite {
+                    failNextWrite = false
+                    return false
+                }
+                do {
+                    let encoder = JSONEncoder()
+                    encoder.dateEncodingStrategy = .iso8601
+                    try encoder.encode(recordings).write(to: url, options: .atomic)
+                    return true
+                } catch {
+                    return false
+                }
+            }
+        )
+        let id = UUID()
+        XCTAssertEqual(storage.beginMeetingRecording(id: id, type: .meeting), id)
+        XCTAssertTrue(storage.markNeedsRecovery(id: id))
+        failNextWrite = true
+
+        XCTAssertFalse(storage.deleteRecordings(Set([id])))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: appDirectory.appendingPathComponent("recordings_delete_recovery.json").path
+        ))
+        XCTAssertTrue(storage.deleteRecordings(Set([id])))
+    }
+
+    func test_meetingDeletionFailureMessageDoesNotPromiseRollbackCompleted() {
+        XCTAssertEqual(
+            MeetingsView.deletionFailureMessage,
+            "The deletion couldn't be completed safely. Review your Meetings library before trying again."
+        )
     }
 
     func test_normalLocalStop_enqueuesSavedRecordingOnce() {

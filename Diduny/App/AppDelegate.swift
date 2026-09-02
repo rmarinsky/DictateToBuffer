@@ -377,17 +377,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func checkForOrphanedRecordings() {
+        let orphanedRecording = RecoveryStateManager.shared.hasOrphanedRecording()
+
         // Promote any leftover in-progress meeting directories into library needs-recovery rows.
         Task { @MainActor in
-            await promoteOrphanedInProgressMeetings()
+            let promotedIDs = await promoteOrphanedInProgressMeetings()
+            if let managedID = orphanedRecording?.state.inProgressMeetingRecordingID,
+               promotedIDs.contains(managedID),
+               RecoveryStateManager.shared.loadState()?.inProgressMeetingRecordingID == managedID
+            {
+                RecoveryStateManager.shared.clearState()
+            }
         }
 
-        if let (state, fileExists) = RecoveryStateManager.shared.hasOrphanedRecording() {
+        if let (state, fileExists) = orphanedRecording {
             // In-progress meeting chunks are recovered through their library row.
             // The legacy modal only knows about the first chunk and would create a
             // duplicate, incomplete recording after chunk rotation.
             if state.inProgressMeetingRecordingID != nil {
-                RecoveryStateManager.shared.clearState()
                 return
             }
             if fileExists {
@@ -401,16 +408,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Ensures every on-disk `InProgressRecordings/<id>/` has a `.needsRecovery` library row.
-    private func promoteOrphanedInProgressMeetings() async {
-        guard let store = try? InProgressRecordingStore.sharedStore() else { return }
-        let ids = (try? await store.allInProgressRecordingIDs()) ?? []
-        let storage = RecordingsLibraryStorage.shared
+    private func promoteOrphanedInProgressMeetings() async -> Set<UUID> {
+        guard let store = try? InProgressRecordingStore.sharedStore() else { return [] }
+        return await promoteOrphanedInProgressMeetings(
+            store: store,
+            storage: RecordingsLibraryStorage.shared
+        )
+    }
+
+    func promoteOrphanedInProgressMeetings(
+        store: InProgressRecordingStore,
+        storage: RecordingsLibraryStorage
+    ) async -> Set<UUID> {
+        guard let ids = try? await store.allInProgressRecordingIDs() else { return [] }
+        var promotedIDs = Set<UUID>()
         for id in ids {
             if let existing = storage.recordings.first(where: { $0.id == id }) {
-                if existing.status == .recording || existing.status == .needsRecovery {
-                    if existing.status == .recording {
-                        _ = storage.markNeedsRecovery(id: id)
-                    }
+                if existing.status == .needsRecovery
+                    || (existing.status == .recording && storage.markNeedsRecovery(id: id))
+                {
+                    promotedIDs.insert(id)
                 }
                 continue
             }
@@ -421,11 +438,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             default: .meeting
             }
             let startedAt = manifest?.startedAt ?? Date()
-            _ = storage.beginMeetingRecording(id: id, type: type, createdAt: startedAt)
+            guard storage.beginMeetingRecording(id: id, type: type, createdAt: startedAt) != nil else {
+                continue
+            }
             let endedAt = manifest?.lastWriteAt ?? Date()
             let duration = max(0, endedAt.timeIntervalSince(startedAt))
-            _ = storage.markNeedsRecovery(id: id, endedAt: endedAt, durationSeconds: duration)
+            if storage.markNeedsRecovery(id: id, endedAt: endedAt, durationSeconds: duration) {
+                promotedIDs.insert(id)
+            }
         }
+        return promotedIDs
     }
 
     // MARK: - Sleep Handling (RLR-M2)

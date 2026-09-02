@@ -7,7 +7,24 @@ struct RecordingDeletionStagedFile: Codable, Equatable {
 
 struct RecordingDeletionRecovery: Codable, Equatable {
     let recordings: [Recording]
+    let batches: [TranscriptionBatch]?
     let stagedFiles: [RecordingDeletionStagedFile]
+    let deferredBatchArtifactPaths: [String]?
+    let rollbackApplied: Bool?
+
+    init(
+        recordings: [Recording],
+        batches: [TranscriptionBatch]? = nil,
+        stagedFiles: [RecordingDeletionStagedFile],
+        deferredBatchArtifactPaths: [String]? = nil,
+        rollbackApplied: Bool? = nil
+    ) {
+        self.recordings = recordings
+        self.batches = batches
+        self.stagedFiles = stagedFiles
+        self.deferredBatchArtifactPaths = deferredBatchArtifactPaths
+        self.rollbackApplied = rollbackApplied
+    }
 }
 
 @Observable
@@ -43,17 +60,35 @@ final class RecordingsLibraryStorage {
     private let recordingsDir: URL
     private let metadataURL: URL
     private let deletionRecoveryURL: URL
+    private let deletionCleanupURL: URL
+    private let deletionCommitURL: URL
+    private let deletionRecoveryRemover: (URL) throws -> Void
+    private let deletionCommitWriter: (RecordingDeletionRecovery, URL) -> Bool
+    private let synchronousMetadataWriter: ([Recording], URL) -> Bool
+    private let audioCompressor: (URL) async -> URL
     private let batchStorage: TranscriptionBatchStorage
     private let metadataWriteQueue = DispatchQueue(label: "ua.com.rmarinsky.diduny.recordings-metadata")
 
     init(
         baseDirectory: URL? = nil,
-        batchStorage: TranscriptionBatchStorage? = nil
+        batchStorage: TranscriptionBatchStorage? = nil,
+        deletionRecoveryRemover: @escaping (URL) throws -> Void = {
+            try FileManager.default.removeItem(at: $0)
+        },
+        deletionCommitWriter: ((RecordingDeletionRecovery, URL) -> Bool)? = nil,
+        synchronousMetadataWriter: (([Recording], URL) -> Bool)? = nil,
+        audioCompressor: ((URL) async -> URL)? = nil
     ) {
         let fm = FileManager.default
         let appDir = baseDirectory ?? Self.defaultAppDirectory
         appSupportDir = appDir
         self.batchStorage = batchStorage ?? .shared
+        self.deletionRecoveryRemover = deletionRecoveryRemover
+        self.deletionCommitWriter = deletionCommitWriter ?? Self.writeDeletionRecovery
+        self.synchronousMetadataWriter = synchronousMetadataWriter ?? Self.writeMetadataSnapshot
+        self.audioCompressor = audioCompressor ?? {
+            await AudioCompressionService.compressToFLAC(wavURL: $0)
+        }
 
         let recDir = appDir.appendingPathComponent("Recordings")
         try? fm.createDirectory(at: recDir, withIntermediateDirectories: true)
@@ -62,6 +97,8 @@ final class RecordingsLibraryStorage {
         try? fm.createDirectory(at: appDir, withIntermediateDirectories: true)
         metadataURL = appDir.appendingPathComponent("recordings_metadata.json")
         deletionRecoveryURL = appDir.appendingPathComponent("recordings_delete_recovery.json")
+        deletionCleanupURL = appDir.appendingPathComponent("recordings_delete_cleanup.json")
+        deletionCommitURL = appDir.appendingPathComponent("recordings_delete_commit.json")
 
         loadAndPrune()
     }
@@ -87,6 +124,7 @@ final class RecordingsLibraryStorage {
         recoverySource: RecoverySource? = nil,
         forceSave: Bool = false
     ) -> UUID? {
+        guard allowsLibraryMutation() else { return nil }
         guard forceSave || shouldSaveRecording(type: type) else { return nil }
 
         let recordingID = id ?? UUID()
@@ -166,6 +204,7 @@ final class RecordingsLibraryStorage {
         recoverySource: RecoverySource? = nil,
         forceSave: Bool = false
     ) -> UUID? {
+        guard allowsLibraryMutation() else { return nil }
         guard forceSave || shouldSaveRecording(type: type) else { return nil }
 
         let recordingID = id ?? UUID()
@@ -245,17 +284,22 @@ final class RecordingsLibraryStorage {
         sourceDevice: RecordingDeviceInfo? = nil,
         translationTargetLanguageCode: String? = nil
     ) -> UUID? {
+        guard allowsLibraryMutation() else { return nil }
         guard type.isMeetingLike else {
             Log.app.error("beginMeetingRecording called with non-meeting type: \(type.rawValue)")
             return nil
         }
 
         if let index = recordings.firstIndex(where: { $0.id == id }) {
+            let previous = recordings[index]
             recordings[index].status = .recording
             recordings[index].endedAt = nil
             recordings[index].statusDetail = nil
             recordings[index].errorMessage = nil
-            guard saveMetadataSynchronously() else { return nil }
+            guard saveMetadataSynchronously() else {
+                recordings[index] = previous
+                return nil
+            }
             return id
         }
 
@@ -291,6 +335,7 @@ final class RecordingsLibraryStorage {
         recoverySource: RecoverySource? = nil,
         forceSave: Bool = true
     ) -> Bool {
+        guard allowsLibraryMutation() else { return false }
         guard let index = recordings.firstIndex(where: { $0.id == id }) else { return false }
 
         let ext = audioURL.pathExtension.isEmpty ? "wav" : audioURL.pathExtension
@@ -364,6 +409,7 @@ final class RecordingsLibraryStorage {
         durationSeconds: TimeInterval? = nil,
         recoverySource: RecoverySource = .orphanedSession
     ) -> Bool {
+        guard allowsLibraryMutation() else { return false }
         guard let index = recordings.firstIndex(where: { $0.id == id }) else { return false }
         let previous = recordings[index]
         recordings[index].status = .needsRecovery
@@ -409,6 +455,7 @@ final class RecordingsLibraryStorage {
     }
 
     func updateStatusDetail(id: UUID, detail: String?) {
+        guard allowsLibraryMutation() else { return }
         guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
         recordings[index].statusDetail = detail
         saveMetadata()
@@ -424,7 +471,22 @@ final class RecordingsLibraryStorage {
     @discardableResult
     func deleteRecording(_ recording: Recording) -> Bool {
         deleteStoredRecordings(Set([recording.id])) {
-            try batchStorage.removeRecordingReferences(Set([recording.id]))
+            try batchStorage.removeRecordingReferences(
+                Set([recording.id]),
+                allowDuringRecordingRecovery: true,
+                deferDownloadedArtifactRemoval: true
+            )
+        }
+    }
+
+    @discardableResult
+    func deleteCancelledInProgressRecording(_ recording: Recording) -> Bool {
+        deleteStoredRecordings(Set([recording.id]), allowInProgressCapture: true) {
+            try batchStorage.removeRecordingReferences(
+                Set([recording.id]),
+                allowDuringRecordingRecovery: true,
+                deferDownloadedArtifactRemoval: true
+            )
         }
     }
 
@@ -432,24 +494,43 @@ final class RecordingsLibraryStorage {
     func deleteRecordings(_ ids: Set<UUID>) -> Bool {
         guard !ids.isEmpty else { return true }
         return deleteStoredRecordings(ids) {
-            try batchStorage.removeRecordingReferences(ids)
+            try batchStorage.removeRecordingReferences(
+                ids,
+                allowDuringRecordingRecovery: true,
+                deferDownloadedArtifactRemoval: true
+            )
         }
     }
 
     @discardableResult
     func deleteBatch(_ batch: TranscriptionBatch) -> Bool {
         deleteStoredRecordings(Set(batch.recordingIDs)) {
-            _ = try batchStorage.delete(batchID: batch.id)
+            try batchStorage.delete(
+                batchID: batch.id,
+                allowDuringRecordingRecovery: true,
+                deferDownloadedArtifactRemoval: true
+            ).removedItems
         }
     }
 
     private func deleteStoredRecordings(
         _ ids: Set<UUID>,
-        updateBatchMetadata: () throws -> Void
+        allowInProgressCapture: Bool = false,
+        updateBatchMetadata: () throws -> [BatchTranscriptionItem]
     ) -> Bool {
+        if fileManager.fileExists(atPath: deletionCommitURL.path) {
+            _ = finishCommittedDeletion()
+            guard !fileManager.fileExists(atPath: deletionCommitURL.path) else { return false }
+        }
+        guard allowsLibraryMutation() else { return false }
         let previousRecordings = recordings
+        let previousBatches = batchStorage.batches
         let targets = recordings.filter { ids.contains($0.id) }
-        let stagedFiles = targets.compactMap { recording -> RecordingDeletionStagedFile? in
+        guard allowInProgressCapture || !targets.contains(where: { $0.status == .recording }) else {
+            return false
+        }
+        let stagedAudioFiles = targets.compactMap { recording -> RecordingDeletionStagedFile? in
+            guard recording.hasAttachedAudio else { return nil }
             let original = recordingsDir.appendingPathComponent(recording.audioFileName)
             guard fileManager.fileExists(atPath: original.path) else { return nil }
             return RecordingDeletionStagedFile(
@@ -459,8 +540,22 @@ final class RecordingsLibraryStorage {
                 ).path
             )
         }
+        let inProgressDirectory = appSupportDir.appendingPathComponent("InProgressRecordings")
+        let stagedInProgressDirectories = targets.compactMap { recording -> RecordingDeletionStagedFile? in
+            guard recording.status.isInProgressCapture else { return nil }
+            let original = inProgressDirectory.appendingPathComponent(recording.id.uuidString)
+            guard fileManager.fileExists(atPath: original.path) else { return nil }
+            return RecordingDeletionStagedFile(
+                originalPath: original.path,
+                stagedPath: inProgressDirectory.appendingPathComponent(
+                    ".\(recording.id.uuidString).deleting-\(UUID().uuidString)"
+                ).path
+            )
+        }
+        let stagedFiles = stagedAudioFiles + stagedInProgressDirectories
         let recovery = RecordingDeletionRecovery(
             recordings: previousRecordings,
+            batches: previousBatches,
             stagedFiles: stagedFiles
         )
 
@@ -468,7 +563,17 @@ final class RecordingsLibraryStorage {
             return false
         }
 
-        func restoreStagedFiles() {
+        func finishRollback(_ restored: Bool) {
+            guard restored,
+                  Self.writeDeletionRecovery(
+                      Self.appliedRollback(recovery),
+                      to: deletionRecoveryURL
+                  )
+            else { return }
+            try? deletionRecoveryRemover(deletionRecoveryURL)
+        }
+
+        func restoreStagedFiles() -> Bool {
             for file in stagedFiles.reversed() where fileManager.fileExists(atPath: file.stagedPath) {
                 do {
                     try fileManager.moveItem(
@@ -478,6 +583,10 @@ final class RecordingsLibraryStorage {
                 } catch {
                     Log.app.error("Failed to restore staged recording file: \(error.localizedDescription)")
                 }
+            }
+            return stagedFiles.allSatisfy {
+                fileManager.fileExists(atPath: $0.originalPath)
+                    && !fileManager.fileExists(atPath: $0.stagedPath)
             }
         }
 
@@ -489,45 +598,68 @@ final class RecordingsLibraryStorage {
                 )
             }
         } catch {
-            restoreStagedFiles()
-            try? fileManager.removeItem(at: deletionRecoveryURL)
+            finishRollback(restoreStagedFiles())
             Log.app.error("Failed to stage recording deletion: \(error.localizedDescription)")
+            return false
+        }
+
+        guard stagedFiles.isEmpty || writeDeletionCleanup(stagedFiles.map(\.stagedPath)) else {
+            finishRollback(restoreStagedFiles())
             return false
         }
 
         recordings.removeAll { ids.contains($0.id) }
         guard saveMetadataSynchronously() else {
             recordings = previousRecordings
-            restoreStagedFiles()
+            let restoredMetadata = saveMetadataSynchronously()
+            let restoredFiles = restoreStagedFiles()
+            finishRollback(restoredMetadata && restoredFiles)
             return false
         }
 
+        let deferredBatchArtifacts: [BatchTranscriptionItem]
         do {
-            try updateBatchMetadata()
+            deferredBatchArtifacts = try updateBatchMetadata()
         } catch {
             recordings = previousRecordings
-            if saveMetadataSynchronously() {
-                try? fileManager.removeItem(at: deletionRecoveryURL)
-            } else {
-                Log.app.error("Failed to restore recordings metadata after batch update failure")
+            let restoredMetadata = saveMetadataSynchronously()
+            let restoredBatches = (try? batchStorage.restoreSnapshot(previousBatches)) != nil
+            let restoredFiles = restoreStagedFiles()
+            let restored = restoredMetadata && restoredBatches && restoredFiles
+            finishRollback(restored)
+            if !restored {
+                Log.app.error("Failed to restore recording deletion transaction")
             }
-            restoreStagedFiles()
             Log.app.error("Failed to update transcription batches during deletion: \(error.localizedDescription)")
             return false
         }
 
-        for file in stagedFiles {
-            do {
-                try fileManager.removeItem(at: URL(fileURLWithPath: file.stagedPath))
-            } catch {
-                Log.app.warning("Failed to clean staged recording file: \(error.localizedDescription)")
+        let committedRecovery = RecordingDeletionRecovery(
+            recordings: recovery.recordings,
+            batches: recovery.batches,
+            stagedFiles: recovery.stagedFiles,
+            deferredBatchArtifactPaths: Array(Set(deferredBatchArtifacts.compactMap {
+                $0.downloadedAudioURL?.standardizedFileURL.path
+            })).sorted()
+        )
+        guard deletionCommitWriter(committedRecovery, deletionCommitURL) else {
+            recordings = previousRecordings
+            let restoredMetadata = saveMetadataSynchronously()
+            let restoredBatches = (try? batchStorage.restoreSnapshot(previousBatches)) != nil
+            let restoredFiles = restoreStagedFiles()
+            let restored = restoredMetadata && restoredBatches && restoredFiles
+            finishRollback(restored)
+            if !restored {
+                Log.app.error("Failed to restore recording deletion transaction")
             }
+            return false
         }
-        try? fileManager.removeItem(at: deletionRecoveryURL)
+        _ = finishCommittedDeletion()
         return true
     }
 
     func pruneExpiredRecordings(now: Date = Date()) {
+        guard allowsLibraryMutation() else { return }
         let expiredIds = Set(recordings.compactMap { recording -> UUID? in
             // Never auto-prune live or recovery rows.
             if recording.status.isInProgressCapture { return nil }
@@ -549,6 +681,7 @@ final class RecordingsLibraryStorage {
 
     @discardableResult
     func updateDetails(id: UUID, title: String, description: String) -> Bool {
+        guard allowsLibraryMutation() else { return false }
         guard let index = recordings.firstIndex(where: { $0.id == id }) else { return false }
         let previous = recordings[index]
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -569,6 +702,7 @@ final class RecordingsLibraryStorage {
         error: String? = nil,
         translationTargetLanguageCode: String? = nil
     ) {
+        guard allowsLibraryMutation() else { return }
         guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
         recordings[index].status = status
         recordings[index].transcriptionText = text ?? recordings[index].transcriptionText
@@ -588,6 +722,7 @@ final class RecordingsLibraryStorage {
         sourceCaptionArtifacts: [TranscriptArtifact]? = nil,
         generatedTranscriptProvenance: GeneratedTranscriptProvenance? = nil
     ) {
+        guard allowsLibraryMutation() else { return }
         guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
         if let remoteSource {
             recordings[index].remoteSource = remoteSource
@@ -613,6 +748,7 @@ final class RecordingsLibraryStorage {
         modelIdentifier: String? = nil,
         sourceLanguageCode: String? = nil
     ) {
+        guard allowsLibraryMutation() else { return }
         guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
         let previous = recordings[index]
         let completedAt = Date()
@@ -641,9 +777,8 @@ final class RecordingsLibraryStorage {
     }
 
     func optimizeStoredRecordingIfNeeded(id: UUID) async -> URL? {
-        guard let index = recordings.firstIndex(where: { $0.id == id }) else { return nil }
-
-        let recording = recordings[index]
+        guard allowsLibraryMutation() else { return nil }
+        guard let recording = recordings.first(where: { $0.id == id }) else { return nil }
         let sourceURL = audioFileURL(for: recording)
         guard fileManager.fileExists(atPath: sourceURL.path) else { return nil }
 
@@ -652,7 +787,7 @@ final class RecordingsLibraryStorage {
         if detectedExtension == "flac", sourceURL.pathExtension.lowercased() != "flac" {
             let normalizedURL = sourceURL.deletingPathExtension().appendingPathExtension("flac")
             return replaceStoredAudioFile(
-                at: index,
+                id: id,
                 from: sourceURL,
                 to: normalizedURL,
                 moveOnly: true
@@ -663,13 +798,13 @@ final class RecordingsLibraryStorage {
             return sourceURL
         }
 
-        let compressedURL = await AudioCompressionService.compressToFLAC(wavURL: sourceURL)
+        let compressedURL = await audioCompressor(sourceURL)
         guard compressedURL != sourceURL else {
             return sourceURL
         }
 
         return replaceStoredAudioFile(
-            at: index,
+            id: id,
             from: sourceURL,
             to: compressedURL,
             moveOnly: false
@@ -691,38 +826,59 @@ final class RecordingsLibraryStorage {
     // MARK: - Persistence
 
     private func loadAndPrune() {
+        let hasCommittedDeletion = finishCommittedDeletion()
         let url = metadataURL
         let recoveryURL = deletionRecoveryURL
+        let removeRecovery = deletionRecoveryRemover
         let recDir = recordingsDir
         let result: (recordings: [Recording], resetInterrupted: Bool)? = {
             let data: Data
-            if let recoveryData = try? Data(contentsOf: recoveryURL),
+            if !hasCommittedDeletion,
+               let recoveryData = try? Data(contentsOf: recoveryURL),
                let recovery = try? Self.decodeDeletionRecovery(recoveryData)
             {
-                for file in recovery.stagedFiles {
-                    let original = URL(fileURLWithPath: file.originalPath)
-                    let staged = URL(fileURLWithPath: file.stagedPath)
-                    if FileManager.default.fileExists(atPath: staged.path),
-                       !FileManager.default.fileExists(atPath: original.path)
-                    {
-                        try? FileManager.default.moveItem(at: staged, to: original)
+                if recovery.rollbackApplied == true {
+                    try? removeRecovery(recoveryURL)
+                    guard let metadata = try? Data(contentsOf: url) else { return nil }
+                    data = metadata
+                } else {
+                    for file in recovery.stagedFiles {
+                        let original = URL(fileURLWithPath: file.originalPath)
+                        let staged = URL(fileURLWithPath: file.stagedPath)
+                        if FileManager.default.fileExists(atPath: staged.path),
+                           !FileManager.default.fileExists(atPath: original.path)
+                        {
+                            try? FileManager.default.moveItem(at: staged, to: original)
+                        }
                     }
-                }
-                guard recovery.stagedFiles.allSatisfy({
-                    FileManager.default.fileExists(atPath: $0.originalPath)
-                }) else {
-                    Log.app.error("Recording deletion recovery still has missing media files")
-                    return nil
-                }
-                let encoder = JSONEncoder()
-                encoder.dateEncodingStrategy = .iso8601
-                guard let restoredData = try? encoder.encode(recovery.recordings) else { return nil }
-                data = restoredData
-                do {
-                    try restoredData.write(to: url, options: .atomic)
-                    try FileManager.default.removeItem(at: recoveryURL)
-                } catch {
-                    Log.app.error("Failed to restore recording deletion recovery: \(error.localizedDescription)")
+                    guard recovery.stagedFiles.allSatisfy({
+                        FileManager.default.fileExists(atPath: $0.originalPath)
+                    }) else {
+                        Log.app.error("Recording deletion recovery still has missing media files")
+                        return nil
+                    }
+                    if let batches = recovery.batches {
+                        do {
+                            try batchStorage.restoreSnapshot(batches)
+                        } catch {
+                            Log.app.error("Failed to restore batch deletion recovery: \(error.localizedDescription)")
+                            return nil
+                        }
+                    }
+                    let encoder = JSONEncoder()
+                    encoder.dateEncodingStrategy = .iso8601
+                    guard let restoredData = try? encoder.encode(recovery.recordings) else { return nil }
+                    data = restoredData
+                    do {
+                        try restoredData.write(to: url, options: .atomic)
+                        guard Self.writeDeletionRecovery(
+                            Self.appliedRollback(recovery),
+                            to: recoveryURL
+                        ) else { return nil }
+                        try removeRecovery(recoveryURL)
+                    } catch {
+                        Log.app.error("Failed to restore recording deletion recovery: \(error.localizedDescription)")
+                    }
                 }
             } else {
                 guard let metadata = try? Data(contentsOf: url) else { return nil }
@@ -752,6 +908,9 @@ final class RecordingsLibraryStorage {
                 return nil
             }
         }()
+        if !hasCommittedDeletion && !fileManager.fileExists(atPath: deletionRecoveryURL.path) {
+            retryPendingDeletionCleanup()
+        }
         if let result {
             recordings = result.recordings
             if result.resetInterrupted {
@@ -759,6 +918,134 @@ final class RecordingsLibraryStorage {
             }
             pruneExpiredRecordings()
         }
+    }
+
+    @discardableResult
+    private func finishCommittedDeletion() -> Bool {
+        guard fileManager.fileExists(atPath: deletionCommitURL.path) else { return false }
+        guard let data = try? Data(contentsOf: deletionCommitURL),
+              let commit = try? Self.decodeDeletionRecovery(data)
+        else {
+            Log.app.error("Failed to load committed recording deletion")
+            return false
+        }
+        let paths = commit.stagedFiles.map(\.stagedPath)
+        let batchArtifactPaths = commit.deferredBatchArtifactPaths ?? []
+        guard paths.allSatisfy(isOwnedStagedDeletionPath),
+              batchArtifactPaths.allSatisfy(TranscriptionBatchStorage.isValidDownloadedArtifactPath)
+        else {
+            Log.app.error("Committed recording deletion contains invalid paths")
+            return false
+        }
+
+        guard paths.isEmpty || writeDeletionCleanup(paths) else { return true }
+        do {
+            if fileManager.fileExists(atPath: deletionRecoveryURL.path) {
+                try deletionRecoveryRemover(deletionRecoveryURL)
+            }
+        } catch {
+            Log.app.warning("Failed to remove committed recording deletion journal: \(error.localizedDescription)")
+        }
+        retryPendingDeletionCleanup()
+        let removedBatchArtifacts = batchStorage.removeDownloadedArtifacts(at: batchArtifactPaths)
+        if !fileManager.fileExists(atPath: deletionRecoveryURL.path),
+           paths.allSatisfy({ !fileManager.fileExists(atPath: $0) }),
+           removedBatchArtifacts
+        {
+            try? fileManager.removeItem(at: deletionCommitURL)
+        }
+        return true
+    }
+
+    private func writeDeletionCleanup(_ paths: [String]) -> Bool {
+        guard paths.allSatisfy(isOwnedStagedDeletionPath),
+              let pendingPaths = pendingDeletionCleanupPaths()
+        else { return false }
+        let mergedPaths = Array(Set(pendingPaths + paths)).sorted()
+        do {
+            try JSONEncoder().encode(mergedPaths).write(to: deletionCleanupURL, options: .atomic)
+            return true
+        } catch {
+            Log.app.error("Failed to persist pending recording cleanup: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private func retryPendingDeletionCleanup() {
+        guard let paths = pendingDeletionCleanupPaths() else { return }
+
+        for path in paths where fileManager.fileExists(atPath: path) {
+            do {
+                try fileManager.removeItem(at: URL(fileURLWithPath: path))
+            } catch {
+                Log.app.warning("Failed to retry pending recording cleanup: \(error.localizedDescription)")
+            }
+        }
+        removeDeletionCleanupMarkerIfComplete(paths)
+    }
+
+    private func pendingDeletionCleanupPaths() -> [String]? {
+        guard fileManager.fileExists(atPath: deletionCleanupURL.path) else { return [] }
+        guard let data = try? Data(contentsOf: deletionCleanupURL),
+              let paths = try? JSONDecoder().decode([String].self, from: data),
+              paths.allSatisfy(isOwnedStagedDeletionPath)
+        else {
+            Log.app.error("Pending recording cleanup contains invalid paths")
+            return nil
+        }
+        return paths
+    }
+
+    private func removeDeletionCleanupMarkerIfComplete(_ paths: [String]) {
+        guard paths.allSatisfy({ !fileManager.fileExists(atPath: $0) }) else { return }
+        try? fileManager.removeItem(at: deletionCleanupURL)
+    }
+
+    private func isOwnedStagedDeletionPath(_ path: String) -> Bool {
+        Self.isOwnedStagedDeletionPath(path, in: appSupportDir)
+    }
+
+    private nonisolated static func isOwnedStagedDeletionPath(
+        _ path: String,
+        in appDirectory: URL
+    ) -> Bool {
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        let allowedParents = [
+            appDirectory.appendingPathComponent("Recordings").standardizedFileURL,
+            appDirectory.appendingPathComponent("InProgressRecordings").standardizedFileURL,
+        ]
+        let name = url.lastPathComponent
+        return allowedParents.contains(url.deletingLastPathComponent())
+            && name.hasPrefix(".")
+            && name.contains(".deleting-")
+    }
+
+    nonisolated static func allowsMutations(in appDirectory: URL) -> Bool {
+        let commitURL = appDirectory.appendingPathComponent("recordings_delete_commit.json")
+        if FileManager.default.fileExists(atPath: commitURL.path) {
+            guard let data = try? Data(contentsOf: commitURL),
+                  let commit = try? decodeDeletionRecovery(data)
+            else { return false }
+            return commit.stagedFiles.allSatisfy({
+                isOwnedStagedDeletionPath($0.stagedPath, in: appDirectory)
+            }) && (commit.deferredBatchArtifactPaths ?? []).allSatisfy(
+                TranscriptionBatchStorage.isValidDownloadedArtifactPath
+            )
+        }
+        let recoveryURL = appDirectory.appendingPathComponent("recordings_delete_recovery.json")
+        guard FileManager.default.fileExists(atPath: recoveryURL.path) else { return true }
+        guard let data = try? Data(contentsOf: recoveryURL),
+              let recovery = try? decodeDeletionRecovery(data)
+        else { return false }
+        return recovery.rollbackApplied == true
+    }
+
+    private func allowsLibraryMutation() -> Bool {
+        let allowed = Self.allowsMutations(in: appSupportDir)
+        if !allowed {
+            Log.app.warning("Recording library mutation blocked by pending deletion recovery")
+        }
+        return allowed
     }
 
     @discardableResult
@@ -823,7 +1110,7 @@ final class RecordingsLibraryStorage {
         let snapshot = recordings
         let url = metadataURL
         return metadataWriteQueue.sync {
-            Self.writeMetadataSnapshot(snapshot, to: url)
+            synchronousMetadataWriter(snapshot, url)
         }
     }
 
@@ -861,6 +1148,18 @@ final class RecordingsLibraryStorage {
         return try decoder.decode(RecordingDeletionRecovery.self, from: data)
     }
 
+    private nonisolated static func appliedRollback(
+        _ recovery: RecordingDeletionRecovery
+    ) -> RecordingDeletionRecovery {
+        RecordingDeletionRecovery(
+            recordings: recovery.recordings,
+            batches: recovery.batches,
+            stagedFiles: recovery.stagedFiles,
+            deferredBatchArtifactPaths: recovery.deferredBatchArtifactPaths,
+            rollbackApplied: true
+        )
+    }
+
     private func shouldSaveRecording(type: Recording.RecordingType) -> Bool {
         let policy = SettingsStorage.shared.historyRetentionPolicy(for: type)
         guard policy.savesNewRecordings else {
@@ -875,11 +1174,18 @@ final class RecordingsLibraryStorage {
     }
 
     private func replaceStoredAudioFile(
-        at index: Int,
+        id: UUID,
         from sourceURL: URL,
         to replacementURL: URL,
         moveOnly: Bool
     ) -> URL {
+        guard allowsLibraryMutation(),
+              let index = recordings.firstIndex(where: { $0.id == id }),
+              audioFileURL(for: recordings[index]) == sourceURL
+        else {
+            try? fileManager.removeItem(at: replacementURL)
+            return sourceURL
+        }
         let recording = recordings[index]
         let replacementFileName = replacementURL.lastPathComponent
         let replacementFileSize: Int64 = if let attrs = try? fileManager.attributesOfItem(atPath: replacementURL.path),

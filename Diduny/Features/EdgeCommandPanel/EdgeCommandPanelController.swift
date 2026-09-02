@@ -215,7 +215,7 @@ enum EdgeCommandPanelPlacement {
         case let .live(mode):
             mode.isMeeting ? NSSize(width: 360, height: 420) : NSSize(width: 310, height: 310)
         case .meetingSuggestion:
-            NSSize(width: 390, height: 322)
+            NSSize(width: 390, height: 350)
         }
     }
 

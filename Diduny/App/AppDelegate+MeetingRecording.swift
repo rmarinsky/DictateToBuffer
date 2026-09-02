@@ -1143,7 +1143,11 @@ extension AppDelegate {
     /// Removes the live library row and in-progress directory after an explicit discard cancel.
     func discardLiveMeetingRow(id: UUID) async {
         if let recording = RecordingsLibraryStorage.shared.recordings.first(where: { $0.id == id }) {
-            _ = RecordingsLibraryStorage.shared.deleteRecording(recording)
+            guard RecordingsLibraryStorage.shared.deleteCancelledInProgressRecording(recording) else {
+                Log.app.error("Failed to discard cancelled meeting recording")
+                return
+            }
+            return
         }
         if let store = try? InProgressRecordingStore.sharedStore() {
             try? await store.cleanup(recordingId: id)

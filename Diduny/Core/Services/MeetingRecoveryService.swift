@@ -5,7 +5,21 @@ import Foundation
 final class MeetingRecoveryService {
     static let shared = MeetingRecoveryService()
 
-    private init() {}
+    private let storage: RecordingsLibraryStorage
+    private let inProgressStore: InProgressRecordingStore?
+
+    private init() {
+        storage = .shared
+        inProgressStore = try? InProgressRecordingStore.sharedStore()
+    }
+
+    init(
+        storage: RecordingsLibraryStorage,
+        inProgressStore: InProgressRecordingStore
+    ) {
+        self.storage = storage
+        self.inProgressStore = inProgressStore
+    }
 
     enum RecoveryAction {
         case processNow
@@ -30,8 +44,6 @@ final class MeetingRecoveryService {
         }
         defer { inFlightRecordingIDs.remove(recordingID) }
 
-        let storage = RecordingsLibraryStorage.shared
-
         switch action {
         case .discard:
             if let recording = storage.recordings.first(where: { $0.id == recordingID }),
@@ -44,10 +56,9 @@ final class MeetingRecoveryService {
 
         case .saveAudioOnly, .processNow:
             guard let stitched = await stitchInProgressAudio(for: recordingID) else {
-                storage.updateRecording(
+                storage.updateStatusDetail(
                     id: recordingID,
-                    status: .failed,
-                    error: "Could not recover meeting audio"
+                    detail: "Could not recover meeting audio"
                 )
                 return false
             }
@@ -89,7 +100,7 @@ final class MeetingRecoveryService {
 
     private func stitchInProgressAudio(for recordingID: UUID) async -> StitchOutput? {
         do {
-            let store = try InProgressRecordingStore.sharedStore()
+            guard let store = inProgressStore else { return nil }
             let dir = try await store.directoryURL(for: recordingID)
             let manifest = try await store.readManifest(for: recordingID)
 
@@ -130,7 +141,7 @@ final class MeetingRecoveryService {
     }
 
     private func cleanupInProgress(_ recordingID: UUID) async {
-        guard let store = try? InProgressRecordingStore.sharedStore() else { return }
+        guard let store = inProgressStore else { return }
         try? await store.cleanup(recordingId: recordingID)
     }
 }

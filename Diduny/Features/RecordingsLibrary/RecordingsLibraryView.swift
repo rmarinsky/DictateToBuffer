@@ -160,18 +160,10 @@ struct RecordingsLibraryView: View {
                         playbackService.stop()
                     }
                     let id = recording.id
-                    let needsInProgressCleanup = recording.status.isInProgressCapture
                     if storage.deleteRecording(recording) {
                         selectedRecordingIds.remove(id)
                         if case let .recording(selectedId, _) = inspectorSelection, selectedId == id {
                             inspectorSelection = nil
-                        }
-                        if needsInProgressCleanup {
-                            Task {
-                                if let store = try? InProgressRecordingStore.sharedStore() {
-                                    try? await store.cleanup(recordingId: id)
-                                }
-                            }
                         }
                     } else {
                         deletionErrorMessage = "The recording and its files were left unchanged."

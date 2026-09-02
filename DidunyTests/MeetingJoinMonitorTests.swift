@@ -265,20 +265,23 @@ final class MeetingJoinMonitorTests: XCTestCase {
         )
 
         monitor.start { events.append($0) }
-        while staleContinuation == nil {
+        for _ in 0 ..< 200 where staleContinuation == nil {
             await Task.yield()
         }
+        XCTAssertNotNil(staleContinuation, "Stale snapshot never started")
         monitor.stop()
 
         monitor.start { events.append($0) }
-        while clockTick == 0 {
+        for _ in 0 ..< 200 where clockTick == 0 {
             await Task.yield()
         }
+        XCTAssertNotEqual(clockTick, 0, "Restarted monitor never read the clock")
         staleContinuation?.resume(returning: [signal])
         staleContinuation = nil
-        while !staleSnapshotReturned {
+        for _ in 0 ..< 200 where !staleSnapshotReturned {
             await Task.yield()
         }
+        XCTAssertTrue(staleSnapshotReturned, "Stale snapshot never returned")
         for _ in 0 ..< 5 {
             await Task.yield()
         }
