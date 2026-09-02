@@ -1144,7 +1144,7 @@ extension AppDelegate {
     func discardLiveMeetingRow(id: UUID) async {
         if let recording = RecordingsLibraryStorage.shared.recordings.first(where: { $0.id == id }) {
             guard RecordingsLibraryStorage.shared.deleteCancelledInProgressRecording(recording) else {
-                Log.app.error("Failed to discard cancelled meeting recording")
+                NSLog("[Diduny] Failed to discard cancelled meeting recording")
                 return
             }
             return

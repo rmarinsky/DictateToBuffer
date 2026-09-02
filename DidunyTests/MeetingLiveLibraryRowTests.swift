@@ -436,6 +436,51 @@ final class MeetingLiveLibraryRowTests: XCTestCase {
         )
     }
 
+    func test_meetingDeletionErrorsHaveUkrainianLocalizations() throws {
+        let localizationURL = try XCTUnwrap(
+            Bundle.main.url(forResource: "uk", withExtension: "lproj")
+        )
+        let ukrainianBundle = try XCTUnwrap(Bundle(url: localizationURL))
+
+        XCTAssertEqual(
+            ukrainianBundle.localizedString(
+                forKey: MeetingsView.deletionFailureMessage,
+                value: nil,
+                table: nil
+            ),
+            "Не вдалося безпечно завершити видалення. Перевірте бібліотеку зустрічей, перш ніж повторити спробу."
+        )
+        XCTAssertEqual(
+            ukrainianBundle.localizedString(forKey: "Unknown error", value: nil, table: nil),
+            "Невідома помилка"
+        )
+    }
+
+    func test_recoveryDuration_clampsFutureStartToZero() {
+        let endedAt = Date(timeIntervalSince1970: 1_700_000_000)
+
+        XCTAssertEqual(
+            AppDelegate.recoveryDuration(
+                startedAt: endedAt.addingTimeInterval(5),
+                endedAt: endedAt
+            ),
+            0
+        )
+    }
+
+    func test_recoveryDuration_preservesElapsedTimeAndMissingStart() {
+        let endedAt = Date(timeIntervalSince1970: 1_700_000_010)
+
+        XCTAssertEqual(
+            AppDelegate.recoveryDuration(
+                startedAt: endedAt.addingTimeInterval(-10),
+                endedAt: endedAt
+            ),
+            10
+        )
+        XCTAssertNil(AppDelegate.recoveryDuration(startedAt: nil, endedAt: endedAt))
+    }
+
     func test_normalLocalStop_enqueuesSavedRecordingOnce() {
         let id = UUID()
         var enqueuedIDs: [UUID] = []

@@ -11,7 +11,7 @@ struct MeetingsView: View {
     @State private var showBulkDeleteConfirmation = false
     @State private var isSelectionMode = false
     @State private var selectedMeetingIds = Set<UUID>()
-    @State private var deletionErrorMessage: String?
+    @State private var deletionErrorMessage: LocalizedStringKey?
 
     // Settings state
     @State private var autoRecordLargeMeetings = true
@@ -96,7 +96,7 @@ struct MeetingsView: View {
         ) {
             Button("OK") { deletionErrorMessage = nil }
         } message: {
-            Text(deletionErrorMessage ?? "Unknown error")
+            Text(deletionErrorMessage ?? LocalizedStringKey("Unknown error"))
         }
     }
 
@@ -358,7 +358,7 @@ struct MeetingsView: View {
             }
             cancelSelection()
         } else {
-            deletionErrorMessage = Self.deletionFailureMessage
+            deletionErrorMessage = LocalizedStringKey(Self.deletionFailureMessage)
         }
     }
 }

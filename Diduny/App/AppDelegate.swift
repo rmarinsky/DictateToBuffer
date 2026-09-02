@@ -450,6 +450,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return promotedIDs
     }
 
+    nonisolated static func recoveryDuration(startedAt: Date?, endedAt: Date) -> TimeInterval? {
+        startedAt.map { max(0, endedAt.timeIntervalSince($0)) }
+    }
+
     // MARK: - Sleep Handling (RLR-M2)
 
     private func setupSleepHandling() {
@@ -502,7 +506,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if appState.meetingRecordingState == .recording {
             if let id = meetingRecorderService.currentRecordingId {
                 let start = appState.meetingRecordingStartTime
-                let duration = start.map { endedAt.timeIntervalSince($0) }
+                let duration = Self.recoveryDuration(startedAt: start, endedAt: endedAt)
                 _ = RecordingsLibraryStorage.shared.markNeedsRecovery(
                     id: id,
                     endedAt: endedAt,
@@ -516,7 +520,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if appState.meetingTranslationRecordingState == .recording {
             if let id = meetingRecorderService.currentRecordingId {
                 let start = appState.meetingTranslationRecordingStartTime
-                let duration = start.map { endedAt.timeIntervalSince($0) }
+                let duration = Self.recoveryDuration(startedAt: start, endedAt: endedAt)
                 _ = RecordingsLibraryStorage.shared.markNeedsRecovery(
                     id: id,
                     endedAt: endedAt,

@@ -93,3 +93,5 @@
 "Recording saved. Download a local model in Settings to transcribe it." = "Запис збережено. Завантажте локальну модель у налаштуваннях, щоб транскрибувати його.";
 "Cloud mode streams live transcription. If it is unavailable, Diduny transcribes in the cloud after stop." = "Хмарний режим транслює транскрипцію наживо. Якщо вона недоступна, Diduny транскрибує в хмарі після зупинки.";
 "Local mode transcribes on this Mac after stop when a model is ready. Without one, saved audio stays unprocessed in Recordings." = "Локальний режим транскрибує на цьому Mac після зупинки, якщо модель готова. Без неї збережене аудіо лишається необробленим у «Записах».";
+"The deletion couldn't be completed safely. Review your Meetings library before trying again." = "Не вдалося безпечно завершити видалення. Перевірте бібліотеку зустрічей, перш ніж повторити спробу.";
+"Unknown error" = "Невідома помилка";
