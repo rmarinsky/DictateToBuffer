@@ -45,12 +45,13 @@ final class ReleaseHighlightsTests: XCTestCase {
     func testBundledPayloadMatchesCuratedReleaseCopy() throws {
         let highlights = try XCTUnwrap(ReleaseHighlights.bundled())
 
-        XCTAssertEqual(highlights.headline, "Meeting transcripts copy in full")
+        XCTAssertEqual(highlights.headline, "Meeting recording suggestions")
         XCTAssertEqual(
             highlights.highlights,
             [
-                "Copying a transcript keeps its timestamps and speaker labels.",
-                "Recording details close again from the X button or Esc.",
+                "Diduny can locally detect likely meetings and suggest recording.",
+                "Choose Cloud or Local transcription before each suggested recording.",
+                "When Cloud is unavailable, Diduny uses Local without losing the meeting audio.",
             ]
         )
     }
