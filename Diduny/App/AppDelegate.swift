@@ -138,6 +138,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var voicePipelineTask: Task<Void, Never>?
     var translationPipelineTask: Task<Void, Never>?
     var meetingPipelineTask: Task<Void, Never>?
+    var meetingPipelineGeneration: UInt64 = 0
+    var activeMeetingTranscriptionSessionID: UUID?
+    var activeMeetingTranscriptionProvider: TranscriptionProvider?
     var meetingTranslationPipelineTask: Task<Void, Never>?
     /// In-flight meeting realtime WS connect, launched before capture setup so
     /// the handshake overlaps it. Held so stop/cancel can abort a connect that
@@ -165,6 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var pushToTalkService = PushToTalkService()
     lazy var translationPushToTalkService = PushToTalkService()
     lazy var meetingRecorderService = MeetingRecorderService()
+    lazy var meetingJoinMonitor = MeetingJoinMonitor()
     lazy var realtimeTranscriptionService = CloudRealtimeService()
     var localVoiceStreamingService: LocalWhisperStreamingService?
     var localMeetingStreamingService: LocalWhisperStreamingService?
@@ -283,6 +287,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(meetingSuggestionsEnabledChanged(_:)),
+            name: .meetingSuggestionsEnabledChanged,
+            object: nil
+        )
+
         setupApplicationServices()
 
         if OnboardingManager.shared.shouldPresentOnboardingWindow {
@@ -323,6 +334,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Log.app.info("[Auth] No stored session — cloud preferences remain stored, runtime uses local fallback")
         }
 
+        updateMeetingJoinMonitoring()
+
+    }
+
+    @objc private func meetingSuggestionsEnabledChanged(_: Notification) {
+        updateMeetingJoinMonitoring()
+    }
+
+    private func updateMeetingJoinMonitoring() {
+        guard SettingsStorage.shared.meetingSuggestionsEnabled else {
+            meetingJoinMonitor.stop()
+            return
+        }
+        meetingJoinMonitor.start { [weak self] event in
+            self?.handleMeetingPresenceEvent(event)
+        }
+    }
+
+    private func handleMeetingPresenceEvent(_ event: MeetingPresenceEvent) {
+        switch event {
+        case let .joined(meeting):
+            guard !hasAnyRecordingInProgress else { return }
+            EdgeCommandPanelController.shared.showMeetingSuggestion(meeting)
+        case let .ended(meeting):
+            EdgeCommandPanelController.shared.dismissMeetingSuggestion(id: meeting.id)
+        }
     }
 
     func showMainWindowAfterLaunch() {
@@ -340,7 +377,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func checkForOrphanedRecordings() {
-        if let (state, fileExists) = RecoveryStateManager.shared.hasOrphanedRecording() {
+        let orphanedRecording = RecoveryStateManager.shared.hasOrphanedRecording()
+
+        // Promote any leftover in-progress meeting directories into library needs-recovery rows.
+        Task { @MainActor in
+            let promotedIDs = await promoteOrphanedInProgressMeetings()
+            if let managedID = orphanedRecording?.state.inProgressMeetingRecordingID,
+               promotedIDs.contains(managedID),
+               RecoveryStateManager.shared.loadState()?.inProgressMeetingRecordingID == managedID
+            {
+                RecoveryStateManager.shared.clearState()
+            }
+        }
+
+        if let (state, fileExists) = orphanedRecording {
+            // In-progress meeting chunks are recovered through their library row.
+            // The legacy modal only knows about the first chunk and would create a
+            // duplicate, incomplete recording after chunk rotation.
+            if state.inProgressMeetingRecordingID != nil {
+                return
+            }
             if fileExists {
                 Log.app.info("Found orphaned recording from \(state.startTime)")
                 showRecoveryAlert(for: state)
@@ -349,6 +405,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 RecoveryStateManager.shared.clearState()
             }
         }
+    }
+
+    /// Ensures every on-disk `InProgressRecordings/<id>/` has a `.needsRecovery` library row.
+    private func promoteOrphanedInProgressMeetings() async -> Set<UUID> {
+        guard let store = try? InProgressRecordingStore.sharedStore() else { return [] }
+        return await promoteOrphanedInProgressMeetings(
+            store: store,
+            storage: RecordingsLibraryStorage.shared
+        )
+    }
+
+    func promoteOrphanedInProgressMeetings(
+        store: InProgressRecordingStore,
+        storage: RecordingsLibraryStorage
+    ) async -> Set<UUID> {
+        guard let ids = try? await store.allInProgressRecordingIDs() else { return [] }
+        var promotedIDs = Set<UUID>()
+        for id in ids {
+            if let existing = storage.recordings.first(where: { $0.id == id }) {
+                if existing.status == .needsRecovery
+                    || (existing.status == .recording && storage.markNeedsRecovery(id: id))
+                {
+                    promotedIDs.insert(id)
+                }
+                continue
+            }
+            // No library row yet (pre-live-row builds or begin failed) — synthesize one.
+            let manifest = try? await store.readManifest(for: id)
+            let type: Recording.RecordingType = switch manifest?.type {
+            case .meetingTranslation: .meetingTranslation
+            default: .meeting
+            }
+            let startedAt = manifest?.startedAt ?? Date()
+            guard storage.beginMeetingRecording(id: id, type: type, createdAt: startedAt) != nil else {
+                continue
+            }
+            let endedAt = manifest?.lastWriteAt ?? Date()
+            let duration = max(0, endedAt.timeIntervalSince(startedAt))
+            if storage.markNeedsRecovery(id: id, endedAt: endedAt, durationSeconds: duration) {
+                promotedIDs.insert(id)
+            }
+        }
+        return promotedIDs
+    }
+
+    nonisolated static func recoveryDuration(startedAt: Date?, endedAt: Date) -> TimeInterval? {
+        startedAt.map { max(0, endedAt.timeIntervalSince($0)) }
     }
 
     // MARK: - Sleep Handling (RLR-M2)
@@ -398,13 +501,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             duration: 5.0
         )
         // Transition recording states to idle so the UI is consistent.
-        // The in-progress directory is left intact for OrphanedRecordingDetector (M5a).
+        // Promote the live library row to needs-recovery; keep InProgressRecordings.
+        let endedAt = Date()
         if appState.meetingRecordingState == .recording {
+            if let id = meetingRecorderService.currentRecordingId {
+                let start = appState.meetingRecordingStartTime
+                let duration = Self.recoveryDuration(startedAt: start, endedAt: endedAt)
+                _ = RecordingsLibraryStorage.shared.markNeedsRecovery(
+                    id: id,
+                    endedAt: endedAt,
+                    durationSeconds: duration
+                )
+            }
             appState.meetingRecordingState = .idle
             appState.meetingRecordingStartTime = nil
             handleMeetingStateChange(.idle)
         }
         if appState.meetingTranslationRecordingState == .recording {
+            if let id = meetingRecorderService.currentRecordingId {
+                let start = appState.meetingTranslationRecordingStartTime
+                let duration = Self.recoveryDuration(startedAt: start, endedAt: endedAt)
+                _ = RecordingsLibraryStorage.shared.markNeedsRecovery(
+                    id: id,
+                    endedAt: endedAt,
+                    durationSeconds: duration
+                )
+            }
             appState.meetingTranslationRecordingState = .idle
             appState.meetingTranslationRecordingStartTime = nil
             handleMeetingTranslationStateChange(.idle)
@@ -541,6 +663,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_: Notification) {
+        meetingJoinMonitor.stop()
         hotkeyService.unregisterAll()
         pushToTalkService.stop()
         translationPushToTalkService.stop()
@@ -614,8 +737,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if appState.meetingRecordingState == .processing,
            appState.meetingRecordingStartTime == nil
         {
-            meetingPipelineTask?.cancel()
-            await cancelMeetingRecording()
+            let cancellationTask = cancelMeetingPipeline()
+            await cancellationTask?.value
             return
         }
 
@@ -646,6 +769,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func isStateInProgress(_ state: RecordingState) -> Bool {
         state == .recording || state == .processing
+    }
+
+    var hasAnyRecordingInProgress: Bool {
+        isStateInProgress(appState.recordingState)
+            || isStateInProgress(appState.translationRecordingState)
+            || isStateInProgress(appState.meetingRecordingState)
+            || isStateInProgress(appState.meetingTranslationRecordingState)
     }
 
     private func restoreRecordingFeedbackAfterInfo(delay: TimeInterval = 1.6) {

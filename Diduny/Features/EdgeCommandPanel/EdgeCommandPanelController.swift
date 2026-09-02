@@ -70,11 +70,66 @@ enum EdgeCommandPanelPresentation: Equatable {
     case collapsed
     case commands(isCloud: Bool)
     case live(RecordingMode)
+    case meetingSuggestion
+}
+
+enum MeetingSuggestionProcessingMode: Equatable {
+    case cloud
+    case local
+    case recordingOnly
+
+    static func resolve(cloudEnabled: Bool, hasLocalModel: Bool) -> Self {
+        if cloudEnabled { return .cloud }
+        return hasLocalModel ? .local : .recordingOnly
+    }
+
+    var label: String {
+        switch self {
+        case .cloud: String(localized: "Cloud - live transcription")
+        case .local: String(localized: "Local - transcription on this Mac")
+        case .recordingOnly:
+            String(localized: "Recording only - download a local model for transcription")
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .cloud: "cloud"
+        case .local: "desktopcomputer"
+        case .recordingOnly: "exclamationmark.triangle"
+        }
+    }
+}
+
+struct MeetingSuggestion: Equatable {
+    let meeting: DetectedMeeting
+    var selectedProvider: TranscriptionProvider
+    var isCloudAvailable: Bool
+    let hasLocalModel: Bool
+
+    var processingMode: MeetingSuggestionProcessingMode {
+        .resolve(cloudEnabled: selectedProvider == .cloud, hasLocalModel: hasLocalModel)
+    }
+
+    static func resolve(
+        meeting: DetectedMeeting,
+        preferredProvider: TranscriptionProvider,
+        cloudAvailable: Bool,
+        hasLocalModel: Bool
+    ) -> Self {
+        Self(
+            meeting: meeting,
+            selectedProvider: preferredProvider == .cloud && cloudAvailable ? .cloud : .local,
+            isCloudAvailable: cloudAvailable,
+            hasLocalModel: hasLocalModel
+        )
+    }
 }
 
 enum EdgeCommandPanelPlacement {
     static let expandedCornerRadius: CGFloat = 15
     static let liveControlHitTargetHeight: CGFloat = 44
+    static let meetingSuggestionControlHitTargetHeight: CGFloat = 44
 
     static func nearestDock(to proposedFrame: NSRect, in visibleFrame: NSRect) -> EdgeCommandPanelDock {
         let distances: [(EdgeCommandPanelDockEdge, CGFloat)] = [
@@ -159,6 +214,8 @@ enum EdgeCommandPanelPlacement {
             NSSize(width: 286, height: isCloud ? 326 : 250)
         case let .live(mode):
             mode.isMeeting ? NSSize(width: 360, height: 420) : NSSize(width: 310, height: 310)
+        case .meetingSuggestion:
+            NSSize(width: 390, height: 350)
         }
     }
 
@@ -227,6 +284,8 @@ final class EdgeCommandPanelModel {
     var isSignedIn: Bool
     var isExpanded = false
     var isShowingLiveFeedback = false
+    var meetingSuggestion: MeetingSuggestion?
+    var meetingSuggestionsEnabled = SettingsStorage.shared.meetingSuggestionsEnabled
     var dockEdge: EdgeCommandPanelDockEdge = .right
 
     init(
@@ -284,6 +343,33 @@ final class EdgeCommandPanelModel {
             self.isSignedIn = isSignedIn
         }
     }
+
+    func presentMeetingSuggestion(_ suggestion: MeetingSuggestion) {
+        meetingSuggestion = suggestion
+        meetingSuggestionsEnabled = SettingsStorage.shared.meetingSuggestionsEnabled
+    }
+
+    @discardableResult
+    func selectMeetingSuggestionProvider(_ provider: TranscriptionProvider) -> Bool {
+        guard var suggestion = meetingSuggestion,
+              provider != .cloud || suggestion.isCloudAvailable
+        else { return false }
+        suggestion.selectedProvider = provider
+        meetingSuggestion = suggestion
+        return true
+    }
+
+    @discardableResult
+    func consumeMeetingSuggestionStart(id: UUID) -> MeetingSuggestion? {
+        guard meetingSuggestion?.meeting.id == id else { return nil }
+        defer { meetingSuggestion = nil }
+        return meetingSuggestion
+    }
+
+    func dismissMeetingSuggestion(id: UUID) {
+        guard meetingSuggestion?.meeting.id == id else { return }
+        meetingSuggestion = nil
+    }
 }
 
 @MainActor
@@ -297,6 +383,7 @@ final class EdgeCommandPanelController: NSObject {
     private var panel: EdgeCommandPanel?
     private var panelContentView: EdgeCommandPanelContentView?
     private var model: EdgeCommandPanelModel?
+    private let meetingRecordingStarter: ((TranscriptionProvider) -> Void)?
     private var collapseTask: Task<Void, Never>?
     private var dock: EdgeCommandPanelDock?
     private var dragCursorOffset: NSPoint?
@@ -309,7 +396,8 @@ final class EdgeCommandPanelController: NSObject {
     private var isTabHidden = false
     private var hiddenTabScreenFrame: NSRect?
 
-    override private init() {
+    init(meetingRecordingStarter: ((TranscriptionProvider) -> Void)? = nil) {
+        self.meetingRecordingStarter = meetingRecordingStarter
         super.init()
     }
 
@@ -327,7 +415,7 @@ final class EdgeCommandPanelController: NSObject {
             // An active live-feedback session finishes on the panel (the
             // router snapshots the surface per session) — hide right after,
             // via dismissLiveFeedback → showCollapsed's notch guard.
-            guard model?.isShowingLiveFeedback != true else { return }
+            guard model?.isShowingLiveFeedback != true, model?.meetingSuggestion == nil else { return }
             hidePanelForNotchMode()
         } else {
             showCollapsed()
@@ -424,10 +512,75 @@ final class EdgeCommandPanelController: NSObject {
         cancelTabAutoHide()
         let panel = panel ?? makePanel()
         self.panel = panel
+        model?.meetingSuggestion = nil
         model?.isShowingLiveFeedback = true
         position(panel, presentation: .live(mode))
         revealPanelIfConcealed()
         panel.orderFrontRegardless()
+    }
+
+    func showMeetingSuggestion(_ meeting: DetectedMeeting) {
+        collapseTask?.cancel()
+        cancelTabAutoHide()
+        refreshModel()
+        let cloudAvailable = UsageService.canOfferCloudTranscription(
+            hasStoredSession: AuthService.hasStoredSession,
+            usage: UsageService.shared.cachedUsage
+        )
+        let suggestion = MeetingSuggestion.resolve(
+            meeting: meeting,
+            preferredProvider: SettingsStorage.shared.meetingRealtimeTranscriptionEnabled ? .cloud : .local,
+            cloudAvailable: cloudAvailable,
+            hasLocalModel: WhisperModelManager.shared.selectedModel() != nil
+        )
+        model?.presentMeetingSuggestion(suggestion)
+        model?.isShowingLiveFeedback = false
+        let panel = panel ?? makePanel()
+        self.panel = panel
+        position(
+            panel,
+            presentation: .meetingSuggestion
+        )
+        revealPanelIfConcealed()
+        panel.orderFrontRegardless()
+    }
+
+    @discardableResult
+    func selectMeetingSuggestionProvider(_ provider: TranscriptionProvider) -> Bool {
+        model?.selectMeetingSuggestionProvider(provider) ?? false
+    }
+
+    func dismissMeetingSuggestion(id: UUID) {
+        guard model?.meetingSuggestion?.meeting.id == id else { return }
+        model?.dismissMeetingSuggestion(id: id)
+        restoreConfiguredSurface()
+    }
+
+    func startMeetingRecording(fromSuggestionID id: UUID) {
+        guard let suggestion = model?.consumeMeetingSuggestionStart(id: id) else { return }
+        restoreConfiguredSurface()
+        if let meetingRecordingStarter {
+            meetingRecordingStarter(suggestion.selectedProvider)
+            return
+        }
+        guard let appDelegate,
+              !appDelegate.hasAnyRecordingInProgress,
+              appDelegate.canStartRecording(kind: .meeting)
+        else { return }
+        appDelegate.toggleMeetingRecording(provider: suggestion.selectedProvider)
+    }
+
+    private func setMeetingSuggestionsEnabled(_ enabled: Bool) {
+        model?.meetingSuggestionsEnabled = enabled
+        SettingsStorage.shared.meetingSuggestionsEnabled = enabled
+    }
+
+    private func restoreConfiguredSurface() {
+        if SettingsStorage.shared.recordingFeedbackSurface == .notch {
+            hidePanelForNotchMode()
+        } else {
+            showCollapsed()
+        }
     }
 
     // MARK: - Collapsed-tab auto-hide
@@ -511,7 +664,7 @@ final class EdgeCommandPanelController: NSObject {
     }
 
     private func setHovering(_ hovering: Bool) {
-        guard model?.isShowingLiveFeedback != true else { return }
+        guard model?.isShowingLiveFeedback != true, model?.meetingSuggestion == nil else { return }
         if hovering {
             collapseTask?.cancel()
             tabAutoHideTask?.cancel()
@@ -645,6 +798,15 @@ final class EdgeCommandPanelController: NSObject {
             onCopy: { DictationOverlayController.shared.copyCurrentTranscript() },
             onStop: { DictationOverlayController.shared.requestStop() },
             onDismissLive: { DictationOverlayController.shared.dismiss() },
+            onStartMeetingSuggestion: { [weak self] id in
+                self?.startMeetingRecording(fromSuggestionID: id)
+            },
+            onDismissMeetingSuggestion: { [weak self] id in
+                self?.dismissMeetingSuggestion(id: id)
+            },
+            onMeetingSuggestionsEnabled: { [weak self] enabled in
+                self?.setMeetingSuggestionsEnabled(enabled)
+            },
             onCollapse: { [weak self] in self?.showCollapsed() },
             onDrag: { [weak self] in self?.dragPanel() },
             onDragEnd: { [weak self] in self?.finishDraggingPanel() }
@@ -714,8 +876,11 @@ final class EdgeCommandPanelController: NSObject {
         .commands(isCloud: model?.provider == .cloud)
     }
 
-    private var currentPresentation: EdgeCommandPanelPresentation {
+    var currentPresentation: EdgeCommandPanelPresentation {
         guard let model else { return .collapsed }
+        if model.meetingSuggestion != nil {
+            return .meetingSuggestion
+        }
         if model.isShowingLiveFeedback {
             return .live(DictationOverlayController.shared.store.mode)
         }
@@ -911,13 +1076,27 @@ struct EdgeCommandExpandedView: View {
     let onCopy: () -> Void
     let onStop: () -> Void
     let onDismissLive: () -> Void
+    let onStartMeetingSuggestion: (UUID) -> Void
+    let onDismissMeetingSuggestion: (UUID) -> Void
+    let onMeetingSuggestionsEnabled: (Bool) -> Void
     let onCollapse: () -> Void
     let onDrag: () -> Void
     let onDragEnd: () -> Void
 
     var body: some View {
         ZStack {
-            if model.isShowingLiveFeedback {
+            if let suggestion = model.meetingSuggestion {
+                MeetingSuggestionView(
+                    model: model,
+                    suggestion: suggestion,
+                    onStart: { onStartMeetingSuggestion(suggestion.meeting.id) },
+                    onDismiss: { onDismissMeetingSuggestion(suggestion.meeting.id) },
+                    onTrackingChanged: onMeetingSuggestionsEnabled,
+                    onDrag: onDrag,
+                    onDragEnd: onDragEnd
+                )
+                .transition(.scale(scale: 0.96, anchor: .top).combined(with: .opacity))
+            } else if model.isShowingLiveFeedback {
                 LiveDictationOverlayView(
                     store: liveStore,
                     onCopy: onCopy,
@@ -933,6 +1112,7 @@ struct EdgeCommandExpandedView: View {
             }
         }
         .animation(.spring(response: 0.38, dampingFraction: 0.86), value: model.isShowingLiveFeedback)
+        .animation(.spring(response: 0.38, dampingFraction: 0.86), value: model.meetingSuggestion)
     }
 
     private var commandView: some View {
@@ -1115,6 +1295,153 @@ struct EdgeCommandExpandedView: View {
 
     private func languageName(_ code: String) -> String {
         SupportedLanguage.language(for: code)?.name ?? code.uppercased()
+    }
+}
+
+private struct MeetingSuggestionView: View {
+    let model: EdgeCommandPanelModel
+    let suggestion: MeetingSuggestion
+    let onStart: () -> Void
+    let onDismiss: () -> Void
+    let onTrackingChanged: (Bool) -> Void
+    let onDrag: () -> Void
+    let onDragEnd: () -> Void
+
+    var body: some View {
+        @Bindable var model = model
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "record.circle")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(Color("BrandAccentDeep"))
+                    .frame(
+                        width: EdgeCommandPanelPlacement.meetingSuggestionControlHitTargetHeight,
+                        height: EdgeCommandPanelPlacement.meetingSuggestionControlHitTargetHeight
+                    )
+                    .background(Color("BrandTintSoft"), in: RoundedRectangle(cornerRadius: 11))
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Looks like a meeting started")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text(message)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(
+                            width: EdgeCommandPanelPlacement.meetingSuggestionControlHitTargetHeight,
+                            height: EdgeCommandPanelPlacement.meetingSuggestionControlHitTargetHeight
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close meeting recording suggestion")
+            }
+            .contentShape(Rectangle())
+            .gesture(dragGesture)
+
+            Picker(
+                "Meeting transcription provider",
+                selection: Binding(
+                    get: { model.meetingSuggestion?.selectedProvider ?? suggestion.selectedProvider },
+                    set: { model.selectMeetingSuggestionProvider($0) }
+                )
+            ) {
+                Text("Cloud").tag(TranscriptionProvider.cloud)
+                Text("Local").tag(TranscriptionProvider.local)
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .disabled(!suggestion.isCloudAvailable)
+            .frame(minHeight: EdgeCommandPanelPlacement.meetingSuggestionControlHitTargetHeight)
+            .accessibilityLabel("Meeting transcription provider")
+            .accessibilityHint(
+                suggestion.isCloudAvailable
+                    ? "Choose Cloud or Local transcription"
+                    : "Cloud is unavailable. Local transcription will be used."
+            )
+
+            Label(suggestion.processingMode.label, systemImage: suggestion.processingMode.icon)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .frame(minHeight: 32)
+                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+
+            Toggle(
+                "Continue tracking meetings and suggesting recordings",
+                isOn: $model.meetingSuggestionsEnabled
+            )
+            .toggleStyle(.checkbox)
+            .font(.system(size: 11.5))
+            .frame(
+                minHeight: EdgeCommandPanelPlacement.meetingSuggestionControlHitTargetHeight,
+                alignment: .leading
+            )
+            .onChange(of: model.meetingSuggestionsEnabled) { _, enabled in
+                onTrackingChanged(enabled)
+            }
+            .accessibilityLabel("Continue tracking meetings and suggesting recordings")
+
+            HStack(spacing: 8) {
+                Button(action: onDismiss) {
+                    Text("Not now")
+                        .frame(
+                            maxWidth: .infinity,
+                            minHeight: EdgeCommandPanelPlacement.meetingSuggestionControlHitTargetHeight
+                        )
+                }
+                .buttonStyle(.bordered)
+                .keyboardShortcut(.cancelAction)
+                .accessibilityLabel("Not now")
+
+                Button(action: onStart) {
+                    Text("Start recording")
+                        .frame(
+                            maxWidth: .infinity,
+                            minHeight: EdgeCommandPanelPlacement.meetingSuggestionControlHitTargetHeight
+                        )
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityLabel("Start recording and transcription")
+            }
+        }
+        .padding(16)
+        .background(.regularMaterial, in: panelShape)
+        .overlay(panelShape.stroke(Color.primary.opacity(0.10), lineWidth: 0.5))
+        .onExitCommand(perform: onDismiss)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Meeting recording suggestion")
+    }
+
+    private var message: String {
+        String(
+            format: String(
+                localized: "Start recording and transcription in %@ so you can return to the materials after the meeting?"
+            ),
+            suggestion.meeting.client.displayName
+        )
+    }
+
+    private var panelShape: RoundedRectangle {
+        RoundedRectangle(
+            cornerRadius: EdgeCommandPanelPlacement.expandedCornerRadius,
+            style: .continuous
+        )
+    }
+
+    private var dragGesture: some Gesture {
+        DragGesture(minimumDistance: 2)
+            .onChanged { _ in onDrag() }
+            .onEnded { _ in onDragEnd() }
     }
 }
 

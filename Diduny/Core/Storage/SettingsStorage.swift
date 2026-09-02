@@ -98,6 +98,7 @@ final class SettingsStorage {
         case pushToTalkToggleTapCount
         case pushToTalkHoldStartDelaySeconds
         case meetingAudioSource
+        case meetingSuggestionsEnabled
         case meetingMicGain
         case meetingSystemGain
         case translationPushToTalkKey
@@ -530,6 +531,17 @@ final class SettingsStorage {
     }
 
     // MARK: - Meeting Recording
+
+    var meetingSuggestionsEnabled: Bool {
+        get {
+            defaults.object(forKey: Key.meetingSuggestionsEnabled.rawValue) == nil
+                || defaults.bool(forKey: Key.meetingSuggestionsEnabled.rawValue)
+        }
+        set {
+            defaults.set(newValue, forKey: Key.meetingSuggestionsEnabled.rawValue)
+            NotificationCenter.default.post(name: .meetingSuggestionsEnabledChanged, object: nil)
+        }
+    }
 
     var meetingAudioSource: MeetingAudioSource {
         get {
@@ -1297,6 +1309,7 @@ final class SettingsStorage {
 }
 
 extension Notification.Name {
+    static let meetingSuggestionsEnabledChanged = Notification.Name("meetingSuggestionsEnabledChanged")
     static let textCleanupSettingsChanged = Notification.Name("textCleanupSettingsChanged")
     static let historyRetentionSettingsChanged = Notification.Name("historyRetentionSettingsChanged")
     static let typingSpeedSettingsChanged = Notification.Name("typingSpeedSettingsChanged")

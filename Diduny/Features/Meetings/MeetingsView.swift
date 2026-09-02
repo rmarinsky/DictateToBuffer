@@ -1,6 +1,9 @@
 import SwiftUI
 
 struct MeetingsView: View {
+    static let deletionFailureMessage =
+        "The deletion couldn't be completed safely. Review your Meetings library before trying again."
+
     @Environment(AppState.self) var appState
     @State private var storage = RecordingsLibraryStorage.shared
     @State private var playbackService = AudioPlaybackService.shared
@@ -8,6 +11,7 @@ struct MeetingsView: View {
     @State private var showBulkDeleteConfirmation = false
     @State private var isSelectionMode = false
     @State private var selectedMeetingIds = Set<UUID>()
+    @State private var deletionErrorMessage: LocalizedStringKey?
 
     // Settings state
     @State private var autoRecordLargeMeetings = true
@@ -82,6 +86,17 @@ struct MeetingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Delete \(selectedMeetingIds.count) selected meeting recordings? This cannot be undone.")
+        }
+        .alert(
+            "Couldn't Delete Meetings",
+            isPresented: Binding(
+                get: { deletionErrorMessage != nil },
+                set: { if !$0 { deletionErrorMessage = nil } }
+            )
+        ) {
+            Button("OK") { deletionErrorMessage = nil }
+        } message: {
+            Text(deletionErrorMessage ?? LocalizedStringKey("Unknown error"))
         }
     }
 
@@ -337,11 +352,14 @@ struct MeetingsView: View {
         if let playingId = playbackService.playingRecordingId, ids.contains(playingId) {
             playbackService.stop()
         }
-        if let selectedRecording, ids.contains(selectedRecording.id) {
-            self.selectedRecording = nil
+        if storage.deleteRecordings(ids) {
+            if let selectedRecording, ids.contains(selectedRecording.id) {
+                self.selectedRecording = nil
+            }
+            cancelSelection()
+        } else {
+            deletionErrorMessage = LocalizedStringKey(Self.deletionFailureMessage)
         }
-        storage.deleteRecordings(ids)
-        cancelSelection()
     }
 }
 

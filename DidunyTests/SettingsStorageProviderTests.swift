@@ -43,6 +43,11 @@ final class SettingsStorageProviderTests: XCTestCase {
         XCTAssertEqual(Bundle.main.bundleIdentifier, "ua.com.rmarinsky.diduny.test")
     }
 
+    func test_meetingsAreGroupedWithSettingsNavigation() {
+        XCTAssertTrue(MainSection.settingsItems.contains(.meetings))
+        XCTAssertFalse(MainSection.mainItems.contains(.meetings))
+    }
+
     func test_persistedFirstUseDetectionUsesProviderShortcutOrAutoPaste() {
         let defaults = UserDefaults.standard
         let keys = ["transcriptionProvider", "pushToTalkKey", "autoPaste"]
@@ -198,6 +203,45 @@ final class SettingsStorageProviderTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: transcriptionProviderKey)
 
         XCTAssertEqual(SettingsStorage.shared.transcriptionProvider, .cloud)
+    }
+
+    func test_defaultMeetingSuggestionsEnabled_isTrue() {
+        let key = "meetingSuggestionsEnabled"
+        let storedValue = UserDefaults.standard.object(forKey: key)
+        defer { restore(storedValue, key: key) }
+        UserDefaults.standard.removeObject(forKey: key)
+
+        XCTAssertTrue(SettingsStorage.shared.meetingSuggestionsEnabled)
+    }
+
+    func test_explicitlyDisabledMeetingSuggestions_areNotOverwrittenByDefaults() {
+        let key = "meetingSuggestionsEnabled"
+        let storedValue = UserDefaults.standard.object(forKey: key)
+        defer { restore(storedValue, key: key) }
+        SettingsStorage.shared.meetingSuggestionsEnabled = false
+
+        SettingsStorage.shared.applyNewUserDefaultsIfMissing()
+
+        XCTAssertFalse(SettingsStorage.shared.meetingSuggestionsEnabled)
+    }
+
+    func test_changingMeetingSuggestionsSetting_postsNotification() {
+        let key = "meetingSuggestionsEnabled"
+        let storedValue = UserDefaults.standard.object(forKey: key)
+        defer { restore(storedValue, key: key) }
+        let changed = expectation(description: "meeting suggestion setting changed")
+        let observer = NotificationCenter.default.addObserver(
+            forName: .meetingSuggestionsEnabledChanged,
+            object: nil,
+            queue: nil
+        ) { _ in
+            changed.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        SettingsStorage.shared.meetingSuggestionsEnabled = false
+
+        wait(for: [changed], timeout: 0.1)
     }
 
     func test_defaultMeetingRealtimeTranscription_followsTranscriptionProvider() {

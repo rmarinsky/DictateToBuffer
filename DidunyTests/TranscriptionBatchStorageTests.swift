@@ -219,7 +219,7 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         sharedItem.recordingID = sharedID
         try store.replaceWorkItems([sharedItem], in: other.id)
 
-        let affected = try store.delete(batchID: target.id)
+        let affected = try store.delete(batchID: target.id).recordingIDs
 
         XCTAssertEqual(affected, Set([ownedID, sharedID]))
         XCTAssertEqual(store.batches.count, 1)
@@ -317,6 +317,53 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         XCTAssertEqual(recording.title, "Interview")
         XCTAssertEqual(recording.description, "Research notes")
         XCTAssertEqual(recording.resolvedTranscriptHistory.map(\.text), ["Original", "Local revision"])
+    }
+
+    func test_audioOptimizationStopsWhenDeletionRecoveryBeginsWhileCompressing() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RecordingOptimizationRecoveryTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let batchStore = try TranscriptionBatchStorage(baseDirectory: directory)
+        let compressionStarted = expectation(description: "compression started")
+        var resumeCompression: CheckedContinuation<URL, Never>?
+        let store = RecordingsLibraryStorage(
+            baseDirectory: directory,
+            batchStorage: batchStore,
+            audioCompressor: { _ in
+                await withCheckedContinuation { continuation in
+                    resumeCompression = continuation
+                    compressionStarted.fulfill()
+                }
+            }
+        )
+        var wavData = Data("RIFF".utf8)
+        wavData.append(Data(repeating: 0, count: 4))
+        wavData.append(Data("WAVE".utf8))
+        let id = try XCTUnwrap(store.saveRecording(
+            audioData: wavData,
+            type: .fileTranscription,
+            duration: 1,
+            forceSave: true
+        ))
+        let sourceURL = try XCTUnwrap(store.recordings.first.map(store.audioFileURL))
+        let replacementURL = sourceURL.deletingPathExtension().appendingPathExtension("flac")
+
+        let optimization = Task { @MainActor in
+            await store.optimizeStoredRecordingIfNeeded(id: id)
+        }
+        await fulfillment(of: [compressionStarted], timeout: 1)
+        try Data("compressed".utf8).write(to: replacementURL)
+        try JSONEncoder().encode(RecordingDeletionRecovery(
+            recordings: store.recordings,
+            stagedFiles: []
+        )).write(to: directory.appendingPathComponent("recordings_delete_recovery.json"))
+        try XCTUnwrap(resumeCompression).resume(returning: replacementURL)
+
+        let result = await optimization.value
+        XCTAssertEqual(result, sourceURL)
+        XCTAssertEqual(store.recordings.first?.audioFileName, sourceURL.lastPathComponent)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sourceURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: replacementURL.path))
     }
 
     func test_completedTranscriptionsAppendHistoryInsteadOfReplacingIt() throws {
@@ -465,6 +512,63 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         XCTAssertTrue(batchStore.batches.allSatisfy { !$0.recordingIDs.contains(id) })
     }
 
+    func test_commitFailureRestoresBatchReferenceWithoutDeletingCheckpoint() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RecordingCheckpointRollbackTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let checkpointDirectory = directory.appendingPathComponent("checkpoint", isDirectory: true)
+        try FileManager.default.createDirectory(at: checkpointDirectory, withIntermediateDirectories: true)
+        let checkpointURL = checkpointDirectory.appendingPathComponent("download.m4a")
+        try Data("checkpoint".utf8).write(to: checkpointURL)
+        let batchStore = try TranscriptionBatchStorage(baseDirectory: directory)
+        let store = RecordingsLibraryStorage(
+            baseDirectory: directory,
+            batchStorage: batchStore,
+            deletionCommitWriter: { _, _ in false }
+        )
+        let id = try XCTUnwrap(store.saveRecording(
+            audioData: Data("audio".utf8),
+            type: .fileTranscription,
+            duration: 1,
+            forceSave: true
+        ))
+        let recording = try XCTUnwrap(store.recordings.first)
+        var item = BatchTranscriptionItem(sourceURL: URL(fileURLWithPath: "/tmp/source.m4a"))
+        item.recordingID = id
+        item.downloadedAudioURL = checkpointURL
+        let batch = try batchStore.create(name: "Protected", recordingIDs: [id])
+        try batchStore.replaceWorkItems([item], in: batch.id)
+
+        XCTAssertFalse(store.deleteRecording(recording))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: checkpointURL.path))
+        XCTAssertEqual(batchStore.batches.first?.recordingIDs, [id])
+        XCTAssertEqual(batchStore.batches.first?.workItems?.first?.downloadedAudioURL, checkpointURL)
+    }
+
+    func test_startupFinishesCheckpointCleanupPersistedInCommitJournal() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CommittedCheckpointCleanupTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let checkpointDirectory = directory.appendingPathComponent("checkpoint", isDirectory: true)
+        try FileManager.default.createDirectory(at: checkpointDirectory, withIntermediateDirectories: true)
+        let checkpointURL = checkpointDirectory.appendingPathComponent("download.m4a")
+        try Data("checkpoint".utf8).write(to: checkpointURL)
+        try JSONEncoder().encode(RecordingDeletionRecovery(
+            recordings: [],
+            stagedFiles: [],
+            deferredBatchArtifactPaths: [checkpointURL.path]
+        )).write(to: directory.appendingPathComponent("recordings_delete_commit.json"))
+        try Data("[]".utf8).write(to: directory.appendingPathComponent("recordings_metadata.json"))
+        let batchStore = try TranscriptionBatchStorage(baseDirectory: directory)
+
+        _ = RecordingsLibraryStorage(baseDirectory: directory, batchStorage: batchStore)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: checkpointDirectory.path))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent("recordings_delete_commit.json").path
+        ))
+    }
+
     func test_failedBatchMetadataWriteRollsBackInMemoryReferences() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("BatchDeleteRollbackTests-\(UUID())")
@@ -590,11 +694,17 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         )
         let originalURL = recordingsDirectory.appendingPathComponent(recording.audioFileName)
         let stagedURL = recordingsDirectory.appendingPathComponent(".recovered.deleting-test")
+        let recoveredBatch = TranscriptionBatch(
+            name: "Recovered batch",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            recordingIDs: [recording.id]
+        )
         try Data("audio".utf8).write(to: stagedURL)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(RecordingDeletionRecovery(
             recordings: [recording],
+            batches: [recoveredBatch],
             stagedFiles: [RecordingDeletionStagedFile(
                 originalPath: originalURL.path,
                 stagedPath: stagedURL.path
@@ -611,10 +721,76 @@ final class TranscriptionBatchStorageTests: XCTestCase {
         }
 
         XCTAssertEqual(store.recordings.map(\.id), [recording.id])
+        XCTAssertEqual(batchStore.batches, [recoveredBatch])
         XCTAssertTrue(FileManager.default.fileExists(atPath: originalURL.path))
         XCTAssertFalse(FileManager.default.fileExists(
             atPath: directory.appendingPathComponent("recordings_delete_recovery.json").path
         ))
+    }
+
+    func test_appliedDeletionRollbackIsNotReplayedAfterRemovalFailure() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AppliedRecordingDeleteRecoveryTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recordingsDirectory = directory.appendingPathComponent("Recordings")
+        try FileManager.default.createDirectory(at: recordingsDirectory, withIntermediateDirectories: true)
+        let recovered = Recording(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            type: .meeting,
+            audioFileName: "recovered.m4a",
+            durationSeconds: 1,
+            fileSizeBytes: 5,
+            status: .unprocessed,
+            sourceDevice: nil
+        )
+        try Data("audio".utf8).write(
+            to: recordingsDirectory.appendingPathComponent(recovered.audioFileName)
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(RecordingDeletionRecovery(
+            recordings: [recovered],
+            stagedFiles: []
+        )).write(to: directory.appendingPathComponent("recordings_delete_recovery.json"))
+        try Data("[]".utf8).write(to: directory.appendingPathComponent("recordings_metadata.json"))
+        let batchStore = try TranscriptionBatchStorage(baseDirectory: directory)
+        let failingRemover: (URL) throws -> Void = { _ in
+            throw CocoaError(.fileWriteNoPermission)
+        }
+
+        let firstLoad = RecordingsLibraryStorage(
+            baseDirectory: directory,
+            batchStorage: batchStore,
+            deletionRecoveryRemover: failingRemover
+        )
+        let addedID = try XCTUnwrap(firstLoad.saveRecording(
+            audioData: Data("new".utf8),
+            type: .meeting,
+            duration: 1,
+            forceSave: true
+        ))
+        let secondLoad = RecordingsLibraryStorage(
+            baseDirectory: directory,
+            batchStorage: batchStore,
+            deletionRecoveryRemover: failingRemover
+        )
+
+        XCTAssertEqual(Set(secondLoad.recordings.map(\.id)), Set([recovered.id, addedID]))
+    }
+
+    func test_unresolvedRecordingDeletionBlocksBatchMutation() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BlockedBatchMutationTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let batchStore = try TranscriptionBatchStorage(baseDirectory: directory)
+        try JSONEncoder().encode(RecordingDeletionRecovery(
+            recordings: [],
+            stagedFiles: []
+        )).write(to: directory.appendingPathComponent("recordings_delete_recovery.json"))
+
+        XCTAssertThrowsError(try batchStore.create(name: "Blocked", recordingIDs: []))
+        XCTAssertTrue(batchStore.batches.isEmpty)
     }
 
     func test_batchDeletionRejectsArtifactOutsideDidunyTemporaryDirectory() throws {

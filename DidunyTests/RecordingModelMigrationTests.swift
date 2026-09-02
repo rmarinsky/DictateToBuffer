@@ -205,6 +205,43 @@ final class RecordingModelMigrationTests: XCTestCase {
         )
     }
 
+    func test_displayTranscriptText_includesStoredSpeakerLabels() {
+        let recording = Recording(
+            id: UUID(),
+            createdAt: Date(),
+            type: .meeting,
+            audioFileName: "meeting.flac",
+            durationSeconds: 10,
+            fileSizeBytes: 42,
+            status: .transcribed,
+            transcriptionText: "Hello. Hi.",
+            sourceDevice: nil,
+            transcriptSegments: [
+                TimedTranscriptSegment(
+                    startMilliseconds: 1_200,
+                    endMilliseconds: 2_300,
+                    speaker: "1",
+                    text: "Hello."
+                ),
+                TimedTranscriptSegment(
+                    startMilliseconds: 4_500,
+                    endMilliseconds: 5_100,
+                    speaker: "2",
+                    text: "Hi."
+                )
+            ]
+        )
+
+        XCTAssertEqual(
+            recording.displayTranscriptText,
+            "[00:01] Speaker 1: Hello.\n\n[00:04] Speaker 2: Hi."
+        )
+        XCTAssertEqual(
+            recording.resolvedTranscriptHistory.first?.displayText,
+            "[00:01] Speaker 1: Hello.\n\n[00:04] Speaker 2: Hi."
+        )
+    }
+
     func test_roundTrip_nilRecoverySource_normalStop() throws {
         let original = Recording(
             id: UUID(),
@@ -358,7 +395,9 @@ final class RecordingModelMigrationTests: XCTestCase {
             .transcribed,
             .translated,
             .failed,
-            .partiallyRecovered
+            .partiallyRecovered,
+            .recording,
+            .needsRecovery
         ]
 
         for status in allCases {
@@ -375,10 +414,14 @@ final class RecordingModelMigrationTests: XCTestCase {
                 _ = status
             case .partiallyRecovered:
                 _ = status
+            case .recording:
+                _ = status
+            case .needsRecovery:
+                _ = status
             }
         }
         // If this compiles, all cases are handled.
-        XCTAssertEqual(allCases.count, 6)
+        XCTAssertEqual(allCases.count, 8)
     }
 
     // MARK: - 4. RecoverySource raw-value stability

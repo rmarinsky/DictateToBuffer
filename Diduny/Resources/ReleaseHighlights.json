@@ -1,8 +1,9 @@
 {
   "schemaVersion": 1,
-  "headline": "Meeting transcripts copy in full",
+  "headline": "Meeting recording suggestions",
   "highlights": [
-    "Copying a transcript keeps its timestamps and speaker labels.",
-    "Recording details close again from the X button or Esc."
+    "Diduny can locally detect likely meetings and suggest recording.",
+    "Choose Cloud or Local transcription before each suggested recording.",
+    "When Cloud is unavailable, Diduny uses Local without losing the meeting audio."
   ]
 }

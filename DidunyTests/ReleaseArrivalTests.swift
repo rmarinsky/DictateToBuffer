@@ -45,13 +45,13 @@ final class ReleaseHighlightsTests: XCTestCase {
     func testBundledPayloadMatchesCuratedReleaseCopy() throws {
         let highlights = try XCTUnwrap(ReleaseHighlights.bundled())
 
-        XCTAssertEqual(highlights.headline, "A clearer update and a faster first run")
+        XCTAssertEqual(highlights.headline, "Meeting recording suggestions")
         XCTAssertEqual(
             highlights.highlights,
             [
-                "See what changed before an update installs and after Diduny relaunches.",
-                "Set up cloud dictation from Overview and try your first phrase immediately.",
-                "Grant auto-paste and meeting permissions only when you need them.",
+                "Diduny can locally detect likely meetings and suggest recording.",
+                "Choose Cloud or Local transcription before each suggested recording.",
+                "When Cloud is unavailable, Diduny uses Local without losing the meeting audio.",
             ]
         )
     }

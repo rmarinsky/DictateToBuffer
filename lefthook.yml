@@ -1,0 +1,19 @@
+pre-commit:
+  commands:
+    reject-env-files:
+      run: |
+        disallowed="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '(^|/)\.env($|\.)' | grep -Ev '\.(example|sample|template)$' || true)"
+        if [ -n "$disallowed" ]; then
+          echo "Refusing to commit real .env files; use an explicit placeholder template instead." >&2
+          echo "$disallowed" >&2
+          exit 1
+        fi
+    ripsecrets:
+      run: ripsecrets --strict-ignore {staged_files}
+    gitleaks:
+      run: gitleaks git --no-banner --redact=100 --staged
+
+pre-push:
+  commands:
+    gitleaks-range:
+      run: gitleaks git --no-banner --redact=100 --log-opts="origin/main..HEAD"

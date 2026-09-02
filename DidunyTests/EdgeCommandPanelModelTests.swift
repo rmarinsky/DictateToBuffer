@@ -145,6 +145,127 @@ struct EdgeCommandPanelModelTests {
         #expect(meeting == NSRect(x: 1080, y: 240, width: 360, height: 420))
     }
 
+    @Test("Meeting suggestion is actionable for notch and compact-panel configurations")
+    func meetingSuggestionOverridesConfiguredFeedbackSurface() {
+        let savedSurface = SettingsStorage.shared.recordingFeedbackSurface
+        defer { SettingsStorage.shared.recordingFeedbackSurface = savedSurface }
+
+        for surface in [RecordingFeedbackSurface.notch, .compactPanel] {
+            SettingsStorage.shared.recordingFeedbackSurface = surface
+            let controller = EdgeCommandPanelController(meetingRecordingStarter: { _ in })
+            let meeting = DetectedMeeting(id: UUID(), client: .zoom)
+
+            controller.showMeetingSuggestion(meeting)
+
+            #expect(controller.currentPresentation == .meetingSuggestion)
+            controller.dismissMeetingSuggestion(id: meeting.id)
+            #expect(controller.currentPresentation == .collapsed)
+        }
+    }
+
+    @Test("Meeting suggestion controller starts recording only once")
+    func meetingSuggestionControllerStartsOnce() {
+        var startedProviders: [TranscriptionProvider] = []
+        let controller = EdgeCommandPanelController { provider in
+            startedProviders.append(provider)
+        }
+        let meeting = DetectedMeeting(id: UUID(), client: .zoom)
+
+        controller.showMeetingSuggestion(meeting)
+        controller.selectMeetingSuggestionProvider(.local)
+        controller.startMeetingRecording(fromSuggestionID: meeting.id)
+        controller.startMeetingRecording(fromSuggestionID: meeting.id)
+
+        #expect(startedProviders == [.local])
+    }
+
+    @Test("Meeting suggestion falls back to Local when Cloud is unavailable")
+    func unavailableCloudFallsBackToLocal() {
+        let model = EdgeCommandPanelModel(pairs: [.defaultPair], selectedPair: .defaultPair)
+        let suggestion = MeetingSuggestion.resolve(
+            meeting: DetectedMeeting(id: UUID(), client: .googleMeet),
+            preferredProvider: .cloud,
+            cloudAvailable: false,
+            hasLocalModel: true
+        )
+
+        model.presentMeetingSuggestion(suggestion)
+
+        #expect(model.meetingSuggestion?.selectedProvider == .local)
+        #expect(model.meetingSuggestion?.processingMode == .local)
+        #expect(!model.selectMeetingSuggestionProvider(.cloud))
+    }
+
+    @Test("Cloud use requires confirmed usage while an unknown cache remains selectable")
+    func cloudEligibilityDistinguishesConfirmedUseFromAnUnknownOffer() {
+        let available = UsageResponse(
+            isWhitelisted: false,
+            usedHours: 1,
+            limitHours: 5,
+            remainingHours: 4,
+            usedMs: 3_600_000,
+            limitMs: 18_000_000,
+            remainingMs: 14_400_000
+        )
+        let exhausted = UsageResponse(
+            isWhitelisted: false,
+            usedHours: 5,
+            limitHours: 5,
+            remainingHours: 0,
+            usedMs: 18_000_000,
+            limitMs: 18_000_000,
+            remainingMs: 0
+        )
+        let noSubscription = UsageResponse(
+            isWhitelisted: false,
+            usedHours: 0,
+            limitHours: nil,
+            remainingHours: nil,
+            usedMs: 0,
+            limitMs: nil,
+            remainingMs: nil
+        )
+
+        #expect(UsageService.canUseCloudTranscription(hasStoredSession: true, usage: available))
+        #expect(!UsageService.canUseCloudTranscription(hasStoredSession: false, usage: available))
+        #expect(!UsageService.canUseCloudTranscription(hasStoredSession: true, usage: exhausted))
+        #expect(!UsageService.canUseCloudTranscription(hasStoredSession: true, usage: noSubscription))
+        #expect(!UsageService.canUseCloudTranscription(hasStoredSession: true, usage: nil))
+        #expect(UsageService.canOfferCloudTranscription(hasStoredSession: true, usage: nil))
+        #expect(!UsageService.canOfferCloudTranscription(hasStoredSession: false, usage: nil))
+    }
+
+    @Test("Disabling future suggestions keeps the current meeting suggestion open")
+    func disablingTrackingDoesNotDismissCurrentSuggestion() {
+        let model = EdgeCommandPanelModel(pairs: [.defaultPair], selectedPair: .defaultPair)
+        let suggestion = MeetingSuggestion(
+            meeting: DetectedMeeting(id: UUID(), client: .teams),
+            selectedProvider: .cloud,
+            isCloudAvailable: true,
+            hasLocalModel: true
+        )
+
+        model.presentMeetingSuggestion(suggestion)
+        model.meetingSuggestionsEnabled = false
+
+        #expect(model.meetingSuggestion == suggestion)
+    }
+
+    @Test("Meeting suggestion controls meet the minimum pointer target")
+    func meetingSuggestionControlsMeetMinimumTarget() {
+        #expect(EdgeCommandPanelPlacement.meetingSuggestionControlHitTargetHeight >= 44)
+    }
+
+    @Test("Meeting suggestion describes the actual processing path")
+    func meetingSuggestionProcessingModeMatchesRuntimeReadiness() {
+        #expect(MeetingSuggestionProcessingMode.resolve(cloudEnabled: true, hasLocalModel: false) == .cloud)
+        #expect(MeetingSuggestionProcessingMode.resolve(cloudEnabled: false, hasLocalModel: true) == .local)
+        #expect(
+            MeetingSuggestionProcessingMode.resolve(cloudEnabled: false, hasLocalModel: false)
+                == .recordingOnly
+        )
+    }
+
     @Test("Auto-hide only collapses after the pointer leaves the panel")
     func autoHideChecksThePointerAtTheEndOfTheDelay() {
         let panelFrame = NSRect(x: 1154, y: 287, width: 286, height: 326)

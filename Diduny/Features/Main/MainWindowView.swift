@@ -12,7 +12,7 @@ struct MainWindowView: View {
     @State private var selectedSection: MainSection
 
     init(initialSection: MainSection = .overview) {
-        _selectedSection = State(initialValue: initialSection.isBetaDisabled ? .recordings : initialSection)
+        _selectedSection = State(initialValue: initialSection)
     }
 
     var body: some View {
@@ -51,7 +51,7 @@ struct MainWindowView: View {
         }
         .onChange(of: MainWindowController.shared.requestedSection) { _, section in
             if let section {
-                selectedSection = section.isBetaDisabled ? .recordings : section
+                selectedSection = section
                 MainWindowController.shared.requestedSection = nil
             }
         }
@@ -68,8 +68,7 @@ struct MainWindowView: View {
         case .typingTest:
             TypingTestView()
         case .meetings:
-            RecordingsLibraryView()
-                .environment(audioDeviceManager)
+            MeetingSettingsView()
         case .general:
             GeneralSettingsView()
         case .audioDictation:

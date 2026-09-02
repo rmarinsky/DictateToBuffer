@@ -165,6 +165,17 @@ struct RecoveryState: Codable {
     let startTime: Date
     let recordingType: RecordingType
 
+    /// The session UUID when this state points at the chunk store used by the
+    /// library recovery flow. Legacy recovery states return `nil`.
+    var inProgressMeetingRecordingID: UUID? {
+        guard recordingType == .meeting || recordingType == .meetingTranslation else { return nil }
+        let sessionDirectory = URL(fileURLWithPath: tempFilePath).deletingLastPathComponent()
+        guard sessionDirectory.deletingLastPathComponent().lastPathComponent == "InProgressRecordings" else {
+            return nil
+        }
+        return UUID(uuidString: sessionDirectory.lastPathComponent)
+    }
+
     enum RecordingType: String, Codable {
         case voice
         case meeting

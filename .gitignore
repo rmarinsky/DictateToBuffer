@@ -111,6 +111,12 @@ iOSInjectionProject/
 # API keys and secrets
 .env
 .env.*
+!.env.example
+!.env.*.example
+!.env.sample
+!.env.*.sample
+!.env.template
+!.env.*.template
 secrets.json
 **/secrets/
 

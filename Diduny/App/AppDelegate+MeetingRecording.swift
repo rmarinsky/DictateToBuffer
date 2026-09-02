@@ -5,12 +5,18 @@ import Foundation
 
 extension AppDelegate {
     @objc func toggleMeetingRecording() {
+        let provider: TranscriptionProvider = SettingsStorage.shared.meetingRealtimeTranscriptionEnabled
+            ? .cloud
+            : .local
+        toggleMeetingRecording(provider: provider)
+    }
+
+    func toggleMeetingRecording(
+        provider: TranscriptionProvider,
+        cancelPipeline: (() async -> Void)? = nil
+    ) {
         let meetingRecordingState = appState.meetingRecordingState
         Log.app.info("toggleMeetingRecording called, current state: \(meetingRecordingState)")
-        // Recording intent: warm the two slow dependencies of a meeting start
-        // while permission checks and device setup run.
-        ShareableContentCache.shared.prewarm()
-        Task { _ = await AuthService.shared.getAccessToken() }
 
         // Task ownership: the stop pipeline runs inside meetingPipelineTask,
         // so a blanket cancel here would kill an in-flight stop (transcription
@@ -19,9 +25,17 @@ extension AppDelegate {
         // task being cancelled.
         switch meetingRecordingState {
         case .idle:
+            guard canStartRecording(kind: .meeting) else { return }
+            meetingPipelineGeneration &+= 1
+            ShareableContentCache.shared.prewarm()
+            if provider == .cloud {
+                Task { _ = await AuthService.shared.getAccessToken() }
+            }
             meetingPipelineTask?.cancel()
+            appState.meetingRecordingState = .processing
+            handleMeetingStateChange(.processing)
             meetingPipelineTask = Task {
-                await self.startMeetingRecording()
+                await self.startMeetingRecording(provider: provider)
             }
         case .recording:
             meetingPipelineTask = Task {
@@ -29,14 +43,39 @@ extension AppDelegate {
             }
         case .processing:
             Log.app.info("Meeting state is processing, canceling...")
-            let inFlightTask = meetingPipelineTask
-            meetingPipelineTask = Task {
-                inFlightTask?.cancel()
-                await self.cancelMeetingRecording()
-            }
+            cancelMeetingPipeline(cancelPipeline: cancelPipeline)
         default:
             Log.app.info("Meeting state is \(meetingRecordingState), ignoring toggle")
         }
+    }
+
+    @discardableResult
+    func cancelMeetingPipeline(
+        cancelPipeline: (() async -> Void)? = nil
+    ) -> Task<Void, Never>? {
+        let state = appState.meetingRecordingState
+        guard state == .processing || state == .recording else { return nil }
+
+        let cancellationGeneration = meetingPipelineGeneration
+        let inFlightTask = meetingPipelineTask
+        inFlightTask?.cancel()
+        let cancellationTask = Task {
+            if let inFlightTask {
+                await inFlightTask.value
+            }
+            let currentState = self.appState.meetingRecordingState
+            guard !Task.isCancelled,
+                  currentState == .processing || currentState == .recording,
+                  self.meetingPipelineGeneration == cancellationGeneration
+            else { return }
+            if let cancelPipeline {
+                await cancelPipeline()
+            } else {
+                await self.cancelMeetingRecording()
+            }
+        }
+        meetingPipelineTask = cancellationTask
+        return cancellationTask
     }
 
     /// Tears down an active or processing meeting recording. Callers that need
@@ -45,6 +84,10 @@ extension AppDelegate {
     /// (self-cancel made the save-audio-on-cancel branch fail silently).
     func cancelMeetingRecording() async {
         Log.app.info("cancelMeetingRecording: BEGIN")
+        defer {
+            activeMeetingTranscriptionSessionID = nil
+            activeMeetingTranscriptionProvider = nil
+        }
 
         let recordingStartTime = appState.meetingRecordingStartTime
         let stopTime = Date()
@@ -65,30 +108,65 @@ extension AppDelegate {
             do {
                 if let audioURL = try await meetingRecorderService.stopRecording() {
                     let duration = recordingStartTime.map { stopTime.timeIntervalSince($0) } ?? 0
-                    RecordingsLibraryStorage.shared.saveRecording(
-                        audioURL: audioURL,
-                        type: .meeting,
-                        duration: duration
-                    )
-                    // Library has taken ownership — remove the in-progress directory (RLR-M1).
-                    if let ipId = cancelInProgressRecordingId {
+                    var saved = false
+                    if let ipId = cancelInProgressRecordingId,
+                       RecordingsLibraryStorage.shared.recordings.contains(where: { $0.id == ipId })
+                    {
+                        saved = RecordingsLibraryStorage.shared.finalizeInProgressRecording(
+                            id: ipId,
+                            audioURL: audioURL,
+                            duration: duration,
+                            endedAt: stopTime,
+                            status: .unprocessed,
+                            forceSave: true
+                        )
+                    } else {
+                        saved = RecordingsLibraryStorage.shared.saveRecording(
+                            id: cancelInProgressRecordingId,
+                            audioURL: audioURL,
+                            type: .meeting,
+                            duration: duration,
+                            createdAt: recordingStartTime ?? stopTime,
+                            forceSave: true
+                        ) != nil
+                    }
+                    // Only clean up after durable library handoff.
+                    if saved, let ipId = cancelInProgressRecordingId {
                         if let store = try? InProgressRecordingStore.sharedStore() {
                             try? await store.cleanup(recordingId: ipId)
                         }
+                        try? FileManager.default.removeItem(at: audioURL)
+                        Log.app.info("cancelMeetingRecording: audio saved after cancel")
+                    } else if !saved {
+                        Log.app.warning("cancelMeetingRecording: library save failed — keeping in-progress audio")
+                        if let ipId = cancelInProgressRecordingId {
+                            _ = RecordingsLibraryStorage.shared.markNeedsRecovery(
+                                id: ipId,
+                                endedAt: stopTime,
+                                durationSeconds: duration
+                            )
+                        }
                     }
-                    try? FileManager.default.removeItem(at: audioURL)
-                    Log.app.info("cancelMeetingRecording: audio saved after cancel")
                 } else {
                     await meetingRecorderService.cancelRecording()
+                    if let ipId = cancelInProgressRecordingId {
+                        await discardLiveMeetingRow(id: ipId)
+                    }
                 }
             } catch {
                 Log.app
                     .warning("cancelMeetingRecording: failed to save audio on cancel - \(error.localizedDescription)")
                 await meetingRecorderService.cancelRecording()
+                if let ipId = cancelInProgressRecordingId {
+                    _ = RecordingsLibraryStorage.shared.markNeedsRecovery(id: ipId, endedAt: stopTime)
+                }
             }
         } else {
             // Cancel meeting recorder without persisting
             await meetingRecorderService.cancelRecording()
+            if let ipId = cancelInProgressRecordingId {
+                await discardLiveMeetingRow(id: ipId)
+            }
         }
 
         // Release the live transcript after the Flow panel returns to idle.
@@ -116,16 +194,57 @@ extension AppDelegate {
         Log.app.info("cancelMeetingRecording: END")
     }
 
-    func startMeetingRecording() async {
+    nonisolated static func resolveMeetingTranscriptionProvider(
+        requestedProvider: TranscriptionProvider,
+        hasStoredSession: Bool,
+        cachedUsage: UsageResponse?
+    ) -> TranscriptionProvider {
+        requestedProvider == .cloud
+            && UsageService.canOfferCloudTranscription(
+                hasStoredSession: hasStoredSession,
+                usage: cachedUsage
+            ) ? .cloud : .local
+    }
+
+    func startMeetingRecording(
+        provider requestedProvider: TranscriptionProvider,
+        ensureScreenRecordingPermission: @escaping () async -> Bool = {
+            await PermissionManager.shared.ensureScreenRecordingPermission(context: .meetingRecording)
+        },
+        startRecorder: (() async throws -> Void)? = nil
+    ) async {
         Log.app.info("startMeetingRecording: BEGIN")
 
-        guard canStartRecording(kind: .meeting) else {
+        guard !Task.isCancelled, canStartRecording(kind: .meeting) else {
             Log.app.info("startMeetingRecording: blocked by another active recording mode")
             return
         }
 
+        let sessionID = UUID()
+        activeMeetingTranscriptionSessionID = sessionID
+        let provider = Self.resolveMeetingTranscriptionProvider(
+            requestedProvider: requestedProvider,
+            hasStoredSession: AuthService.hasStoredSession,
+            cachedUsage: UsageService.shared.cachedUsage
+        )
+        activeMeetingTranscriptionProvider = provider
+        var didStart = false
+        defer {
+            if !didStart, activeMeetingTranscriptionSessionID == sessionID {
+                activeMeetingTranscriptionSessionID = nil
+                activeMeetingTranscriptionProvider = nil
+            }
+        }
+
         // Request screen capture permission on-demand
-        let hasPermission = await PermissionManager.shared.ensureScreenRecordingPermission(context: .meetingRecording)
+        let hasPermission = await ensureScreenRecordingPermission()
+        guard !Task.isCancelled,
+              activeMeetingTranscriptionSessionID == sessionID,
+              appState.meetingRecordingState == .processing
+        else {
+            Log.app.info("startMeetingRecording: canceled during permission request")
+            return
+        }
         appState.screenCapturePermissionGranted = hasPermission
 
         guard hasPermission else {
@@ -138,7 +257,7 @@ extension AppDelegate {
             return
         }
 
-        let cloudModeEnabled = SettingsStorage.shared.effectiveMeetingRealtimeTranscriptionEnabled
+        let cloudModeEnabled = provider == .cloud
 
         // Timed from after the permission check (which can block on a user
         // prompt) to the .recording state transition.
@@ -150,12 +269,6 @@ extension AppDelegate {
             options: [.userInitiated, .idleSystemSleepDisabled],
             reason: "Meeting recording in progress"
         )
-
-        // Show processing state while initializing (before we confirm it works)
-        await MainActor.run {
-            appState.meetingRecordingState = .processing
-            handleMeetingStateChange(.processing)
-        }
 
         do {
             meetingRecorderService.audioSource = SettingsStorage.shared.meetingAudioSource
@@ -194,25 +307,50 @@ extension AppDelegate {
             // instead of running after it. Audio captured before the socket is
             // up is buffered by CloudRealtimeService and flushed on connect —
             // recording never waits for the network.
+            guard !Task.isCancelled, activeMeetingTranscriptionSessionID == sessionID else { return }
             let store = await setupMeetingLiveTranscription(cloudModeEnabled: cloudModeEnabled)
+            let stillOwnsSession = activeMeetingTranscriptionSessionID == sessionID
+            guard !Task.isCancelled,
+                  stillOwnsSession,
+                  appState.meetingRecordingState == .processing
+            else {
+                if stillOwnsSession {
+                    _ = await stopMeetingLiveTranscription()
+                    if let token = meetingActivityToken {
+                        ProcessInfo.processInfo.endActivity(token)
+                        meetingActivityToken = nil
+                    }
+                }
+                return
+            }
 
             startMetrics.begin(.recorderStart)
-            try await meetingRecorderService.startRecording()
+            if let startRecorder {
+                try await startRecorder()
+            } else {
+                try await meetingRecorderService.startRecording()
+            }
             startMetrics.end(.recorderStart)
             Log.app.info("Meeting recording started")
 
             // Only set recording state AFTER confirmed working
             let recordingStateAfterStart = appState.meetingRecordingState
-            guard recordingStateAfterStart == .processing else {
+            let ownsSessionAfterRecorderStart = activeMeetingTranscriptionSessionID == sessionID
+            guard !Task.isCancelled,
+                  ownsSessionAfterRecorderStart,
+                  recordingStateAfterStart == .processing
+            else {
                 Log.app
                     .warning(
                         "startMeetingRecording: state changed during init (now \(recordingStateAfterStart)), aborting"
                     )
-                _ = await stopMeetingLiveTranscription()
-                await meetingRecorderService.cancelRecording()
-                if let token = meetingActivityToken {
-                    ProcessInfo.processInfo.endActivity(token)
-                    meetingActivityToken = nil
+                if ownsSessionAfterRecorderStart {
+                    _ = await stopMeetingLiveTranscription()
+                    await meetingRecorderService.cancelRecording()
+                    if let token = meetingActivityToken {
+                        ProcessInfo.processInfo.endActivity(token)
+                        meetingActivityToken = nil
+                    }
                 }
                 return
             }
@@ -225,6 +363,29 @@ extension AppDelegate {
                     updateRecordingFeedbackConnectionStatus(.connected, mode: .meeting)
                 }
             }
+            didStart = true
+
+            // Library row from start — same UUID as InProgressRecordingStore.
+            if let recordingId = meetingRecorderService.currentRecordingId {
+                let startTime = appState.meetingRecordingStartTime ?? Date()
+                let deviceInfo = meetingRecorderService.microphoneDevice.map {
+                    RecordingDeviceInfo(
+                        uid: $0.uid,
+                        name: $0.name,
+                        transportType: $0.transportType.displayName,
+                        sampleRate: $0.sampleRate,
+                        channelCount: $0.inputChannels,
+                        wasDefaultRoute: $0.isDefault
+                    )
+                }
+                _ = RecordingsLibraryStorage.shared.beginMeetingRecording(
+                    id: recordingId,
+                    type: .meeting,
+                    createdAt: startTime,
+                    sourceDevice: deviceInfo
+                )
+            }
+
             startMetrics.finish(outcome: "ok")
 
             // Activate escape cancel handler
@@ -250,6 +411,16 @@ extension AppDelegate {
                 RecoveryStateManager.shared.saveState(state)
             }
         } catch {
+            guard activeMeetingTranscriptionSessionID == sessionID else { return }
+            if Task.isCancelled {
+                _ = await stopMeetingLiveTranscription()
+                await meetingRecorderService.cancelRecording()
+                if let token = meetingActivityToken {
+                    ProcessInfo.processInfo.endActivity(token)
+                    meetingActivityToken = nil
+                }
+                return
+            }
             Log.app.error("Meeting recording failed: \(error)")
 
             // Abort the in-flight realtime connect — nothing will consume it.
@@ -273,7 +444,7 @@ extension AppDelegate {
 
     func setupMeetingLiveTranscription(cloudModeEnabled: Bool) async -> LiveTranscriptStore {
         if cloudModeEnabled {
-            return await setupRealtimeTranscription()
+            return await setupRealtimeTranscription(sessionID: activeMeetingTranscriptionSessionID)
         }
 
         Log.app.info("Local meeting mode selected — starting live Whisper preview")
@@ -336,7 +507,7 @@ extension AppDelegate {
         return didReceiveFinalization
     }
 
-    private func setupRealtimeTranscription() async -> LiveTranscriptStore {
+    private func setupRealtimeTranscription(sessionID: UUID?) async -> LiveTranscriptStore {
         let store = await MainActor.run { LiveTranscriptStore() }
 
         let rtService = realtimeTranscriptionService
@@ -366,10 +537,13 @@ extension AppDelegate {
             coalescer?.add(tokens)
         }
 
-        rtService.onConnectionStatusChanged = { [weak self, weak store] status in
+        let connectionStatusHandler: (RealtimeConnectionStatus) -> Void = { [weak self, weak store] status in
             Task { @MainActor in
-                store?.connectionStatus = status
-                self?.updateRecordingFeedbackConnectionStatus(status, mode: .meeting)
+                self?.applyMeetingRealtimeConnectionStatus(
+                    status,
+                    sessionID: sessionID,
+                    store: store
+                )
             }
         }
 
@@ -379,10 +553,17 @@ extension AppDelegate {
             coalescer?.addBoundary(boundary)
         }
 
-        rtService.onError = { error in
+        let errorHandler: (Error) -> Void = { [weak self] error in
             Log.transcription.error("Realtime transcription error: \(error.localizedDescription)")
+            Task { @MainActor in
+                self?.fallBackMeetingToLocalIfUsageUnavailable(error, sessionID: sessionID)
+            }
             // Don't stop recording — file recording continues independently
         }
+        rtService.setConnectionHandlers(
+            onError: errorHandler,
+            onConnectionStatusChanged: connectionStatusHandler
+        )
 
         // Connect in the background — recording start never waits for the
         // network, and CloudRealtimeService buffers audio until the socket is
@@ -412,13 +593,64 @@ extension AppDelegate {
                     store?.isActive = true
                     store?.connectionStatus = .failed(error.localizedDescription)
                 }
+                fallBackMeetingToLocalIfUsageUnavailable(error, sessionID: sessionID)
             }
         }
 
         return store
     }
 
+    @discardableResult
+    func applyMeetingRealtimeConnectionStatus(
+        _ status: RealtimeConnectionStatus,
+        sessionID: UUID?,
+        store: LiveTranscriptStore?
+    ) -> Bool {
+        guard let sessionID, activeMeetingTranscriptionSessionID == sessionID else { return false }
+        store?.connectionStatus = status
+        updateRecordingFeedbackConnectionStatus(status, mode: .meeting)
+        if let id = meetingRecorderService.currentRecordingId {
+            let detail: String? = switch status {
+            case .connecting, .reconnecting:
+                "Reconnecting…"
+            case let .failed(message):
+                message.isEmpty
+                    ? "Live transcript interrupted — audio still recording"
+                    : "Live transcript interrupted — audio still recording (\(message))"
+            case .connected, .disconnected:
+                nil
+            }
+            RecordingsLibraryStorage.shared.updateStatusDetail(id: id, detail: detail)
+        }
+        return true
+    }
+
+    @discardableResult
+    func fallBackMeetingToLocalIfUsageUnavailable(_ error: Error, sessionID: UUID?) -> Bool {
+        guard let sessionID,
+              activeMeetingTranscriptionSessionID == sessionID,
+              activeMeetingTranscriptionProvider == .cloud,
+              case .usageLimitExceeded = error as? RealtimeTranscriptionError
+        else { return false }
+        activeMeetingTranscriptionProvider = .local
+        meetingRecorderService.onRealtimeAudioData = nil
+        Log.app.info("Meeting transcription switched from Cloud to Local after usage rejection")
+        return true
+    }
+
     // MARK: - Stop Meeting Recording
+
+    @discardableResult
+    static func enqueueLocalMeetingTranscriptionIfReady(
+        savedRecordingID: UUID?,
+        cloudModeEnabled: Bool,
+        hasLocalModel: Bool,
+        enqueue: ([UUID], RecordingQueueService.QueueAction, TranscriptionProvider?) -> Void
+    ) -> Bool {
+        guard let savedRecordingID, !cloudModeEnabled, hasLocalModel else { return false }
+        enqueue([savedRecordingID], .transcribe, .local)
+        return true
+    }
 
     func addMeetingChapter() {
         guard appState.meetingRecordingState == .recording,
@@ -443,6 +675,10 @@ extension AppDelegate {
         }
 
         Log.app.info("stopMeetingRecording: BEGIN")
+        defer {
+            activeMeetingTranscriptionSessionID = nil
+            activeMeetingTranscriptionProvider = nil
+        }
 
         // Deactivate chapter bookmark hotkey
         hotkeyService.unregisterChapterHotkey()
@@ -481,9 +717,10 @@ extension AppDelegate {
         var originalWavURL: URL?
         let stopTime = Date()
         let duration = recordingStartTime.map { stopTime.timeIntervalSince($0) } ?? 0
-        let recordingId = UUID()
         // Capture in-progress recording ID before stopRecording() clears it (RLR-M1).
+        // Library row created at start uses this same UUID.
         let inProgressRecordingId = meetingRecorderService.currentRecordingId
+        let recordingId = inProgressRecordingId ?? UUID()
 
         func cleanupTemporaryAudio() {
             if let wavURL = originalWavURL {
@@ -524,36 +761,56 @@ extension AppDelegate {
                 capturedAudioURL = compressedURL
             }
 
-            // Save to the library immediately — transcription can take tens of
-            // minutes and a cancelled/failed pipeline must never lose the
-            // audio. The transcript is attached to this entry when it lands.
-            // The in-progress directory is NOT cleaned up yet: compressedURL
-            // still lives inside it and is read by the jobs fallback below.
-            librarySavedId = RecordingsLibraryStorage.shared.saveRecording(
-                id: recordingId,
-                audioURL: compressedURL,
-                type: .meeting,
-                duration: duration
-            )
-            if librarySavedId != nil {
-                RecordingsLibraryStorage.shared.updateRecording(
+            // Finalize the live library row (same UUID as start). Fall back to
+            // saveRecording when beginMeetingRecording never created a row.
+            let hasLiveRow = RecordingsLibraryStorage.shared.recordings.contains { $0.id == recordingId }
+            if hasLiveRow {
+                let ok = RecordingsLibraryStorage.shared.finalizeInProgressRecording(
                     id: recordingId,
+                    audioURL: compressedURL,
+                    duration: duration,
+                    endedAt: stopTime,
                     status: .processing,
-                    error: nil
+                    forceSave: true
+                )
+                librarySavedId = ok ? recordingId : nil
+            } else {
+                librarySavedId = RecordingsLibraryStorage.shared.saveRecording(
+                    id: recordingId,
+                    audioURL: compressedURL,
+                    type: .meeting,
+                    duration: duration,
+                    createdAt: recordingStartTime ?? stopTime,
+                    forceSave: true
+                )
+                if librarySavedId != nil {
+                    RecordingsLibraryStorage.shared.updateRecording(
+                        id: recordingId,
+                        status: .processing,
+                        error: nil
+                    )
+                }
+            }
+            if librarySavedId == nil, let ipId = inProgressRecordingId {
+                _ = RecordingsLibraryStorage.shared.markNeedsRecovery(
+                    id: ipId,
+                    endedAt: stopTime,
+                    durationSeconds: duration
                 )
             }
 
             let realtimeText = await MainActor.run { store?.finalTranscriptText ?? "" }
-            let cloudModeEnabled = SettingsStorage.shared.effectiveMeetingRealtimeTranscriptionEnabled
-            let shouldUseRealtimeText = shouldAcceptRealtimeTranscript(
-                realtimeText,
-                duration: duration,
-                didReceiveFinalization: didReceiveRealtimeFinalization
-            )
+            var cloudModeEnabled = activeMeetingTranscriptionProvider == .cloud
+            let shouldUseRealtimeText = cloudModeEnabled
+                && shouldAcceptRealtimeTranscript(
+                    realtimeText,
+                    duration: duration,
+                    didReceiveFinalization: didReceiveRealtimeFinalization
+                )
 
-            let rawText: String?
+            let rawTranscript: GeneratedTranscript?
             if shouldUseRealtimeText {
-                rawText = realtimeText
+                rawTranscript = GeneratedTranscript(text: realtimeText)
                 Log.app.info("Using real-time transcript (\(realtimeText.count) chars)")
             } else if cloudModeEnabled {
                 if !realtimeText.isEmpty {
@@ -563,8 +820,6 @@ extension AppDelegate {
                         )
                 }
                 Log.app.info("No real-time transcript, falling back to async jobs API...")
-                let audioData = try await loadAudioData(from: compressedURL)
-                Log.app.info("Meeting recording size = \(audioData.count) bytes")
 
                 let asyncJobService = AsyncTranscriptionJobService()
                 let hints = SettingsStorage.shared.speechLanguageHints
@@ -577,42 +832,57 @@ extension AppDelegate {
                     config["language_hints_strict"] = true
                 }
 
-                rawText = try await asyncJobService.transcribeMeetingWithRetry(
-                    audioData: audioData,
-                    config: config,
-                    source: compressedURL.lastPathComponent,
-                    sourceDurationSeconds: duration
-                ) { status in
-                    Task { @MainActor in
-                        switch status {
-                        case .queued:
-                            DictationOverlayController.shared.showInfo(message: "Queued...", duration: 30)
-                        case .uploading:
-                            DictationOverlayController.shared.showInfo(message: "Uploading...", duration: 30)
-                        case .processing:
-                            // Processing can take tens of minutes for large files —
-                            // use persistent processing state instead of auto-dismissing info
-                            DictationOverlayController.shared.startProcessing(mode: .meeting)
-                        case .finalizing:
-                            DictationOverlayController.shared.showInfo(message: "Finishing up...", duration: 30)
-                        default:
-                            break
+                do {
+                    rawTranscript = try await asyncJobService.transcribeFileDetailedWithRetry(
+                        audioFileURL: compressedURL,
+                        config: config,
+                        source: compressedURL.lastPathComponent,
+                        sourceDurationSeconds: duration
+                    ) { status in
+                        Task { @MainActor in
+                            switch status.status {
+                            case .queued:
+                                DictationOverlayController.shared.showInfo(message: "Queued...", duration: 30)
+                            case .uploading:
+                                DictationOverlayController.shared.showInfo(message: "Uploading...", duration: 30)
+                            case .processing:
+                                // Processing can take tens of minutes for large files —
+                                // use persistent processing state instead of auto-dismissing info
+                                DictationOverlayController.shared.startProcessing(mode: .meeting)
+                            case .finalizing:
+                                DictationOverlayController.shared.showInfo(message: "Finishing up...", duration: 30)
+                            default:
+                                break
+                            }
                         }
                     }
+                    Log.app.info("Async jobs transcription received (\(rawTranscript?.text.count ?? 0) chars)")
+                } catch let error as TranscriptionError where error.isUsageLimitExceeded {
+                    cloudModeEnabled = false
+                    activeMeetingTranscriptionProvider = .local
+                    rawTranscript = nil
+                    Log.app.info("Cloud usage unavailable at stop; queued Local transcription instead")
                 }
-                Log.app.info("Async jobs transcription received (\(rawText?.count ?? 0) chars)")
             } else {
-                rawText = nil
+                rawTranscript = nil
                 Log.app.info("Saving meeting recording without automatic transcription")
             }
 
             // Apply server-side cleanup (filler words, dedup, formatting).
             // Falls back to raw text silently if no auth / no network.
-            let text: String? = if let r = rawText {
-                await TranscriptCleanupService.shared.clean(
-                    r,
-                    fillerWords: SettingsStorage.shared.fillerWords
-                )
+            let text: String? = if let rawTranscript {
+                if rawTranscript.segments.contains(where: { $0.speaker != nil }) {
+                    // Cleanup accepts plain text and can discard diarization structure.
+                    TimedTranscriptRenderer.render(
+                        segments: rawTranscript.segments,
+                        fallbackText: rawTranscript.text
+                    )
+                } else {
+                    await TranscriptCleanupService.shared.clean(
+                        rawTranscript.text,
+                        fillerWords: SettingsStorage.shared.fillerWords
+                    )
+                }
             } else {
                 nil
             }
@@ -665,22 +935,19 @@ extension AppDelegate {
                     handleMeetingStateChange(.success)
                 }
 
-                if !cloudModeEnabled {
-                    DictationOverlayController.shared.showInfo(
-                        message: "Recording saved. Open Recordings and choose a local model to transcribe.",
-                        duration: 3.0
-                    )
-                }
             }
             Log.app.info("stopMeetingRecording: SUCCESS")
 
-            if librarySavedId != nil {
+            if let savedRecordingID = librarySavedId {
                 if let text {
-                    RecordingsLibraryStorage.shared.updateRecording(
+                    let segments = rawTranscript?.segments
+                    RecordingsLibraryStorage.shared.completeTranscription(
                         id: recordingId,
                         status: .transcribed,
                         text: text,
-                        error: nil
+                        segments: segments?.isEmpty == false ? segments : nil,
+                        kind: .cloud,
+                        provider: TranscriptionProvider.cloud.rawValue
                     )
                 } else {
                     RecordingsLibraryStorage.shared.updateRecording(
@@ -688,35 +955,62 @@ extension AppDelegate {
                         status: .unprocessed,
                         error: nil
                     )
+
+                    let didEnqueue = Self.enqueueLocalMeetingTranscriptionIfReady(
+                        savedRecordingID: savedRecordingID,
+                        cloudModeEnabled: cloudModeEnabled,
+                        hasLocalModel: WhisperModelManager.shared.selectedModel() != nil
+                    ) { recordingIDs, action, provider in
+                        RecordingQueueService.shared.enqueue(
+                            recordingIDs,
+                            action: action,
+                            providerOverride: provider
+                        )
+                    }
+                    if !cloudModeEnabled, !didEnqueue {
+                        DictationOverlayController.shared.showInfo(
+                            message: String(localized: "Recording saved. Download a local model in Settings to transcribe it."),
+                            duration: 3.0
+                        )
+                    }
                 }
             }
             // The pipeline is done reading compressedURL — the in-progress
-            // directory (which contains it) can go now (RLR-M1).
-            cleanupInProgressDirectory()
+            // directory (which contains it) can go now only after durable handoff.
+            if librarySavedId != nil {
+                cleanupInProgressDirectory()
+                if didCompress {
+                    try? FileManager.default.removeItem(at: audioURL)
+                }
+                try? FileManager.default.removeItem(at: compressedURL)
+                RecoveryStateManager.shared.clearState()
+            }
 
             if SettingsStorage.shared.playSoundOnCompletion {
                 NSSound(named: .init("Funk"))?.play()
             }
-
-            RecoveryStateManager.shared.clearState()
-            if didCompress {
-                try? FileManager.default.removeItem(at: audioURL)
-            }
-            try? FileManager.default.removeItem(at: compressedURL)
 
         } catch is CancellationError {
             Log.app.info("stopMeetingRecording: Cancelled")
             // The library entry (saved right after compression) stays — a
             // cancelled transcription must not throw away the meeting audio.
             // updateRecording is a no-op when the entry was never saved.
-            RecordingsLibraryStorage.shared.updateRecording(
-                id: recordingId,
-                status: .unprocessed,
-                error: nil
-            )
-            cleanupTemporaryAudio()
-            cleanupInProgressDirectory()
-            RecoveryStateManager.shared.clearState()
+            if librarySavedId != nil {
+                RecordingsLibraryStorage.shared.updateRecording(
+                    id: recordingId,
+                    status: .unprocessed,
+                    error: nil
+                )
+                cleanupTemporaryAudio()
+                cleanupInProgressDirectory()
+                RecoveryStateManager.shared.clearState()
+            } else if let ipId = inProgressRecordingId {
+                _ = RecordingsLibraryStorage.shared.markNeedsRecovery(
+                    id: ipId,
+                    endedAt: stopTime,
+                    durationSeconds: duration
+                )
+            }
             await MainActor.run {
                 appState.meetingRecordingState = .idle
                 appState.meetingRecordingStartTime = nil
@@ -737,16 +1031,38 @@ extension AppDelegate {
                 RecoveryStateManager.shared.clearState()
             } else if let audioURL = capturedAudioURL {
                 let duration = recordingStartTime.map { stopTime.timeIntervalSince($0) } ?? 0
-                RecordingsLibraryStorage.shared.saveRecording(
-                    id: recordingId,
-                    audioURL: audioURL,
-                    type: .meeting,
-                    duration: duration
-                )
-                // Library has taken ownership — remove the in-progress directory (RLR-M1).
-                cleanupInProgressDirectory()
-                cleanupTemporaryAudio()
-                RecoveryStateManager.shared.clearState()
+                let hasLiveRow = RecordingsLibraryStorage.shared.recordings.contains { $0.id == recordingId }
+                let saved: Bool
+                if hasLiveRow {
+                    saved = RecordingsLibraryStorage.shared.finalizeInProgressRecording(
+                        id: recordingId,
+                        audioURL: audioURL,
+                        duration: duration,
+                        endedAt: stopTime,
+                        status: .unprocessed,
+                        forceSave: true
+                    )
+                } else {
+                    saved = RecordingsLibraryStorage.shared.saveRecording(
+                        id: recordingId,
+                        audioURL: audioURL,
+                        type: .meeting,
+                        duration: duration,
+                        createdAt: recordingStartTime ?? stopTime,
+                        forceSave: true
+                    ) != nil
+                }
+                if saved {
+                    cleanupInProgressDirectory()
+                    cleanupTemporaryAudio()
+                    RecoveryStateManager.shared.clearState()
+                } else if let ipId = inProgressRecordingId {
+                    _ = RecordingsLibraryStorage.shared.markNeedsRecovery(
+                        id: ipId,
+                        endedAt: stopTime,
+                        durationSeconds: duration
+                    )
+                }
             }
 
             let processingState = appState.meetingRecordingState
@@ -814,13 +1130,27 @@ extension AppDelegate {
         escapeService.onCancel = { [weak self] in
             Task { @MainActor in
                 let shouldSaveAudio = SettingsStorage.shared.escapeCancelSaveAudio
-                self?.meetingPipelineTask?.cancel()
-                await self?.cancelMeetingRecording()
+                let cancellationTask = self?.cancelMeetingPipeline()
+                await cancellationTask?.value
                 let message = shouldSaveAudio ? "Recording cancelled and saved" : "Recording cancelled"
                 DictationOverlayController.shared.showInfo(message: message)
             }
         }
 
         escapeService.activate()
+    }
+
+    /// Removes the live library row and in-progress directory after an explicit discard cancel.
+    func discardLiveMeetingRow(id: UUID) async {
+        if let recording = RecordingsLibraryStorage.shared.recordings.first(where: { $0.id == id }) {
+            guard RecordingsLibraryStorage.shared.deleteCancelledInProgressRecording(recording) else {
+                NSLog("[Diduny] Failed to discard cancelled meeting recording")
+                return
+            }
+            return
+        }
+        if let store = try? InProgressRecordingStore.sharedStore() {
+            try? await store.cleanup(recordingId: id)
+        }
     }
 }

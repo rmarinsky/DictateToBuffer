@@ -33,9 +33,10 @@ class ReleaseHighlightsPipelineTests(unittest.TestCase):
 
             self.run_script("render", str(PAYLOAD), str(markdown))
             expected = (
-                "# Meeting transcripts copy in full\n\n"
-                "- Copying a transcript keeps its timestamps and speaker labels.\n"
-                "- Recording details close again from the X button or Esc.\n"
+                "# Meeting recording suggestions\n\n"
+                "- Diduny can locally detect likely meetings and suggest recording.\n"
+                "- Choose Cloud or Local transcription before each suggested recording.\n"
+                "- When Cloud is unavailable, Diduny uses Local without losing the meeting audio.\n"
             )
             self.assertEqual(markdown.read_text(encoding="utf-8"), expected)
 

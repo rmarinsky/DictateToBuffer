@@ -80,6 +80,14 @@ struct RecordingDetailView: View {
         currentRecording.type.isMeetingLike
     }
 
+    private var hasPlayableAudio: Bool {
+        storage.hasPlayableAudio(for: currentRecording)
+    }
+
+    private var isInProgressCapture: Bool {
+        currentRecording.status.isInProgressCapture
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -266,6 +274,7 @@ struct RecordingDetailView: View {
             fileURL: storage.audioFileURL(for: currentRecording),
             durationHint: currentRecording.durationSeconds
         )
+        .disabled(!hasPlayableAudio)
     }
 
     private var playbackAndProcessingSection: some View {
@@ -278,20 +287,30 @@ struct RecordingDetailView: View {
                 .padding(12)
                 .background(Color(.textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
 
-            HStack(spacing: 8) {
-                localTranscriptionButton
-                if !currentRecording.requiresLocalTranscription {
-                    cloudTranscriptionButton
+            if isInProgressCapture {
+                Text(
+                    currentRecording.status == .recording
+                        ? "Recording in progress — playback and transcription become available once it's finalized."
+                        : "This session needs recovery before it can be played or transcribed. Resolve it from the recordings list."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 8) {
+                    localTranscriptionButton
+                    if !currentRecording.requiresLocalTranscription {
+                        cloudTranscriptionButton
+                    }
                 }
-            }
 
-            if currentRecording.requiresLocalTranscription {
-                Text("Imported files and YouTube audio are transcribed locally to protect cloud limits.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+                if currentRecording.requiresLocalTranscription {
+                    Text("Imported files and YouTube audio are transcribed locally to protect cloud limits.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
-            translationMenu
+                translationMenu
+            }
         }
     }
 
@@ -387,7 +406,8 @@ struct RecordingDetailView: View {
     }
 
     private func transcriptCard(_ version: TranscriptVersion) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let text = version.displayText
+        return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(transcriptVersionTitle(version)).font(.headline)
@@ -396,15 +416,31 @@ struct RecordingDetailView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button {
-                    ClipboardService.shared.copy(text: version.displayText, behavior: .raw)
-                } label: {
-                    Label("Copy Transcript", systemImage: "doc.on.doc")
+                HStack(spacing: 0) {
+                    Button {
+                        ClipboardService.shared.copy(text: text, behavior: .raw)
+                    } label: {
+                        Label("Copy Transcript", systemImage: "doc.on.doc")
+                    }
+                    Menu {
+                        Button("Save as TXT File…") {
+                            exportText(
+                                text,
+                                title: "Save Transcript",
+                                defaultFileName: "\(currentRecording.type.displayName) Transcript.txt"
+                            )
+                        }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .help("Transcript export options")
+                    .accessibilityLabel("Transcript export options")
                 }
                 .controlSize(.small)
             }
             ScrollView {
-                Text(version.displayText)
+                Text(text)
                     .textSelection(.enabled)
                     .font(.body)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -432,12 +468,24 @@ struct RecordingDetailView: View {
     // MARK: - Processing actions
 
     private func exportCaption(_ artifact: TranscriptArtifact) {
+        exportText(
+            artifact.text,
+            title: "Export Source Captions",
+            defaultFileName: "YouTube Captions - \(artifact.languageCode).txt"
+        )
+    }
+
+    private func exportText(_ text: String, title: String, defaultFileName: String) {
         let panel = NSSavePanel()
-        panel.title = "Export Source Captions"
-        panel.nameFieldStringValue = "YouTube Captions - \(artifact.languageCode).txt"
+        panel.title = title
+        panel.nameFieldStringValue = defaultFileName
         panel.allowedContentTypes = [.plainText]
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? artifact.text.write(to: url, atomically: true, encoding: .utf8)
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            operationErrorMessage = "Could not save the text file: \(error.localizedDescription)"
+        }
     }
 
     private var cloudTranscriptionButton: some View {
@@ -596,12 +644,30 @@ struct RecordingDetailView: View {
     }()
 
     private var formattedDate: String {
-        Self.dateFormatter.string(from: currentRecording.createdAt)
+        let start = Self.dateFormatter.string(from: currentRecording.createdAt)
+        if currentRecording.status == .recording {
+            return "\(start) – …"
+        }
+        if let ended = currentRecording.resolvedEndedAt {
+            let endFormatter = DateFormatter()
+            endFormatter.dateStyle = .none
+            endFormatter.timeStyle = .short
+            return "\(start) – \(endFormatter.string(from: ended))"
+        }
+        return start
     }
 
     private var formattedDuration: String {
-        let minutes = Int(currentRecording.durationSeconds) / 60
-        let seconds = Int(currentRecording.durationSeconds) % 60
+        let totalSeconds: Int
+        if currentRecording.durationSeconds > 0 {
+            totalSeconds = Int(currentRecording.durationSeconds)
+        } else if let ended = currentRecording.resolvedEndedAt {
+            totalSeconds = max(0, Int(ended.timeIntervalSince(currentRecording.createdAt)))
+        } else {
+            totalSeconds = 0
+        }
+        let minutes = totalSeconds / 60
+        let seconds = totalSeconds % 60
         return String(format: "%d:%02d", minutes, seconds)
     }
 

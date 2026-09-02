@@ -5,6 +5,8 @@ struct RecordingRowView: View {
     let onOpen: () -> Void
     let onTranscribe: () -> Void
     let onDelete: () -> Void
+    var onProcessRecovery: (() -> Void)?
+    var onSaveRecoveryAudio: (() -> Void)?
     var isSelectionMode = false
     var isSelected = false
     var onToggleSelection: (() -> Void)?
@@ -52,6 +54,15 @@ struct RecordingRowView: View {
                     .foregroundColor(.primary)
                     .lineLimit(1)
                 typeBadge
+                if recording.recoverySource != nil {
+                    recoveredBadge
+                }
+                if recording.status == .needsRecovery {
+                    needsProcessingBadge
+                }
+                if recording.status == .recording {
+                    recordingBadge
+                }
                 if recording.status == .processing {
                     ProgressView()
                         .controlSize(.small)
@@ -89,8 +100,10 @@ struct RecordingRowView: View {
     }
 
     private var playButton: some View {
+        let canPlay = RecordingsLibraryStorage.shared.hasPlayableAudio(for: recording)
         let label = isPlaying ? "Pause recording" : "Play recording"
         return Button {
+            guard canPlay else { return }
             playbackService.togglePlayback(
                 recordingId: recording.id,
                 fileURL: RecordingsLibraryStorage.shared.audioFileURL(for: recording)
@@ -105,15 +118,16 @@ struct RecordingRowView: View {
                         .frame(width: 32, height: 32)
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(Color("BrandAccentDeep"))
+                        .foregroundColor(canPlay ? Color("BrandAccentDeep") : .secondary)
                         .offset(x: isPlaying ? 0 : 1)
                 }
             }
             .labelStyle(.iconOnly)
         }
         .buttonStyle(.plain)
-        .help(label)
-        .accessibilityLabel(Text(label))
+        .disabled(!canPlay)
+        .help(canPlay ? label : "Audio not ready yet")
+        .accessibilityLabel(Text(canPlay ? label : "Audio not ready yet"))
         .accessibilityIdentifier(label)
     }
 
@@ -126,9 +140,51 @@ struct RecordingRowView: View {
             .background(recording.libraryBrandColor.opacity(0.12), in: Capsule())
     }
 
+    private var recoveredBadge: some View {
+        Text("Recovered")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(.orange)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(Color.orange.opacity(0.12), in: Capsule())
+    }
+
+    private var needsProcessingBadge: some View {
+        Text("Needs processing")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(.red)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(Color.red.opacity(0.12), in: Capsule())
+    }
+
+    private var recordingBadge: some View {
+        Text("Recording")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(.green)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(Color.green.opacity(0.12), in: Capsule())
+    }
+
     private var actionButtons: some View {
         HStack(spacing: 4) {
-            if recording.status != .processing {
+            if recording.status == .needsRecovery {
+                if let onProcessRecovery {
+                    RecordingActionButton(
+                        systemName: "arrow.triangle.2.circlepath",
+                        label: "Process recovery",
+                        action: onProcessRecovery
+                    )
+                }
+                if let onSaveRecoveryAudio {
+                    RecordingActionButton(
+                        systemName: "square.and.arrow.down",
+                        label: "Save audio only",
+                        action: onSaveRecoveryAudio
+                    )
+                }
+            } else if recording.status != .processing, recording.status != .recording {
                 RecordingActionButton(
                     systemName: "text.bubble",
                     label: "Transcribe recording",
@@ -162,17 +218,30 @@ struct RecordingRowView: View {
     private var rowTitle: String {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
-        let time = formatter.string(from: recording.createdAt)
+        let start = formatter.string(from: recording.createdAt)
+        let timeRange: String = if recording.status == .recording {
+            "\(start)–…"
+        } else if let ended = recording.resolvedEndedAt {
+            "\(start)–\(formatter.string(from: ended))"
+        } else {
+            start
+        }
         switch recording.type {
-        case .voice: return "Voice note — \(time)"
-        case .translation: return "Translation — \(time)"
-        case .meeting: return "Meeting — \(time)"
-        case .meetingTranslation: return "Meeting translation — \(time)"
-        case .fileTranscription: return recording.sourceFileName ?? "File — \(time)"
+        case .voice: return "Voice note — \(timeRange)"
+        case .translation: return "Translation — \(timeRange)"
+        case .meeting: return "Meeting — \(timeRange)"
+        case .meetingTranslation: return "Meeting translation — \(timeRange)"
+        case .fileTranscription: return recording.sourceFileName ?? "File — \(timeRange)"
         }
     }
 
     private var previewText: String {
+        if recording.status == .recording {
+            return recording.statusDetail ?? "Recording…"
+        }
+        if recording.status == .needsRecovery {
+            return "Needs processing — recover audio from this session"
+        }
         if recording.status == .processing {
             return "Transcribing..."
         }

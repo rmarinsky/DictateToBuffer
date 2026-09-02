@@ -133,6 +133,9 @@ struct TranscriptVersion: Identifiable, Codable, Equatable {
 struct Recording: Identifiable, Codable, Equatable {
     let id: UUID
     let createdAt: Date
+    /// Wall-clock end of the capture session. `nil` while status is `.recording`
+    /// (or on legacy rows that only stored `durationSeconds`).
+    var endedAt: Date? = nil
     let type: RecordingType
     let audioFileName: String
     let durationSeconds: TimeInterval
@@ -140,6 +143,8 @@ struct Recording: Identifiable, Codable, Equatable {
     var status: ProcessingStatus
     var transcriptionText: String?
     var errorMessage: String?
+    /// Ephemeral UI hint for live rows (e.g. "Reconnecting…"). Not a hard error.
+    var statusDetail: String? = nil
     var processedAt: Date?
     var chapters: [MeetingChapter]?
     let sourceDevice: RecordingDeviceInfo?
@@ -190,6 +195,18 @@ struct Recording: Identifiable, Codable, Equatable {
             return title
         }
         return remoteSource?.title ?? sourceFileName ?? libraryDisplayName
+    }
+
+    /// True when a durable audio file name has been attached (playable once on disk).
+    var hasAttachedAudio: Bool {
+        !audioFileName.isEmpty
+    }
+
+    /// End time for UI: explicit `endedAt`, else `createdAt + duration` for legacy rows.
+    var resolvedEndedAt: Date? {
+        if let endedAt { return endedAt }
+        guard durationSeconds > 0 else { return nil }
+        return createdAt.addingTimeInterval(durationSeconds)
     }
 
     var resolvedTranscriptHistory: [TranscriptVersion] {
@@ -316,6 +333,10 @@ struct Recording: Identifiable, Codable, Equatable {
         /// Audio was recovered from an interrupted session and one or more chunks
         /// were unreadable. The reported duration reflects only the intact chunks.
         case partiallyRecovered
+        /// Capture is actively writing; library row exists without durable audio yet.
+        case recording
+        /// Capture interrupted; in-progress audio awaits Process / Save / Discard.
+        case needsRecovery
 
         var displayName: String {
             switch self {
@@ -325,6 +346,15 @@ struct Recording: Identifiable, Codable, Equatable {
             case .translated: "Translated"
             case .failed: "Failed"
             case .partiallyRecovered: "Partially Recovered"
+            case .recording: "Recording"
+            case .needsRecovery: "Needs Processing"
+            }
+        }
+
+        var isInProgressCapture: Bool {
+            switch self {
+            case .recording, .needsRecovery: true
+            default: false
             }
         }
     }

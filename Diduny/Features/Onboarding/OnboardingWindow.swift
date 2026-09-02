@@ -642,6 +642,9 @@ private struct OnboardingProductionPanelPreview: View {
             onCopy: {},
             onStop: {},
             onDismissLive: {},
+            onStartMeetingSuggestion: { _ in },
+            onDismissMeetingSuggestion: { _ in },
+            onMeetingSuggestionsEnabled: { _ in },
             onCollapse: {},
             onDrag: {},
             onDragEnd: {}
