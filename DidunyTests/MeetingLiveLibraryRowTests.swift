@@ -451,6 +451,10 @@ final class MeetingLiveLibraryRowTests: XCTestCase {
             "Не вдалося безпечно завершити видалення. Перевірте бібліотеку зустрічей, перш ніж повторити спробу."
         )
         XCTAssertEqual(
+            ukrainianBundle.localizedString(forKey: "Couldn't Delete Meetings", value: nil, table: nil),
+            "Не вдалося видалити зустрічі"
+        )
+        XCTAssertEqual(
             ukrainianBundle.localizedString(forKey: "Unknown error", value: nil, table: nil),
             "Невідома помилка"
         )
